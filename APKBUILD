@@ -10,7 +10,7 @@ options="!check !fhs !tracedeps"
 
 # Runtime deps (system libs we still use)
 depends="
-	gtk4
+	gtk4.0
 	libadwaita
 	libsoup3
 	json-glib
@@ -103,7 +103,9 @@ package() {
 #!/bin/sh
 export LD_LIBRARY_PATH="/opt/gnalk/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export GST_PLUGIN_PATH="/opt/gnalk/lib/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
-exec /opt/gnalk/libexec/gnalk-bin "$@"
+export GSETTINGS_SCHEMA_DIR="/opt/gnalk/share/glib-2.0/schemas${GSETTINGS_SCHEMA_DIR:+:$GSETTINGS_SCHEMA_DIR}"
+export XDG_DATA_DIRS="/opt/gnalk/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+exec /opt/gnalk/libexec/gnalk "$@"
 EOF
 	chmod 755 "$pkgdir/opt/gnalk/bin/gnalk"
 
@@ -119,6 +121,9 @@ EOF
 	mkdir -p "$pkgdir/usr/share/applications"
 	mv "$pkgdir/opt/gnalk/share/applications/net.skilpa.gnalk.desktop" \
 		"$pkgdir/usr/share/applications/"
+
+	# Compile GSettings schemas
+	glib-compile-schemas "$pkgdir/opt/gnalk/share/glib-2.0/schemas/"
 }
 
 sha512sums="
