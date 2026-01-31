@@ -58,6 +58,8 @@ struct _GnalkWebrtc
   guint       screen_capsfilter_frame_count; /* Per-instance counter for capsfilter->encoder */
   guint       screen_encoder_output_count;   /* Per-instance counter for encoder output */
   guint       screen_keyframe_timer_id;      /* Periodic keyframe timer for screen share */
+  GstElement *screen_capsfilter;           /* Capsfilter for dynamic resolution scaling */
+  gboolean    screen_caps_configured;      /* TRUE after first frame sets the caps */
 #else
   gpointer    pipeline;
   gpointer    webrtcbin;
@@ -1275,7 +1277,9 @@ on_screen_rtppay_probe (GstPad          *pad,
   return GST_PAD_PROBE_OK;
 }
 
-/* Per-instance probe for pipewiresrc output */
+/* Per-instance probe for pipewiresrc output.
+ * On first frame, detects input dimensions and configures capsfilter
+ * to scale to max 720 on the longer edge while preserving aspect ratio. */
 static GstPadProbeReturn
 on_pipewiresrc_log_probe (GstPad          *pad,
                           GstPadProbeInfo *info,
@@ -1283,6 +1287,55 @@ on_pipewiresrc_log_probe (GstPad          *pad,
 {
   GnalkWebrtc *self = GNALK_WEBRTC (user_data);
   self->pipewiresrc_frame_count++;
+
+  /* On first frame, configure capsfilter based on input dimensions */
+  if (!self->screen_caps_configured && self->screen_capsfilter)
+    {
+      GstCaps *pad_caps = gst_pad_get_current_caps (pad);
+      if (pad_caps)
+        {
+          GstStructure *s = gst_caps_get_structure (pad_caps, 0);
+          gint width = 0, height = 0;
+          if (gst_structure_get_int (s, "width", &width) &&
+              gst_structure_get_int (s, "height", &height) &&
+              width > 0 && height > 0)
+            {
+              /* Scale to max 720 on the longer edge */
+              gint target_width, target_height;
+              gint max_dim = 720;
+
+              if (width >= height)
+                {
+                  /* Landscape or square */
+                  target_width = MIN (width, max_dim);
+                  target_height = height * target_width / width;
+                }
+              else
+                {
+                  /* Portrait */
+                  target_height = MIN (height, max_dim);
+                  target_width = width * target_height / height;
+                }
+
+              /* Ensure even dimensions for I420 */
+              target_width &= ~1;
+              target_height &= ~1;
+
+              g_autofree gchar *caps_str = g_strdup_printf (
+                  "video/x-raw,format=I420,width=%d,height=%d",
+                  target_width, target_height);
+              GstCaps *new_caps = gst_caps_from_string (caps_str);
+              g_object_set (self->screen_capsfilter, "caps", new_caps, NULL);
+              gst_caps_unref (new_caps);
+
+              g_message ("Screen share: input %dx%d -> scaled to %dx%d",
+                         width, height, target_width, target_height);
+              self->screen_caps_configured = TRUE;
+            }
+          gst_caps_unref (pad_caps);
+        }
+    }
+
   if (self->pipewiresrc_frame_count <= 10 || self->pipewiresrc_frame_count % 50 == 0)
     {
       GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER (info);
@@ -1290,7 +1343,6 @@ on_pipewiresrc_log_probe (GstPad          *pad,
       g_message ("pipewiresrc[%p] output: frame %u (size=%zu)",
                  (void *)self, self->pipewiresrc_frame_count, size);
     }
-  (void)pad;
   return GST_PAD_PROBE_OK;
 }
 
@@ -1390,13 +1442,15 @@ create_screen_share_pipeline (GnalkWebrtc *self)
   g_message ("WebRTC: Creating screen share pipeline (node_id=%u, fd=%d)",
              self->pipewire_node_id, self->pipewire_fd);
 
-  /* Reset per-instance counters for new screen share session */
+  /* Reset per-instance counters and state for new screen share session */
   self->screen_encoder_frame_count = 0;
   self->screen_rtp_packet_count = 0;
   self->pipewiresrc_frame_count = 0;
   self->screen_queue_frame_count = 0;
   self->screen_capsfilter_frame_count = 0;
   self->screen_encoder_output_count = 0;
+  self->screen_capsfilter = NULL;
+  self->screen_caps_configured = FALSE;
 
   pipeline = gst_pipeline_new ("screen-share-pipeline");
   webrtc = gst_element_factory_make ("webrtcbin", "webrtc");
@@ -1487,23 +1541,45 @@ create_screen_share_pipeline (GnalkWebrtc *self)
       gst_object_unref (pw_src_pad);
     }
 
-  /* Configure output caps - I420 format for VP8 encoder */
+  /* Add videoscale to reduce resolution. The actual target dimensions are set
+   * dynamically by on_pipewiresrc_log_probe based on input aspect ratio.
+   * This preserves aspect ratio while limiting the longer edge to 720 pixels. */
+  GstElement *videoscale = gst_element_factory_make ("videoscale", "videoscale");
+  if (!videoscale)
+    {
+      g_warning ("Failed to create videoscale element");
+      gst_object_unref (pipewiresrc);
+      gst_object_unref (queue);
+      gst_object_unref (videoconvert);
+      gst_object_unref (capsfilter);
+      gst_object_unref (encoder);
+      gst_object_unref (rtppay);
+      gst_object_unref (pipeline);
+      return FALSE;
+    }
+
+  /* Initial caps - will be updated dynamically by pipewiresrc probe.
+   * Start with just format, dimensions set on first frame. */
   GstCaps *caps = gst_caps_from_string ("video/x-raw,format=I420");
   g_object_set (capsfilter, "caps", caps, NULL);
   gst_caps_unref (caps);
 
+  /* Store capsfilter reference for dynamic configuration */
+  self->screen_capsfilter = capsfilter;
+  self->screen_caps_configured = FALSE;
+
   /* Configure encoder for screen content:
-   * - Higher bitrate (4 Mbps) for native resolution screen content
+   * - 1.5 Mbps bitrate for ~300K pixel screen content
    * - deadline=1 for realtime encoding
-   * - cpu-used=8 for balance of speed and quality
-   * - keyframe-max-dist=60 for keyframe every ~2 seconds
-   * - end-usage=0 (VBR) to allow quality to vary with content complexity */
+   * - cpu-used=16 for maximum speed on ARM (trades quality for speed)
+   * - keyframe-max-dist=30 for keyframe every second
+   * - end-usage=1 (CBR) for more predictable performance */
   g_object_set (encoder,
                 "deadline", 1,
-                "cpu-used", 8,
-                "target-bitrate", 4000000,
-                "keyframe-max-dist", 60,
-                "end-usage", 0,  /* VBR mode */
+                "cpu-used", 16,
+                "target-bitrate", 1500000,
+                "keyframe-max-dist", 30,
+                "end-usage", 1,  /* CBR mode */
                 NULL);
 
   g_object_set (rtppay, "pt", 96, "mtu", 1200, NULL);
@@ -1514,13 +1590,36 @@ create_screen_share_pipeline (GnalkWebrtc *self)
   GstElement *queue2 = gst_element_factory_make ("queue", "encqueue");
   g_object_set (queue2, "max-size-buffers", 2, "leaky", 2, NULL);
 
-  /* Add elements to pipeline */
-  gst_bin_add_many (GST_BIN (pipeline), pipewiresrc, queue,
-                    videoconvert, capsfilter, queue2, encoder, rtppay, NULL);
+  /* Add capsfilter after pipewiresrc to force raw video format.
+   * This prevents DMA-BUF negotiation issues and ensures we get system memory frames. */
+  GstElement *rawcaps = gst_element_factory_make ("capsfilter", "rawcaps");
+  if (!rawcaps)
+    {
+      g_warning ("Failed to create rawcaps element");
+      gst_object_unref (pipewiresrc);
+      gst_object_unref (queue);
+      gst_object_unref (videoconvert);
+      gst_object_unref (videoscale);
+      gst_object_unref (capsfilter);
+      gst_object_unref (encoder);
+      gst_object_unref (rtppay);
+      gst_object_unref (queue2);
+      gst_object_unref (pipeline);
+      return FALSE;
+    }
+  GstCaps *raw_video_caps = gst_caps_from_string ("video/x-raw");
+  g_object_set (rawcaps, "caps", raw_video_caps, NULL);
+  gst_caps_unref (raw_video_caps);
 
-  /* Pipeline: pipewiresrc -> queue -> videoconvert -> capsfilter(I420) -> queue2 -> encoder -> rtppay -> webrtcbin */
-  if (!gst_element_link_many (pipewiresrc, queue,
-                              videoconvert, capsfilter, queue2, encoder, rtppay, NULL))
+  /* Add elements to pipeline */
+  gst_bin_add_many (GST_BIN (pipeline), pipewiresrc, rawcaps, queue,
+                    videoconvert, videoscale, capsfilter, queue2, encoder, rtppay, NULL);
+
+  /* Pipeline: pipewiresrc -> rawcaps(video/x-raw) -> queue -> videoconvert -> videoscale ->
+   *           capsfilter(I420,dynamic) -> queue2 -> encoder -> rtppay -> webrtcbin
+   * The capsfilter dimensions are set dynamically based on input aspect ratio. */
+  if (!gst_element_link_many (pipewiresrc, rawcaps, queue,
+                              videoconvert, videoscale, capsfilter, queue2, encoder, rtppay, NULL))
     {
       g_warning ("Failed to link screen share pipeline");
       gst_object_unref (pipeline);
@@ -1672,6 +1771,94 @@ gnalk_webrtc_start_screen_share (GnalkWebrtc *self,
       close (self->pipewire_fd);
       self->pipewire_fd = -1;
       return;
+    }
+
+  /* First go to PAUSED to negotiate caps with PipeWire.
+   * This avoids "not-negotiated" errors when the portal stream isn't ready yet. */
+  GstStateChangeReturn ret = gst_element_set_state (self->pipeline, GST_STATE_PAUSED);
+  if (ret == GST_STATE_CHANGE_ASYNC)
+    {
+      /* Wait up to 3 seconds for caps negotiation */
+      ret = gst_element_get_state (self->pipeline, NULL, NULL, 3 * GST_SECOND);
+    }
+
+  if (ret == GST_STATE_CHANGE_FAILURE)
+    {
+      g_warning ("start_screen_share: Failed to negotiate caps, retrying...");
+      /* Give PipeWire more time to set up the stream */
+      g_usleep (200000);  /* 200ms */
+      ret = gst_element_set_state (self->pipeline, GST_STATE_PAUSED);
+      if (ret == GST_STATE_CHANGE_ASYNC)
+        ret = gst_element_get_state (self->pipeline, NULL, NULL, 3 * GST_SECOND);
+    }
+
+  if (ret == GST_STATE_CHANGE_FAILURE)
+    {
+      g_warning ("start_screen_share: Caps negotiation failed after retry");
+      gst_element_set_state (self->pipeline, GST_STATE_NULL);
+      close (self->pipewire_fd);
+      self->pipewire_fd = -1;
+      gst_object_unref (self->pipeline);
+      self->pipeline = NULL;
+      self->webrtcbin = NULL;
+      return;
+    }
+
+  /* Configure capsfilter based on pipewiresrc negotiated dimensions.
+   * This must be done while PAUSED, before going to PLAYING. */
+  if (self->screen_capsfilter && !self->screen_caps_configured)
+    {
+      GstElement *screensrc = gst_bin_get_by_name (GST_BIN (self->pipeline), "screensrc");
+      if (screensrc)
+        {
+          GstPad *src_pad = gst_element_get_static_pad (screensrc, "src");
+          if (src_pad)
+            {
+              GstCaps *pad_caps = gst_pad_get_current_caps (src_pad);
+              if (pad_caps)
+                {
+                  GstStructure *s = gst_caps_get_structure (pad_caps, 0);
+                  gint width = 0, height = 0;
+                  if (gst_structure_get_int (s, "width", &width) &&
+                      gst_structure_get_int (s, "height", &height) &&
+                      width > 0 && height > 0)
+                    {
+                      /* Scale to max 720 on the longer edge */
+                      gint target_width, target_height;
+                      gint max_dim = 720;
+
+                      if (width >= height)
+                        {
+                          target_width = MIN (width, max_dim);
+                          target_height = height * target_width / width;
+                        }
+                      else
+                        {
+                          target_height = MIN (height, max_dim);
+                          target_width = width * target_height / height;
+                        }
+
+                      /* Ensure even dimensions for I420 */
+                      target_width &= ~1;
+                      target_height &= ~1;
+
+                      g_autofree gchar *caps_str = g_strdup_printf (
+                          "video/x-raw,format=I420,width=%d,height=%d",
+                          target_width, target_height);
+                      GstCaps *new_caps = gst_caps_from_string (caps_str);
+                      g_object_set (self->screen_capsfilter, "caps", new_caps, NULL);
+                      gst_caps_unref (new_caps);
+
+                      g_message ("Screen share: input %dx%d -> scaled to %dx%d",
+                                 width, height, target_width, target_height);
+                      self->screen_caps_configured = TRUE;
+                    }
+                  gst_caps_unref (pad_caps);
+                }
+              gst_object_unref (src_pad);
+            }
+          gst_object_unref (screensrc);
+        }
     }
 
   gst_element_set_state (self->pipeline, GST_STATE_PLAYING);
