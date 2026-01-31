@@ -126,6 +126,13 @@ EOF
 	mv "$pkgdir/opt/gnalk/share/applications/net.skilpa.gnalk.desktop" \
 		"$pkgdir/usr/share/applications/"
 
+	# Fix D-Bus service to use wrapper (for bundled libs) and move to standard location
+	sed -i 's|Exec=/opt/gnalk/libexec/gnalk|Exec=/opt/gnalk/bin/gnalk|' \
+		"$pkgdir/opt/gnalk/share/dbus-1/services/net.skilpa.gnalk.service"
+	mkdir -p "$pkgdir/usr/share/dbus-1/services"
+	mv "$pkgdir/opt/gnalk/share/dbus-1/services/net.skilpa.gnalk.service" \
+		"$pkgdir/usr/share/dbus-1/services/"
+
 	# Compile GSettings schemas
 	glib-compile-schemas "$pkgdir/opt/gnalk/share/glib-2.0/schemas/"
 }

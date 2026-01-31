@@ -7,6 +7,14 @@ Gnalk provides messaging and video/audio calling with a modern GNOME-style inter
 > [!WARNING]
 > This project was developed with AI assistance. If you prefer a purely human-written alternative, you may be interested in [Nutsy](https://codeberg.org/skilpa/nutsy), an earlier Nextcloud Talk client I started. However, please note that Nutsy is no longer maintained and remains incomplete.
 
+## Quick Install (postmarketOS)
+
+```bash
+curl -sL https://codeberg.org/skilpa/gnalk/raw/branch/main/install.sh | doas sh
+```
+
+This downloads and installs a self-contained APK that bundles libnice and WebRTC GStreamer plugins, avoiding conflicts with system libraries. Uninstall with `doas apk del gnalk`.
+
 ## Features
 
 ### Messaging
@@ -66,16 +74,6 @@ Gnalk provides messaging and video/audio calling with a modern GNOME-style inter
 - **Nextcloud server** with Talk app installed
 - **External signaling server** (recommended for video calls) with Janus MCU
 
-## Quick Install (postmarketOS)
-
-Download the latest APK from [Releases](https://codeberg.org/skilpa/gnalk/releases):
-
-```bash
-wget https://codeberg.org/skilpa/gnalk/releases/download/v0.1.0/gnalk-0.1.0-r0.apk
-sudo apk add --allow-untrusted gnalk-0.1.0-r0.apk
-```
-
-This self-contained package includes WebRTC support and installs to `/opt/gnalk/`, avoiding conflicts with system libraries. Uninstall cleanly with `apk del gnalk`.
 
 ## Building
 
@@ -160,29 +158,69 @@ flatpak run net.skilpa.gnalk
 
 ### Option 3: Alpine/postmarketOS Build
 
-For mobile devices (e.g., OnePlus 6 with postmarketOS):
+For mobile devices (e.g., OnePlus 6 with postmarketOS).
+
+#### Why Bundle Libraries?
+
+Alpine's `gst-plugins-bad` package doesn't include WebRTC plugins, and the system `libnice` may conflict with GStreamer's requirements. The APKBUILD solves this by bundling:
+
+- **libnice 0.1.23** — ICE/STUN/TURN implementation for NAT traversal
+- **gst-plugins-bad (WebRTC subset)** — webrtc, dtls, srtp, sctp plugins
+
+These are installed to `/opt/gnalk/lib/` with a wrapper script that sets `LD_LIBRARY_PATH` and `GST_PLUGIN_PATH`, isolating them from system libraries.
 
 #### Install Build Dependencies
 
 ```bash
-sudo apk add meson build-base glib-dev gtk4-dev libadwaita-dev libsoup3-dev \
+doas apk add abuild meson build-base glib-dev gtk4-dev libadwaita-dev libsoup3-dev \
     json-glib-dev sqlite-dev libsecret-dev gstreamer-dev gst-plugins-base-dev \
     gnutls-dev libsrtp-dev openssl-dev pipewire-dev desktop-file-utils
 ```
 
-#### Build Self-Contained APK
-
-The APKBUILD creates a self-contained package that bundles libnice and WebRTC GStreamer plugins in `/opt/gnalk/`, avoiding conflicts with system libraries:
+#### Build APK
 
 ```bash
-abuild checksum
-abuild -r
+abuild -d -F
 ```
 
 #### Install
 
 ```bash
-sudo apk add --allow-untrusted ~/packages/skilpa/aarch64/gnalk-0.1.0-r0.apk
+doas apk add --allow-untrusted ~/packages/claude/aarch64/gnalk-0.1.0-r0.apk
+```
+
+#### Development Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `clean.sh` | Dev cleanup: removes installed package, /opt/gnalk, and build artifacts. Run with `doas`. |
+| `install.sh` | Downloads and installs the APK from the online repository. Run with `doas`. |
+| `uninstall.sh` | User-friendly uninstall: handles APK or manual installs, prompts about user data. |
+
+Full rebuild cycle:
+```bash
+doas ./clean.sh && abuild -d -F && doas apk add --allow-untrusted ~/packages/claude/aarch64/gnalk-0.1.0-r0.apk
+```
+
+#### Package Structure
+
+```
+/opt/gnalk/
+├── bin/gnalk                    # Wrapper script (sets LD_LIBRARY_PATH, GST_PLUGIN_PATH)
+├── libexec/gnalk                # Actual binary
+├── lib/
+│   ├── libnice.so.10            # Bundled libnice 0.1.23
+│   ├── libgstwebrtcnice-1.0.so  # Bridge between libnice and GStreamer WebRTC
+│   └── gstreamer-1.0/
+│       ├── libgstnice.so        # libnice GStreamer plugin
+│       ├── libgstwebrtc.so      # WebRTC plugin
+│       ├── libgstdtls.so        # DTLS plugin
+│       ├── libgstsrtp.so        # SRTP plugin
+│       └── libgstsctp.so        # SCTP plugin (data channels)
+└── share/...
+/usr/bin/gnalk -> /opt/gnalk/bin/gnalk
+/usr/share/applications/net.skilpa.gnalk.desktop
+/usr/share/dbus-1/services/net.skilpa.gnalk.service
 ```
 
 #### Verify WebRTC
@@ -190,25 +228,6 @@ sudo apk add --allow-untrusted ~/packages/skilpa/aarch64/gnalk-0.1.0-r0.apk
 ```bash
 GST_PLUGIN_PATH=/opt/gnalk/lib/gstreamer-1.0 gst-inspect-1.0 webrtcbin
 ```
-
-#### Package Structure
-
-```
-/opt/gnalk/
-├── bin/gnalk                    # Wrapper script (sets env vars)
-├── libexec/gnalk-bin            # Actual binary
-├── lib/
-│   ├── libnice.so.10            # Bundled libnice 0.1.23
-│   └── gstreamer-1.0/
-│       ├── libgstnice.so        # libnice GStreamer plugin
-│       ├── libgstwebrtc.so      # WebRTC plugin
-│       ├── libgstdtls.so        # DTLS plugin
-│       └── libgstsrtp.so        # SRTP plugin
-└── share/...
-/usr/bin/gnalk -> /opt/gnalk/bin/gnalk
-```
-
-This approach ensures video calls work without modifying system libraries.
 
 #### Screen Sharing (Mobile)
 
