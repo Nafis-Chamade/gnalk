@@ -66,6 +66,17 @@ Gnalk provides messaging and video/audio calling with a modern GNOME-style inter
 - **Nextcloud server** with Talk app installed
 - **External signaling server** (recommended for video calls) with Janus MCU
 
+## Quick Install (postmarketOS)
+
+Download the latest APK from [Releases](https://codeberg.org/skilpa/gnalk/releases):
+
+```bash
+wget https://codeberg.org/skilpa/gnalk/releases/download/v0.1.0/gnalk-0.1.0-r0.apk
+sudo apk add --allow-untrusted gnalk-0.1.0-r0.apk
+```
+
+This self-contained package includes WebRTC support and installs to `/opt/gnalk/`, avoiding conflicts with system libraries. Uninstall cleanly with `apk del gnalk`.
+
 ## Building
 
 ### Option 1: Classic Build (Meson)
@@ -151,68 +162,53 @@ flatpak run net.skilpa.gnalk
 
 For mobile devices (e.g., OnePlus 6 with postmarketOS):
 
-#### Install Dependencies
+#### Install Build Dependencies
 
 ```bash
-# Runtime dependencies
-sudo apk add gstreamer gst-plugins-bad gst-plugins-good gst-plugins-rs-gtk4 \
-    libcamera libcamera-gstreamer libnice-gstreamer pipewire
-
-# Build dependencies
-sudo apk add meson build-base glib-dev gtk4.0-dev libadwaita-dev libsoup3-dev \
+sudo apk add meson build-base glib-dev gtk4-dev libadwaita-dev libsoup3-dev \
     json-glib-dev sqlite-dev libsecret-dev gstreamer-dev gst-plugins-base-dev \
-    gst-plugins-bad-dev libcamera-dev pipewire-dev desktop-file-utils
+    gnutls-dev libsrtp-dev openssl-dev pipewire-dev desktop-file-utils
 ```
 
-#### Build
+#### Build Self-Contained APK
 
-```bash
-meson setup build
-meson compile -C build
-```
-
-#### Build with abuild (packaging)
+The APKBUILD creates a self-contained package that bundles libnice and WebRTC GStreamer plugins in `/opt/gnalk/`, avoiding conflicts with system libraries:
 
 ```bash
 abuild checksum
 abuild -r
-apk add ~/packages/*/gnalk-*.apk
 ```
 
-#### WebRTC Support (Video Calls)
-
-Alpine's `gst-plugins-bad` package does **not** include the `webrtcbin` element required for video calls. This is due to `libnice` version requirements (needs >= 0.1.23).
-
-To enable WebRTC support, compile `libnice` and `gst-plugins-bad` from source:
+#### Install
 
 ```bash
-# Install additional build dependencies
-sudo apk add openssl-dev libsrtp-dev libnice-dev
-
-mkdir -p ~/build-gst && cd ~/build-gst
-
-# 1. Build libnice 0.1.23
-curl -LO https://libnice.freedesktop.org/releases/libnice-0.1.23.tar.gz
-tar xzf libnice-0.1.23.tar.gz
-cd libnice-0.1.23
-meson setup build --prefix=/usr -Dtests=disabled -Dexamples=disabled
-meson compile -C build
-sudo meson install -C build
-cd ..
-
-# 2. Build gst-plugins-bad with webrtc
-curl -LO https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-1.28.0.tar.xz
-tar xf gst-plugins-bad-1.28.0.tar.xz
-cd gst-plugins-bad-1.28.0
-meson setup build --prefix=/usr -Dwebrtc=enabled
-meson compile -C build
-sudo meson install -C build
-
-# Verify webrtcbin is available
-gst-inspect-1.0 webrtcbin
+sudo apk add --allow-untrusted ~/packages/skilpa/aarch64/gnalk-0.1.0-r0.apk
 ```
 
-**Note:** After system updates that upgrade `gst-plugins-bad`, you may need to rebuild the webrtc plugin.
+#### Verify WebRTC
+
+```bash
+GST_PLUGIN_PATH=/opt/gnalk/lib/gstreamer-1.0 gst-inspect-1.0 webrtcbin
+```
+
+#### Package Structure
+
+```
+/opt/gnalk/
+├── bin/gnalk                    # Wrapper script (sets env vars)
+├── libexec/gnalk-bin            # Actual binary
+├── lib/
+│   ├── libnice.so.10            # Bundled libnice 0.1.23
+│   └── gstreamer-1.0/
+│       ├── libgstnice.so        # libnice GStreamer plugin
+│       ├── libgstwebrtc.so      # WebRTC plugin
+│       ├── libgstdtls.so        # DTLS plugin
+│       └── libgstsrtp.so        # SRTP plugin
+└── share/...
+/usr/bin/gnalk -> /opt/gnalk/bin/gnalk
+```
+
+This approach ensures video calls work without modifying system libraries.
 
 #### Screen Sharing (Mobile)
 
