@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkAudioPlayer" parent="GtkBox">
+    <property name="orientation">horizontal</property>
+    <property name="spacing">8</property>
+    <property name="halign">start</property>
+    <style>
+      <class name="audio-player"/>
+    </style>
+    <!-- Play/Pause button -->
+    <child>
+      <object class="GtkButton" id="play_button">
+        <property name="icon-name">media-playback-start-symbolic</property>
+        <property name="has-frame">false</property>
+        <property name="valign">center</property>
+        <style>
+          <class name="circular"/>
+        </style>
+      </object>
+    </child>
+    <!-- Loading spinner (shown during download) -->
+    <child>
+      <object class="GtkSpinner" id="loading_spinner">
+        <property name="visible">false</property>
+        <property name="valign">center</property>
+      </object>
+    </child>
+    <!-- Waveform seekbar with download overlay -->
+    <child>
+      <object class="GtkOverlay" id="waveform_overlay">
+        <property name="hexpand">true</property>
+        <property name="width-request">120</property>
+        <child>
+          <object class="GnalkWaveformSeekbar" id="waveform_seekbar">
+            <property name="hexpand">true</property>
+            <property name="valign">center</property>
+          </object>
+        </child>
+        <child type="overlay">
+          <object class="GtkButton" id="download_button">
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="has-frame">false</property>
+            <property name="tooltip-text">Download voice message</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">folder-download-symbolic</property>
+              </object>
+            </child>
+            <style>
+              <class name="dim-label"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+    <!-- Time label -->
+    <child>
+      <object class="GtkLabel" id="time_label">
+        <property name="label">0:00</property>
+        <property name="valign">center</property>
+        <style>
+          <class name="dim-label"/>
+          <class name="caption"/>
+        </style>
+      </object>
+    </child>
+  </template>
+</interface>

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkUploadPreview" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <property name="spacing">4</property>
+    <property name="visible">false</property>
+    <!-- Image preview overlay -->
+    <child>
+      <object class="GtkOverlay" id="image_overlay">
+        <property name="visible">false</property>
+        <property name="halign">start</property>
+        <child>
+          <object class="GtkPicture" id="image_preview">
+            <property name="can-shrink">true</property>
+            <property name="keep-aspect-ratio">true</property>
+            <property name="content-fit">contain</property>
+            <property name="width-request">200</property>
+            <property name="height-request">150</property>
+            <style>
+              <class name="message-file-preview"/>
+            </style>
+          </object>
+        </child>
+        <child type="overlay">
+          <object class="GtkSpinner" id="upload_spinner">
+            <property name="visible">false</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="width-request">32</property>
+            <property name="height-request">32</property>
+          </object>
+        </child>
+        <child type="overlay">
+          <object class="GtkImage" id="complete_icon">
+            <property name="visible">false</property>
+            <property name="halign">end</property>
+            <property name="valign">end</property>
+            <property name="margin-end">4</property>
+            <property name="margin-bottom">4</property>
+            <property name="icon-name">emblem-ok-symbolic</property>
+            <property name="pixel-size">16</property>
+            <style>
+              <class name="file-cached-icon"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+    <!-- Non-image file box -->
+    <child>
+      <object class="GtkBox" id="file_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">8</property>
+        <property name="visible">false</property>
+        <child>
+          <object class="GtkImage" id="file_icon">
+            <property name="pixel-size">32</property>
+            <property name="valign">center</property>
+            <property name="icon-name">text-x-generic-symbolic</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="file_name_label">
+            <property name="halign">start</property>
+            <property name="ellipsize">middle</property>
+            <property name="max-width-chars">30</property>
+            <style>
+              <class name="upload-file-name"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSpinner" id="file_spinner">
+            <property name="visible">false</property>
+            <property name="valign">center</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

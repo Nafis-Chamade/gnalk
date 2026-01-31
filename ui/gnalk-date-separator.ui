@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkDateSeparator" parent="GtkBox">
+    <property name="orientation">horizontal</property>
+    <property name="halign">center</property>
+    <property name="margin-top">8</property>
+    <property name="margin-bottom">8</property>
+    <style>
+      <class name="date-separator"/>
+    </style>
+    <child>
+      <object class="GtkLabel" id="label">
+        <style>
+          <class name="date-separator-label"/>
+        </style>
+      </object>
+    </child>
+  </template>
+</interface>

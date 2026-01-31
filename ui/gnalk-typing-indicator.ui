@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkTypingIndicator" parent="GtkBox">
+    <property name="orientation">horizontal</property>
+    <child>
+      <object class="GtkLabel" id="label">
+        <property name="halign">start</property>
+        <property name="ellipsize">end</property>
+        <property name="label"> </property>
+        <style>
+          <class name="typing-indicator"/>
+        </style>
+      </object>
+    </child>
+  </template>
+</interface>

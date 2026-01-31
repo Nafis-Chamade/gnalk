@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkConversationSidebar" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">6</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">6</property>
+        <property name="margin-bottom">6</property>
+        <child>
+          <object class="GtkSearchEntry" id="search_entry">
+            <property name="placeholder-text" translatable="yes">Search conversations...</property>
+            <property name="hexpand">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="new_conversation_button">
+            <property name="icon-name">list-add-symbolic</property>
+            <property name="tooltip-text" translatable="yes">New Conversation</property>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkRevealer" id="search_results_revealer">
+        <property name="reveal-child">false</property>
+        <property name="transition-type">slide-down</property>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Users</property>
+                <property name="halign">start</property>
+                <property name="margin-start">12</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">4</property>
+                <style>
+                  <class name="heading"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkListView" id="search_results_list">
+                <property name="single-click-activate">true</property>
+                <style>
+                  <class name="navigation-sidebar"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkSeparator">
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkScrolledWindow">
+        <property name="vexpand">true</property>
+        <property name="hscrollbar-policy">never</property>
+        <child>
+          <object class="GtkListView" id="conversation_list">
+            <property name="single-click-activate">true</property>
+            <style>
+              <class name="navigation-sidebar"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>net.skilpa.gnalk</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Gnalk</name>
+  <summary>Nextcloud Talk Client</summary>
+  <description>
+    <p>
+      Gnalk is a native GTK4 client for Nextcloud Talk, allowing you to
+      chat and make audio/video calls with your Nextcloud contacts.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>View and search conversations</li>
+      <li>Send and receive messages</li>
+      <li>Audio and video calls</li>
+      <li>Adaptive layout for desktop and mobile</li>
+    </ul>
+  </description>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main window showing conversations</caption>
+      <image>https://example.com/screenshots/main.png</image>
+    </screenshot>
+  </screenshots>
+  <url type="homepage">https://codeberg.org/skilpa/gnalk</url>
+  <url type="bugtracker">https://codeberg.org/skilpa/gnalk/issues</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2025-01-01">
+      <description>
+        <p>Initial release</p>
+      </description>
+    </release>
+  </releases>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+  </recommends>
+  <developer id="net.skilpa">
+    <name>Skilpa</name>
+  </developer>
+  <launchable type="desktop-id">net.skilpa.gnalk.desktop</launchable>
+</component>

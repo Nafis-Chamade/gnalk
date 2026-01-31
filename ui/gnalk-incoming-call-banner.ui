@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkIncomingCallBanner" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <child>
+      <object class="GtkRevealer" id="revealer">
+        <property name="reveal-child">false</property>
+        <property name="transition-type">slide-down</property>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">8</property>
+            <property name="margin-bottom">8</property>
+            <style>
+              <class name="incoming-call-banner"/>
+            </style>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">call-start-symbolic</property>
+                <property name="pixel-size">24</property>
+                <style>
+                  <class name="incoming-call-icon"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="label">
+                <property name="hexpand">true</property>
+                <property name="halign">start</property>
+                <property name="ellipsize">end</property>
+                <style>
+                  <class name="incoming-call-text"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="accept_button">
+                <property name="icon-name">call-start-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Accept Call</property>
+                <style>
+                  <class name="suggested-action"/>
+                  <class name="circular"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="refuse_button">
+                <property name="icon-name">call-stop-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Refuse Call</property>
+                <style>
+                  <class name="destructive-action"/>
+                  <class name="circular"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

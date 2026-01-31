@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkConversationHeader" parent="GtkBox">
+    <property name="orientation">horizontal</property>
+    <property name="hexpand">true</property>
+    <child>
+      <object class="GtkButton" id="room_header_button">
+        <property name="hexpand">true</property>
+        <style>
+          <class name="flat"/>
+          <class name="room-header-button"/>
+        </style>
+        <property name="child">
+          <object class="GtkBox" id="room_header">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">12</property>
+            <property name="margin-start">6</property>
+            <style>
+              <class name="room-header"/>
+            </style>
+            <child>
+              <object class="GtkOverlay">
+                <child>
+                  <object class="GtkFrame">
+                    <property name="overflow">hidden</property>
+                    <style>
+                      <class name="room-header-avatar"/>
+                    </style>
+                    <child>
+                      <object class="GtkImage" id="room_avatar">
+                        <property name="pixel-size">36</property>
+                        <property name="icon-name">avatar-default-symbolic</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child type="overlay">
+                  <object class="GtkImage" id="room_status_icon">
+                    <property name="pixel-size">12</property>
+                    <property name="halign">end</property>
+                    <property name="valign">end</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="status-indicator"/>
+                    </style>
+                  </object>
+                </child>
+                <child type="overlay">
+                  <object class="GtkImage" id="room_call_icon">
+                    <property name="pixel-size">12</property>
+                    <property name="halign">start</property>
+                    <property name="valign">start</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="call-indicator"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="valign">center</property>
+                <property name="hexpand">true</property>
+                <child>
+                  <object class="GtkLabel" id="room_title">
+                    <property name="ellipsize">end</property>
+                    <property name="xalign">0</property>
+                    <property name="hexpand">true</property>
+                    <style>
+                      <class name="room-header-title"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </child>
+  </template>
+</interface>

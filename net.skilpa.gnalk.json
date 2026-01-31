@@ -1,0 +1,38 @@
+{
+    "app-id": "net.skilpa.gnalk",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "49",
+    "sdk": "org.gnome.Sdk",
+    "command": "gnalk",
+    "finish-args": [
+        "--share=network",
+        "--share=ipc",
+        "--socket=fallback-x11",
+        "--socket=wayland",
+        "--socket=pulseaudio",
+        "--device=dri",
+        "--device=all",
+        "--filesystem=xdg-run/pipewire-0",
+        "--talk-name=org.freedesktop.secrets",
+        "--talk-name=org.freedesktop.Notifications",
+        "--talk-name=org.freedesktop.portal.Camera"
+    ],
+    "cleanup": [
+        "/include",
+        "/lib/pkgconfig",
+        "*.a",
+        "*.la"
+    ],
+    "modules": [
+        {
+            "name": "gnalk",
+            "buildsystem": "meson",
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "."
+                }
+            ]
+        }
+    ]
+}

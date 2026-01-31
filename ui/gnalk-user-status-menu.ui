@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="GnalkUserStatusMenu" parent="GtkBox">
+    <property name="orientation">horizontal</property>
+    <child>
+      <object class="GtkMenuButton" id="menu_button">
+        <property name="has-frame">false</property>
+        <property name="child">
+          <object class="GtkOverlay">
+            <child>
+              <object class="GtkFrame">
+                <property name="overflow">hidden</property>
+                <style>
+                  <class name="user-avatar"/>
+                </style>
+                <child>
+                  <object class="GtkImage" id="user_avatar">
+                    <property name="pixel-size">32</property>
+                    <property name="icon-name">avatar-default-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child type="overlay">
+              <object class="GtkImage" id="user_status_icon">
+                <property name="pixel-size">12</property>
+                <property name="halign">end</property>
+                <property name="valign">end</property>
+                <property name="visible">false</property>
+                <property name="icon-name">user-available-symbolic</property>
+                <style>
+                  <class name="status-indicator"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </property>
+        <property name="popover">
+          <object class="GtkPopover" id="status_popover">
+            <property name="child">
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">4</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+                <property name="margin-start">8</property>
+                <property name="margin-end">8</property>
+                <child>
+                  <object class="GtkButton" id="status_online_button">
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">user-available-symbolic</property>
+                            <style>
+                              <class name="status-online"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Online</property>
+                            <property name="halign">start</property>
+                            <property name="hexpand">true</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="status_away_button">
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">user-away-symbolic</property>
+                            <style>
+                              <class name="status-away"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Away</property>
+                            <property name="halign">start</property>
+                            <property name="hexpand">true</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="status_dnd_button">
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">user-busy-symbolic</property>
+                            <style>
+                              <class name="status-dnd"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Do Not Disturb</property>
+                            <property name="halign">start</property>
+                            <property name="hexpand">true</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSeparator"/>
+                </child>
+                <child>
+                  <object class="GtkButton" id="status_offline_button">
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="icon-name">user-offline-symbolic</property>
+                            <style>
+                              <class name="status-offline"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Appear Offline</property>
+                            <property name="halign">start</property>
+                            <property name="hexpand">true</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </property>
+      </object>
+    </child>
+  </template>
+</interface>

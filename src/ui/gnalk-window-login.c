@@ -1,0 +1,543 @@
+/* gnalk-window-login.c
+ *
+ * Login-related functionality extracted from gnalk-window.c.
+ * Handles authentication, autologin, and login view management.
+ */
+
+#include "gnalk-window-private.h"
+#include "gnalk-application.h"
+#include "gnalk-account-manager.h"
+#include "gnalk-keyring.h"
+#include "gnalk-database.h"
+#include "gnalk-goa.h"
+#include <glib/gi18n.h>
+
+/* GOA integration state (module-level for now) */
+static GnalkGoa *g_goa_client = NULL;
+
+/* ============ Login View Helper Wrappers ============ */
+
+void
+gnalk_window_login_show_error (GnalkWindow *self, const char *message)
+{
+  gnalk_login_view_show_error (self->login_view, message);
+}
+
+void
+gnalk_window_login_set_connecting (GnalkWindow *self, gboolean connecting)
+{
+  gnalk_login_view_set_connecting (self->login_view, connecting);
+}
+
+/* ============ GOA Helper Functions ============ */
+
+#ifdef HAVE_GOA
+
+static GList *
+get_active_goa_ids (GnalkAccountManager *account_manager)
+{
+  GList *result = NULL;
+  GListStore *accounts = gnalk_account_manager_get_accounts (account_manager);
+
+  if (!accounts)
+    return NULL;
+
+  guint n = g_list_model_get_n_items (G_LIST_MODEL (accounts));
+  for (guint i = 0; i < n; i++)
+    {
+      GnalkAccount *account = g_list_model_get_item (G_LIST_MODEL (accounts), i);
+      const char *goa_id = gnalk_account_get_goa_account_id (account);
+      if (goa_id && *goa_id)
+        result = g_list_prepend (result, g_strdup (goa_id));
+      g_object_unref (account);
+    }
+
+  return result;
+}
+
+static void
+refresh_goa_accounts_list (GnalkWindow *self)
+{
+  if (!g_goa_client || !gnalk_goa_is_available (g_goa_client))
+    {
+      gnalk_login_view_clear_goa_accounts (self->login_view);
+      return;
+    }
+
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+
+  GList *goa_accounts = gnalk_goa_get_nextcloud_accounts (g_goa_client);
+  GList *active_goa_ids = get_active_goa_ids (account_manager);
+
+  gnalk_login_view_set_goa_accounts (self->login_view, goa_accounts, active_goa_ids);
+
+  g_list_free_full (goa_accounts, (GDestroyNotify) gnalk_goa_account_info_free);
+  g_list_free_full (active_goa_ids, g_free);
+}
+
+static void
+handle_goa_account_removed (GnalkWindow *self,
+                             GnalkAccount *account)
+{
+  const char *goa_id = gnalk_account_get_goa_account_id (account);
+  if (!goa_id || !*goa_id)
+    return;
+
+  /* Check if the GOA account still exists */
+  if (g_goa_client && gnalk_goa_account_exists (g_goa_client, goa_id))
+    return;
+
+  gint64 account_id = gnalk_account_get_id (account);
+  g_message ("GOA account removed: %s (gnalk account %ld)",
+             goa_id, (long) account_id);
+
+  /* Disconnect the session but do NOT delete data.
+   * Per GNOME GOA documentation: "Applications must not destroy data
+   * if an account object is removed..." */
+  if (self->session_manager)
+    {
+      GnalkSession *session = gnalk_session_manager_get_session (
+          self->session_manager, account_id);
+      if (session)
+        {
+          g_message ("Disconnecting session for removed GOA account");
+          gnalk_session_manager_stop_session (self->session_manager, account_id);
+        }
+    }
+
+  /* Clear the GOA account ID but keep the account data */
+  gnalk_account_set_goa_account_id (account, NULL);
+
+  /* Disable autologin since credentials are no longer available */
+  gnalk_account_set_autologin (account, FALSE);
+
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+  gnalk_account_manager_save_account (account_manager, account);
+}
+
+static void
+check_for_removed_goa_accounts (GnalkWindow *self)
+{
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+  GListStore *accounts = gnalk_account_manager_get_accounts (account_manager);
+
+  if (!accounts)
+    return;
+
+  guint n = g_list_model_get_n_items (G_LIST_MODEL (accounts));
+  for (guint i = 0; i < n; i++)
+    {
+      GnalkAccount *account = g_list_model_get_item (G_LIST_MODEL (accounts), i);
+      handle_goa_account_removed (self, account);
+      g_object_unref (account);
+    }
+}
+
+static void
+on_goa_accounts_changed (GnalkGoa    *goa G_GNUC_UNUSED,
+                          GnalkWindow *self)
+{
+  /* Check if any linked GOA accounts were removed */
+  check_for_removed_goa_accounts (self);
+
+  /* Refresh the GOA accounts list in the login view */
+  refresh_goa_accounts_list (self);
+}
+
+static void
+on_login_view_goa_account_selected (GnalkLoginView *view G_GNUC_UNUSED,
+                                     const char      *goa_id,
+                                     GnalkWindow    *self)
+{
+  g_message ("GOA account selected: %s", goa_id);
+
+  if (!g_goa_client)
+    {
+      gnalk_window_login_show_error (self, _("GNOME Online Accounts not available"));
+      return;
+    }
+
+  /* Retrieve credentials from GOA */
+  g_autofree char *server_url = NULL;
+  g_autofree char *user_id = NULL;
+  g_autofree char *password = NULL;
+  GError *error = NULL;
+
+  if (!gnalk_goa_get_credentials (g_goa_client, goa_id, &server_url, &user_id, &password, &error))
+    {
+      g_autofree char *msg = g_strdup_printf (_("Failed to get credentials: %s"),
+                                               error ? error->message : "Unknown error");
+      gnalk_window_login_show_error (self, msg);
+      g_clear_error (&error);
+      return;
+    }
+
+  /* Show connecting state */
+  gnalk_window_login_set_connecting (self, TRUE);
+
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+
+  /* Create or get existing account and link it to GOA */
+  GnalkAccount *account = gnalk_account_manager_add_account (account_manager, server_url, user_id);
+  gnalk_account_set_goa_account_id (account, goa_id);
+
+  /* Store password in keyring (GOA passwords are app tokens, same as manual login) */
+  GError *keyring_error = NULL;
+  if (!gnalk_keyring_store_password_sync (server_url, user_id, password, &keyring_error))
+    {
+      g_warning ("Failed to store password in keyring: %s",
+                 keyring_error ? keyring_error->message : "unknown error");
+      g_clear_error (&keyring_error);
+    }
+
+  /* Enable autologin for this account */
+  gnalk_account_set_autologin (account, TRUE);
+  gnalk_account_set_enabled (account, TRUE);
+  gnalk_account_manager_save_account (account_manager, account);
+
+  /* Update GSettings for compatibility */
+  GSettings *settings = gnalk_application_get_settings (app);
+  g_settings_set_boolean (settings, "autologin-enabled", TRUE);
+  g_settings_set_string (settings, "last-server-url", server_url);
+  g_settings_set_string (settings, "last-user-id", user_id);
+
+  /* Set credentials in application */
+  gnalk_application_set_credentials (app, server_url, user_id, password);
+
+  /* Start session via SessionManager */
+  GnalkSession *session = gnalk_session_manager_start_session (self->session_manager, account, password);
+  if (session)
+    gnalk_session_manager_set_active_session (self->session_manager, session);
+}
+
+#endif /* HAVE_GOA */
+
+/* ============ Login View Signal Handler ============ */
+
+void
+gnalk_window_on_login_view_connect_clicked (GnalkLoginView *view,
+                                             GnalkWindow    *self)
+{
+  (void) view;
+
+  if (gnalk_login_view_get_is_guest_mode (self->login_view))
+    gnalk_window_start_guest_login (self);
+  else
+    gnalk_window_start_login (self);
+}
+
+/* ============ Login Functions ============ */
+
+void
+gnalk_window_start_login (GnalkWindow *self)
+{
+  const char *server = gnalk_login_view_get_server (self->login_view);
+  const char *user = gnalk_login_view_get_user (self->login_view);
+  const char *password = gnalk_login_view_get_password (self->login_view);
+
+  if (!server || !*server || !user || !*user || !password || !*password)
+    {
+      gnalk_window_login_show_error (self, _("Please fill in all fields"));
+      return;
+    }
+
+  /* Show connecting state */
+  gnalk_window_login_set_connecting (self, TRUE);
+
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+
+  /* Create or get existing account */
+  GnalkAccount *account = gnalk_account_manager_add_account (account_manager, server, user);
+
+  /* Store password in keyring */
+  GError *keyring_error = NULL;
+  if (!gnalk_keyring_store_password_sync (server, user, password, &keyring_error))
+    {
+      g_warning ("Failed to store password in keyring: %s",
+                 keyring_error ? keyring_error->message : "unknown error");
+      g_clear_error (&keyring_error);
+    }
+
+  /* Enable autologin for this account */
+  gnalk_account_set_autologin (account, TRUE);
+  gnalk_account_set_enabled (account, TRUE);
+  gnalk_account_manager_save_account (account_manager, account);
+
+  /* Update GSettings for compatibility with old autologin code */
+  GSettings *settings = gnalk_application_get_settings (app);
+  g_settings_set_boolean (settings, "autologin-enabled", TRUE);
+  g_settings_set_string (settings, "last-server-url", server);
+  g_settings_set_string (settings, "last-user-id", user);
+
+  /* Set credentials in application (for components that still need it) */
+  gnalk_application_set_credentials (app, server, user, password);
+
+  /* Start session via SessionManager - state changes will update UI.
+   * Make the new session active since user explicitly logged in with these credentials. */
+  GnalkSession *session = gnalk_session_manager_start_session (self->session_manager, account, password);
+  if (session)
+    gnalk_session_manager_set_active_session (self->session_manager, session);
+}
+
+void
+gnalk_window_start_guest_login (GnalkWindow *self)
+{
+  /* TODO: Implement guest login support in Session architecture.
+   * Guest login requires a different auth flow:
+   * 1. No user/password - just room join
+   * 2. Get room info to check if public
+   * 3. Join room as guest
+   * 4. Set guest display name
+   * 5. Get signaling settings
+   * For now, show error message. */
+  (void)self;
+  gnalk_window_login_show_error (self, _("Guest login is not yet supported. Please use regular login."));
+}
+
+void
+gnalk_window_show_login_view (GnalkWindow *self)
+{
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+
+#ifdef HAVE_GOA
+  /* Initialize GOA client if not already done */
+  if (!g_goa_client)
+    {
+      g_goa_client = gnalk_goa_new ();
+      if (g_goa_client && gnalk_goa_is_available (g_goa_client))
+        {
+          g_signal_connect (g_goa_client, "accounts-changed",
+                            G_CALLBACK (on_goa_accounts_changed), self);
+
+          /* Connect the GOA account selection signal */
+          g_signal_connect (self->login_view, "goa-account-selected",
+                            G_CALLBACK (on_login_view_goa_account_selected), self);
+        }
+    }
+
+  /* Refresh GOA accounts list */
+  refresh_goa_accounts_list (self);
+#endif /* HAVE_GOA */
+
+  /* Pre-fill defaults from application */
+  const char *server_url = gnalk_application_get_server_url (app);
+  const char *user_id = gnalk_application_get_user_id (app);
+
+  if (server_url)
+    gnalk_login_view_set_server (self->login_view, server_url);
+  if (user_id)
+    gnalk_login_view_set_user (self->login_view, user_id);
+
+  gtk_stack_set_visible_child_name (GTK_STACK (self->main_stack), "login");
+}
+
+void
+gnalk_window_show_offline_main_view (GnalkWindow *self)
+{
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GSettings *settings = gnalk_application_get_settings (app);
+
+  /* Reset participant status since we're starting offline and can't know real status */
+  {
+    GnalkDatabase *db = gnalk_application_get_database (app);
+    GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+    GList *autologin_accounts = gnalk_account_manager_get_autologin_accounts (account_manager);
+    if (db && autologin_accounts)
+      {
+        GnalkAccount *account = GNALK_ACCOUNT (autologin_accounts->data);
+        gint64 account_id = gnalk_account_get_id (account);
+        if (account_id > 0)
+          gnalk_database_reset_participants_status (db, account_id);
+        g_list_free_full (autologin_accounts, g_object_unref);
+      }
+  }
+
+  /* Load cached conversations from database */
+  gnalk_window_load_conversations_from_db (self);
+
+  /* Mark avatar cache as offline to prevent network requests */
+  if (self->avatar_cache)
+    gnalk_avatar_cache_set_online (self->avatar_cache, FALSE);
+
+  /* Load user display name and avatar from cache */
+  g_autofree char *display_name = g_settings_get_string (settings, "last-display-name");
+  g_autofree char *user_id = g_settings_get_string (settings, "last-user-id");
+
+  if (display_name && *display_name)
+    {
+      g_free (self->user_name);
+      self->user_name = g_strdup (display_name);
+      g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_USER_NAME]);
+    }
+
+  /* Load cached user avatar */
+  if (user_id && *user_id && self->avatar_cache)
+    gnalk_user_status_menu_set_user (self->user_status_menu, user_id, self->avatar_cache);
+
+  /* Ensure main view is shown (UI template defaults to main, so this is usually a no-op) */
+  const char *current = gtk_stack_get_visible_child_name (GTK_STACK (self->main_stack));
+  if (g_strcmp0 (current, "main") != 0)
+    gtk_stack_set_visible_child_name (GTK_STACK (self->main_stack), "main");
+
+  /* Only show offline banner if we had a previous connection error, not on initial startup */
+  if (self->had_connection_error)
+    {
+      gnalk_network_status_bar_set_offline (self->network_status_bar, TRUE, NULL);
+      self->was_offline = TRUE;
+    }
+
+  /* Immediately restore last room from settings (before async conversation load).
+   * Only in non-collapsed/desktop mode. Messages load from DB cache. */
+  gboolean is_collapsed = adw_navigation_split_view_get_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view));
+  if (!is_collapsed)
+    {
+      g_autofree char *last_room = g_settings_get_string (settings, "last-room-token");
+      if (last_room && *last_room)
+        {
+          g_message ("Immediate restore: opening room %s from cache", last_room);
+
+          /* Set up room state immediately - conversation details will update when list loads */
+          g_free (self->current_room_token);
+          self->current_room_token = g_strdup (last_room);
+          self->has_active_room = TRUE;
+          gnalk_message_controller_set_room (self->message_controller, last_room);
+
+          g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
+
+          /* Initialize state for lazy loading older messages */
+          self->oldest_loaded_message_id = 0;
+          self->has_more_history = TRUE;
+          self->initial_messages_loaded = FALSE;
+          gnalk_message_view_set_loading_older (self->message_view, FALSE);
+
+          /* Load messages from DB cache and scroll to bottom */
+          self->scroll_to_bottom = TRUE;
+          gnalk_message_view_show_messages (self->message_view);
+          gnalk_window_load_messages_from_db (self, last_room);
+        }
+    }
+}
+
+void
+gnalk_window_attempt_autologin (GnalkWindow *self)
+{
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+  GnalkSessionManager *session_manager = gnalk_application_get_session_manager (app);
+  GSettings *settings = gnalk_application_get_settings (app);
+
+  /* Update our cached session_manager reference (may have been NULL during init
+   * if window was created before async startup completed) */
+  if (!self->session_manager && session_manager)
+    {
+      self->session_manager = session_manager;
+      /* Connect signals we missed during init */
+      g_signal_connect_object (self->session_manager, "active-session-changed",
+                               G_CALLBACK (gnalk_window_on_session_manager_active_changed), self, G_CONNECT_DEFAULT);
+      g_signal_connect_object (self->session_manager, "any-session-state-changed",
+                               G_CALLBACK (gnalk_window_on_session_manager_any_state_changed), self, G_CONNECT_DEFAULT);
+      g_signal_connect_object (self->session_manager, "conversations-changed",
+                               G_CALLBACK (gnalk_window_on_session_manager_conversations_changed), self, G_CONNECT_DEFAULT);
+
+      if (self->account_switcher)
+        {
+          gnalk_account_switcher_set_session_manager (self->account_switcher, self->session_manager);
+          g_signal_connect (self->account_switcher, "add-account-requested",
+                            G_CALLBACK (gnalk_window_on_add_account_requested), self);
+          g_signal_connect (self->account_switcher, "sign-out-requested",
+                            G_CALLBACK (gnalk_window_on_sign_out_requested), self);
+        }
+    }
+
+  /* Check if we have any accounts with autologin enabled */
+  GList *autologin_accounts = gnalk_account_manager_get_autologin_accounts (account_manager);
+
+  if (!autologin_accounts)
+    {
+      /* Fallback: check legacy GSettings autologin (for migration) */
+      if (!g_settings_get_boolean (settings, "autologin-enabled"))
+        {
+          gnalk_window_show_login_view (self);
+          return;
+        }
+
+      /* Try to migrate legacy settings to account */
+      g_autofree char *server_url = g_settings_get_string (settings, "last-server-url");
+      g_autofree char *user_id = g_settings_get_string (settings, "last-user-id");
+
+      if (!server_url || !*server_url || !user_id || !*user_id)
+        {
+          gnalk_window_show_login_view (self);
+          return;
+        }
+
+      /* Check if password exists in keyring */
+      g_autofree char *password = gnalk_keyring_lookup_password_sync (server_url, user_id, NULL);
+      if (!password || !*password)
+        {
+          gnalk_window_show_login_view (self);
+          return;
+        }
+
+      /* Migrate: create account with autologin enabled */
+      GnalkAccount *account = gnalk_account_manager_add_account (account_manager, server_url, user_id);
+      if (account)
+        {
+          gnalk_account_set_autologin (account, TRUE);
+          gnalk_account_set_enabled (account, TRUE);
+          gnalk_account_manager_save_account (account_manager, account);
+        }
+    }
+  else
+    {
+      /* Free the list - SessionManager will refetch accounts */
+      g_list_free_full (autologin_accounts, g_object_unref);
+    }
+
+  /* Show main view with cached data first */
+  gnalk_window_show_offline_main_view (self);
+
+  /* Check if session manager already has an active session (e.g., from service mode).
+   * If not, connect_all will trigger session creation. */
+  GnalkSession *active = gnalk_session_manager_get_active_session (self->session_manager);
+  if (!active)
+    {
+      /* Connect all autologin accounts via SessionManager.
+       * SessionManager handles:
+       * - Loading passwords from keyring
+       * - Starting sessions for each account
+       * - Reconnection on network changes
+       * - Background auth with timeouts
+       * Session state changes will update the UI via on_session_state_changed() */
+      g_message ("Autologin: no active session, connecting all accounts via SessionManager");
+      gnalk_session_manager_connect_all (self->session_manager);
+    }
+
+  /* Try to restore the last active account from settings.
+   * This works both for fresh connect_all and for service mode with existing sessions. */
+  gint64 last_account_id = g_settings_get_int64 (settings, "last-account-id");
+  if (last_account_id > 0)
+    {
+      GnalkSession *last_session = gnalk_session_manager_get_session (self->session_manager, last_account_id);
+      if (last_session)
+        {
+          g_message ("Autologin: restoring last active account %ld", (long) last_account_id);
+          gnalk_session_manager_set_active_session (self->session_manager, last_session);
+          gnalk_window_switch_to_session (self, last_session);
+          return;
+        }
+    }
+
+  /* Fallback: switch to whatever session is currently active */
+  active = gnalk_session_manager_get_active_session (self->session_manager);
+  if (active)
+    {
+      g_message ("Autologin: switching to current active session");
+      gnalk_window_switch_to_session (self, active);
+    }
+}

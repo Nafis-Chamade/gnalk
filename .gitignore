@@ -1,0 +1,26 @@
+# Meson build directory
+build/
+
+# Flatpak build directories
+.flatpak-builder/
+build-dir/
+
+# Subprojects
+subprojects/
+
+# Compiled objects
+*.o
+*.so
+*.a
+
+# Editor backup files
+*~
+*.swp
+
+# Generated files
+compile_commands.json
+data/gschemas.compiled
+
+# Tool configs
+.cache/
+cclsp.json

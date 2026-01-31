@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkParticipantsList" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <child>
+      <object class="GtkRevealer" id="revealer">
+        <property name="reveal-child">false</property>
+        <property name="transition-type">slide-down</property>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">automatic</property>
+            <property name="vscrollbar-policy">never</property>
+            <property name="max-content-height">60</property>
+            <style>
+              <class name="participants-bar"/>
+            </style>
+            <child>
+              <object class="GtkBox" id="participants_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">8</property>
+                <property name="margin-bottom">8</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

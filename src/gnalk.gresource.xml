@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/net/skilpa/gnalk">
+    <file preprocess="xml-stripblanks">gnalk-window.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-connection-dialog.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-new-conversation-dialog.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-conversation-info-dialog.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-conversation-row.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-message-row.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-call-window.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-participant-tile.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-typing-indicator.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-network-status-bar.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-user-status-menu.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-message-input.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-conversation-header.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-conversation-actions.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-incoming-call-banner.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-participants-list.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-message-view.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-conversation-sidebar.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-login-view.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-preferences-dialog.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-image-gallery.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-audio-player.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-video-player.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-date-separator.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-quote-widget.ui</file>
+    <file preprocess="xml-stripblanks">gnalk-upload-preview.ui</file>
+    <file>style.css</file>
+  </gresource>
+</gresources>

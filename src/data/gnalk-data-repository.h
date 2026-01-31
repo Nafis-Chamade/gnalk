@@ -1,0 +1,234 @@
+#pragma once
+
+#include <glib-object.h>
+#include <gio/gio.h>
+#include "gnalk-database.h"
+#include "gnalk-conversation-data.h"
+#include "gnalk-message-data.h"
+
+G_BEGIN_DECLS
+
+/* Forward declaration */
+typedef struct _GnalkAccount GnalkAccount;
+
+#define GNALK_TYPE_DATA_REPOSITORY (gnalk_data_repository_get_type ())
+G_DECLARE_FINAL_TYPE (GnalkDataRepository, gnalk_data_repository, GNALK, DATA_REPOSITORY, GObject)
+
+/**
+ * GnalkDataRepository:
+ *
+ * Async wrapper around GnalkDatabase for non-blocking data access.
+ * All methods run database operations in a thread pool and invoke
+ * callbacks on the main thread.
+ *
+ * This enables instant window display - the UI shows immediately
+ * while data loads asynchronously in the background.
+ */
+
+/**
+ * GnalkDataRepositoryCallback:
+ * @repository: The data repository
+ * @result: The result (type depends on the operation)
+ * @error: Error if operation failed, or NULL
+ * @user_data: User data passed to the async function
+ *
+ * Callback signature for async data repository operations.
+ */
+typedef void (*GnalkDataRepositoryCallback) (GnalkDataRepository *repository,
+                                               gpointer              result,
+                                               GError               *error,
+                                               gpointer              user_data);
+
+/* Constructor */
+GnalkDataRepository *gnalk_data_repository_new (void);
+
+/**
+ * gnalk_data_repository_open_async:
+ * @self: The data repository
+ * @callback: Callback when complete (result is gboolean success)
+ * @user_data: User data for callback
+ *
+ * Opens the database asynchronously. Must be called before other operations.
+ */
+void gnalk_data_repository_open_async (GnalkDataRepository          *self,
+                                          GnalkDataRepositoryCallback   callback,
+                                          gpointer                       user_data);
+
+/**
+ * gnalk_data_repository_is_open:
+ * @self: The data repository
+ *
+ * Returns: TRUE if the database is open
+ */
+gboolean gnalk_data_repository_is_open (GnalkDataRepository *self);
+
+/**
+ * gnalk_data_repository_get_database:
+ * @self: The data repository
+ *
+ * Get the underlying database for synchronous operations when needed.
+ * Use with care - prefer async methods.
+ *
+ * Returns: (transfer none): The database (may be NULL if not open)
+ */
+GnalkDatabase *gnalk_data_repository_get_database (GnalkDataRepository *self);
+
+/* Account operations */
+
+/**
+ * gnalk_data_repository_load_accounts_async:
+ * @self: The data repository
+ * @callback: Callback when complete (result is GListStore of GnalkAccount)
+ * @user_data: User data for callback
+ *
+ * Loads all accounts from the database asynchronously.
+ */
+void gnalk_data_repository_load_accounts_async (GnalkDataRepository          *self,
+                                                   GnalkDataRepositoryCallback   callback,
+                                                   gpointer                       user_data);
+
+/* Conversation operations */
+
+/**
+ * gnalk_data_repository_load_conversations_async:
+ * @self: The data repository
+ * @account_id: The account ID to load conversations for
+ * @callback: Callback when complete (result is GListStore of GnalkConversationData)
+ * @user_data: User data for callback
+ *
+ * Loads conversations for an account asynchronously.
+ */
+void gnalk_data_repository_load_conversations_async (GnalkDataRepository          *self,
+                                                        gint64                         account_id,
+                                                        GnalkDataRepositoryCallback   callback,
+                                                        gpointer                        user_data);
+
+/**
+ * gnalk_data_repository_save_conversation_async:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation: The conversation to save
+ * @callback: Callback when complete (result is NULL, check error)
+ * @user_data: User data for callback
+ *
+ * Saves a conversation asynchronously.
+ */
+void gnalk_data_repository_save_conversation_async (GnalkDataRepository          *self,
+                                                       gint64                         account_id,
+                                                       GnalkConversationData        *conversation,
+                                                       GnalkDataRepositoryCallback   callback,
+                                                       gpointer                        user_data);
+
+/* Message operations */
+
+/**
+ * gnalk_data_repository_load_messages_async:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @limit: Maximum number of messages to load
+ * @before_id: Load messages before this ID (0 for latest)
+ * @callback: Callback when complete (result is GListStore of GnalkMessageData)
+ * @user_data: User data for callback
+ *
+ * Loads messages for a conversation asynchronously.
+ */
+void gnalk_data_repository_load_messages_async (GnalkDataRepository          *self,
+                                                   gint64                         account_id,
+                                                   const char                    *conversation_token,
+                                                   gint                           limit,
+                                                   gint64                         before_id,
+                                                   GnalkDataRepositoryCallback   callback,
+                                                   gpointer                        user_data);
+
+/**
+ * gnalk_data_repository_save_message_async:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @message: The message to save
+ * @callback: Callback when complete (result is NULL, check error)
+ * @user_data: User data for callback
+ *
+ * Saves a message asynchronously.
+ */
+void gnalk_data_repository_save_message_async (GnalkDataRepository          *self,
+                                                  gint64                         account_id,
+                                                  const char                    *conversation_token,
+                                                  GnalkMessageData             *message,
+                                                  GnalkDataRepositoryCallback   callback,
+                                                  gpointer                        user_data);
+
+/* Participants operations */
+
+/**
+ * gnalk_data_repository_load_participants_async:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @callback: Callback when complete (result is JsonArray)
+ * @user_data: User data for callback
+ *
+ * Loads participants for a conversation asynchronously.
+ */
+void gnalk_data_repository_load_participants_async (GnalkDataRepository          *self,
+                                                       gint64                         account_id,
+                                                       const char                    *conversation_token,
+                                                       GnalkDataRepositoryCallback   callback,
+                                                       gpointer                        user_data);
+
+/**
+ * gnalk_data_repository_save_participants_async:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @participants: The participants array to save
+ * @callback: Callback when complete (result is NULL, check error)
+ * @user_data: User data for callback
+ *
+ * Saves participants for a conversation asynchronously.
+ */
+void gnalk_data_repository_save_participants_async (GnalkDataRepository          *self,
+                                                       gint64                         account_id,
+                                                       const char                    *conversation_token,
+                                                       JsonArray                     *participants,
+                                                       GnalkDataRepositoryCallback   callback,
+                                                       gpointer                        user_data);
+
+/* Sync state operations */
+
+/**
+ * gnalk_data_repository_get_last_known_message_id_async:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @callback: Callback when complete (result is gint64* pointing to message ID)
+ * @user_data: User data for callback
+ *
+ * Gets the last known message ID for a conversation asynchronously.
+ */
+void gnalk_data_repository_get_last_known_message_id_async (GnalkDataRepository          *self,
+                                                               gint64                         account_id,
+                                                               const char                    *conversation_token,
+                                                               GnalkDataRepositoryCallback   callback,
+                                                               gpointer                        user_data);
+
+/**
+ * gnalk_data_repository_set_last_known_message_id_async:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @message_id: The message ID to set
+ * @callback: Callback when complete (result is NULL, check error)
+ * @user_data: User data for callback
+ *
+ * Sets the last known message ID for a conversation asynchronously.
+ */
+void gnalk_data_repository_set_last_known_message_id_async (GnalkDataRepository          *self,
+                                                               gint64                         account_id,
+                                                               const char                    *conversation_token,
+                                                               gint64                         message_id,
+                                                               GnalkDataRepositoryCallback   callback,
+                                                               gpointer                        user_data);
+
+G_END_DECLS

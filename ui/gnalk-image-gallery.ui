@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="GnalkImageGallery" parent="AdwDialog">
+    <property name="content-width">800</property>
+    <property name="content-height">600</property>
+    <property name="child">
+      <object class="GtkOverlay" id="overlay">
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <style>
+          <class name="image-gallery-overlay"/>
+        </style>
+
+        <!-- Main image container with stack for transitions -->
+        <child>
+          <object class="GtkStack" id="stack">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <property name="transition-duration">200</property>
+            <property name="transition-type">slide-left</property>
+            <child>
+              <object class="GtkStackPage">
+                <property name="name">image</property>
+                <property name="child">
+                  <object class="GtkPicture" id="current_picture">
+                    <property name="hexpand">true</property>
+                    <property name="vexpand">true</property>
+                    <property name="can-shrink">true</property>
+                    <property name="keep-aspect-ratio">true</property>
+                    <property name="content-fit">contain</property>
+                    <style>
+                      <class name="gallery-image"/>
+                    </style>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Loading spinner (centered) -->
+        <child type="overlay">
+          <object class="GtkSpinner" id="spinner">
+            <property name="visible">false</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="width-request">48</property>
+            <property name="height-request">48</property>
+            <style>
+              <class name="gallery-spinner"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Header bar with close button and counter -->
+        <child type="overlay">
+          <object class="GtkBox" id="header_box">
+            <property name="orientation">horizontal</property>
+            <property name="halign">fill</property>
+            <property name="valign">start</property>
+            <property name="hexpand">true</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">12</property>
+            <style>
+              <class name="gallery-header"/>
+            </style>
+
+            <!-- Counter label (left side) -->
+            <child>
+              <object class="GtkLabel" id="counter_label">
+                <property name="halign">start</property>
+                <property name="hexpand">true</property>
+                <style>
+                  <class name="gallery-counter"/>
+                </style>
+              </object>
+            </child>
+
+            <!-- Close button (right side) -->
+            <child>
+              <object class="GtkButton" id="close_button">
+                <property name="halign">end</property>
+                <property name="icon-name">window-close-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Close</property>
+                <style>
+                  <class name="circular"/>
+                  <class name="gallery-close-button"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+
+        <!-- Previous button (left side, vertically centered) -->
+        <child type="overlay">
+          <object class="GtkButton" id="prev_button">
+            <property name="halign">start</property>
+            <property name="valign">center</property>
+            <property name="margin-start">12</property>
+            <property name="icon-name">go-previous-symbolic</property>
+            <property name="tooltip-text" translatable="yes">Previous image</property>
+            <style>
+              <class name="circular"/>
+              <class name="gallery-nav-button"/>
+            </style>
+          </object>
+        </child>
+
+        <!-- Next button (right side, vertically centered) -->
+        <child type="overlay">
+          <object class="GtkButton" id="next_button">
+            <property name="halign">end</property>
+            <property name="valign">center</property>
+            <property name="margin-end">12</property>
+            <property name="icon-name">go-next-symbolic</property>
+            <property name="tooltip-text" translatable="yes">Next image</property>
+            <style>
+              <class name="circular"/>
+              <class name="gallery-nav-button"/>
+            </style>
+          </object>
+        </child>
+
+      </object>
+    </property>
+  </template>
+</interface>

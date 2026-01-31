@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="GnalkNewConversationDialog" parent="AdwDialog">
+    <property name="title" translatable="yes">New Group Conversation</property>
+    <property name="content-width">450</property>
+    <property name="content-height">550</property>
+    <property name="child">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-end-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="cancel_button">
+                <property name="label" translatable="yes">Cancel</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="create_button">
+                <property name="label" translatable="yes">Create</property>
+                <property name="sensitive">false</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">400</property>
+                <property name="margin-top">12</property>
+                <property name="margin-bottom">12</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">18</property>
+                    <!-- Group Info Section -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Group Info</property>
+                        <!-- Avatar picker -->
+                        <child>
+                          <object class="GtkBox">
+                            <property name="halign">center</property>
+                            <property name="margin-top">6</property>
+                            <property name="margin-bottom">12</property>
+                            <child>
+                              <object class="GtkButton" id="avatar_button">
+                                <property name="width-request">96</property>
+                                <property name="height-request">96</property>
+                                <property name="tooltip-text" translatable="yes">Select group avatar</property>
+                                <style>
+                                  <class name="circular"/>
+                                  <class name="avatar-button"/>
+                                </style>
+                                <property name="child">
+                                  <object class="GtkImage" id="avatar_preview">
+                                    <property name="icon-name">camera-photo-symbolic</property>
+                                    <property name="pixel-size">48</property>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwEntryRow" id="name_entry">
+                            <property name="title" translatable="yes">Name</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwEntryRow" id="description_entry">
+                            <property name="title" translatable="yes">Description (optional)</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- Add Members Section -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Add Members</property>
+                        <child>
+                          <object class="GtkSearchEntry" id="search_entry">
+                            <property name="placeholder-text" translatable="yes">Search users...</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">6</property>
+                            <property name="margin-bottom">6</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- Search Results -->
+                    <child>
+                      <object class="GtkRevealer" id="search_results_revealer">
+                        <property name="reveal-child">false</property>
+                        <property name="transition-type">slide-down</property>
+                        <child>
+                          <object class="GtkFrame">
+                            <child>
+                              <object class="GtkScrolledWindow">
+                                <property name="max-content-height">200</property>
+                                <property name="propagate-natural-height">true</property>
+                                <property name="hscrollbar-policy">never</property>
+                                <child>
+                                  <object class="GtkListView" id="search_results_list">
+                                    <property name="single-click-activate">true</property>
+                                    <style>
+                                      <class name="navigation-sidebar"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- Selected Members Section -->
+                    <child>
+                      <object class="AdwPreferencesGroup" id="members_group">
+                        <property name="title" translatable="yes">Members</property>
+                        <property name="visible">false</property>
+                        <child>
+                          <object class="GtkListBox" id="members_list">
+                            <property name="selection-mode">none</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- Status Indicators -->
+                    <child>
+                      <object class="GtkSpinner" id="spinner">
+                        <property name="halign">center</property>
+                        <property name="spinning">false</property>
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="status_label">
+                        <property name="halign">center</property>
+                        <property name="wrap">true</property>
+                        <property name="visible">false</property>
+                        <style>
+                          <class name="error"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

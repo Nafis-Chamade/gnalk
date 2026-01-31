@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkMessageRow" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <property name="spacing">2</property>
+    <style>
+      <class name="message-row"/>
+    </style>
+    <!-- Date separator shown when date changes -->
+    <child>
+      <object class="GnalkDateSeparator" id="date_separator">
+        <property name="visible">false</property>
+      </object>
+    </child>
+    <!-- Main message area: horizontal layout with avatar on left -->
+    <child>
+      <object class="GtkBox" id="message_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">8</property>
+        <!-- Avatar frame (shown for first message of group in aligned mode) -->
+        <child>
+          <object class="GtkBox" id="avatar_box">
+            <property name="valign">start</property>
+            <child>
+              <object class="GtkFrame" id="avatar_frame">
+                <property name="valign">start</property>
+                <property name="overflow">hidden</property>
+                <style>
+                  <class name="message-avatar"/>
+                </style>
+                <child>
+                  <object class="GtkImage" id="avatar">
+                    <property name="pixel-size">32</property>
+                    <property name="icon-name">avatar-default-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Vertical content area -->
+        <child>
+          <object class="GtkBox" id="content_box">
+            <property name="orientation">vertical</property>
+            <property name="spacing">2</property>
+            <property name="hexpand">true</property>
+            <!-- Username label (shown in group chats in aligned mode) -->
+            <child>
+              <object class="GtkLabel" id="username_label">
+                <property name="halign">start</property>
+                <property name="visible">false</property>
+                <style>
+                  <class name="message-username"/>
+                </style>
+              </object>
+            </child>
+        <!-- Quote/reply preview -->
+        <child>
+          <object class="GnalkQuoteWidget" id="quote_widget">
+            <property name="visible">false</property>
+          </object>
+        </child>
+        <!-- Upload preview (shown during/after file upload) -->
+        <child>
+          <object class="GnalkUploadPreview" id="upload_preview">
+            <property name="visible">false</property>
+          </object>
+        </child>
+        <!-- File preview (for received files) -->
+        <child>
+          <object class="GnalkFilePreview" id="file_preview">
+            <property name="visible">false</property>
+          </object>
+        </child>
+        <!-- Audio player (for audio files) -->
+        <child>
+          <object class="GnalkAudioPlayer" id="audio_player">
+            <property name="visible">false</property>
+          </object>
+        </child>
+        <!-- Video thumbnail (for video files) -->
+        <child>
+          <object class="GnalkVideoThumbnail" id="video_thumbnail">
+            <property name="visible">false</property>
+            <property name="halign">start</property>
+          </object>
+        </child>
+        <!-- Message bubble -->
+        <child>
+          <object class="GtkBox" id="message_bubble">
+            <property name="orientation">vertical</property>
+            <style>
+              <class name="message-bubble"/>
+            </style>
+            <child>
+              <object class="GtkLabel" id="message_label">
+                <property name="halign">start</property>
+                <property name="wrap">true</property>
+                <property name="wrap-mode">word-char</property>
+                <property name="selectable">true</property>
+                <style>
+                  <class name="message-content"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Footer: timestamp, status, reactions, edited -->
+        <child>
+          <object class="GtkBox" id="footer_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <child>
+              <object class="GtkLabel" id="timestamp_label">
+                <property name="halign">start</property>
+                <style>
+                  <class name="message-timestamp"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkImage" id="status_icon">
+                <property name="pixel-size">12</property>
+                <property name="valign">center</property>
+                <property name="visible">false</property>
+                <style>
+                  <class name="message-status-icon"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="reactions_label">
+                <property name="halign">start</property>
+                <property name="visible">false</property>
+                <style>
+                  <class name="message-reactions"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="edited_label">
+                <property name="halign">start</property>
+                <property name="visible">false</property>
+                <property name="label" translatable="yes">edited</property>
+                <style>
+                  <class name="message-edited"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        </object>
+      </child>
+      </object>
+    </child>
+  </template>
+</interface>

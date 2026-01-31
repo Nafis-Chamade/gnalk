@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkParticipantTile" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <property name="hexpand">true</property>
+    <property name="vexpand">true</property>
+    <style>
+      <class name="participant-tile"/>
+    </style>
+    <child>
+      <object class="GtkOverlay" id="video_overlay">
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <!-- Video picture (main content) -->
+        <child>
+          <object class="GtkPicture" id="video_picture">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <property name="content-fit">cover</property>
+            <style>
+              <class name="tile-video"/>
+            </style>
+          </object>
+        </child>
+        <!-- Avatar overlay (shown when no video is available) -->
+        <child type="overlay">
+          <object class="GtkBox" id="avatar_overlay">
+            <property name="visible">true</property>
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <property name="halign">fill</property>
+            <property name="valign">fill</property>
+            <property name="orientation">vertical</property>
+            <style>
+              <class name="avatar-overlay"/>
+            </style>
+            <child>
+              <object class="AdwAvatar" id="avatar">
+                <property name="size">128</property>
+                <property name="halign">center</property>
+                <property name="valign">center</property>
+                <property name="hexpand">true</property>
+                <property name="vexpand">true</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <!-- Name label (bottom-left corner) -->
+        <child type="overlay">
+          <object class="GtkLabel" id="name_label">
+            <property name="halign">start</property>
+            <property name="valign">end</property>
+            <property name="margin-start">8</property>
+            <property name="margin-bottom">8</property>
+            <property name="ellipsize">end</property>
+            <property name="max-width-chars">20</property>
+            <style>
+              <class name="tile-name"/>
+            </style>
+          </object>
+        </child>
+        <!-- Mute indicator (bottom-right corner) -->
+        <child type="overlay">
+          <object class="GtkImage" id="mute_indicator">
+            <property name="visible">false</property>
+            <property name="halign">end</property>
+            <property name="valign">end</property>
+            <property name="margin-end">8</property>
+            <property name="margin-bottom">8</property>
+            <property name="icon-name">microphone-sensitivity-muted-symbolic</property>
+            <property name="pixel-size">16</property>
+            <style>
+              <class name="tile-mute-indicator"/>
+            </style>
+          </object>
+        </child>
+        <!-- Loading spinner (shown when stream is frozen) -->
+        <child type="overlay">
+          <object class="GtkSpinner" id="loading_spinner">
+            <property name="visible">false</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="width-request">48</property>
+            <property name="height-request">48</property>
+            <style>
+              <class name="tile-loading-spinner"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

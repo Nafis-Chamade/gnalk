@@ -1,0 +1,14 @@
+data/net.skilpa.gnalk.desktop.in
+data/net.skilpa.gnalk.metainfo.xml.in
+data/net.skilpa.gnalk.gschema.xml
+src/gnalk-application.c
+src/gnalk-window.c
+src/gnalk-connection-dialog.c
+src/gnalk-conversation-row.c
+src/gnalk-message-row.c
+src/gnalk-call-dialog.c
+ui/gnalk-window.ui
+ui/gnalk-connection-dialog.ui
+ui/gnalk-conversation-row.ui
+ui/gnalk-message-row.ui
+ui/gnalk-call-dialog.ui

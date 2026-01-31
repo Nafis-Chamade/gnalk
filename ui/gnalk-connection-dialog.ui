@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="GnalkConnectionDialog" parent="AdwDialog">
+    <property name="title" translatable="yes">Connect to Nextcloud</property>
+    <property name="content-width">400</property>
+    <property name="content-height">400</property>
+    <property name="child">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-end-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="cancel_button">
+                <property name="label" translatable="yes">Cancel</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="AdwClamp">
+            <property name="maximum-size">400</property>
+            <property name="margin-top">24</property>
+            <property name="margin-bottom">24</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">24</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">6</property>
+                    <property name="halign">center</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">network-server-symbolic</property>
+                        <property name="pixel-size">64</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">Connect to your Nextcloud Talk server</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <!-- User mode fields -->
+                <child>
+                  <object class="AdwPreferencesGroup" id="user_mode_group">
+                    <child>
+                      <object class="AdwEntryRow" id="server_entry">
+                        <property name="title" translatable="yes">Server URL</property>
+                        <property name="text"></property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="user_entry">
+                        <property name="title" translatable="yes">User ID</property>
+                        <property name="text"></property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPasswordEntryRow" id="password_entry">
+                        <property name="title" translatable="yes">Password</property>
+                        <property name="text"></property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <!-- Guest mode fields -->
+                <child>
+                  <object class="AdwPreferencesGroup" id="guest_mode_group">
+                    <property name="visible">false</property>
+                    <child>
+                      <object class="AdwEntryRow" id="room_url_entry">
+                        <property name="title" translatable="yes">Room URL</property>
+                        <property name="text"></property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwEntryRow" id="display_name_entry">
+                        <property name="title" translatable="yes">Display Name</property>
+                        <property name="text"></property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPasswordEntryRow" id="guest_password_entry">
+                        <property name="title" translatable="yes">Room Password (optional)</property>
+                        <property name="text"></property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="connect_button">
+                    <property name="label" translatable="yes">Connect</property>
+                    <property name="halign">center</property>
+                    <style>
+                      <class name="suggested-action"/>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSpinner" id="spinner">
+                    <property name="halign">center</property>
+                    <property name="spinning">false</property>
+                    <property name="visible">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="status_label">
+                    <property name="halign">center</property>
+                    <property name="wrap">true</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="error"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="guest_link">
+                    <property name="label" translatable="yes">Or join a public room as guest</property>
+                    <property name="halign">center</property>
+                    <property name="margin-top">12</property>
+                    <style>
+                      <class name="flat"/>
+                      <class name="link"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

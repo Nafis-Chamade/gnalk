@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkConversationActions" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <!-- File attachment preview (multi-file with horizontal scroll) -->
+    <child>
+      <object class="GtkBox" id="attachment_preview_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">8</property>
+        <property name="visible">false</property>
+        <style>
+          <class name="attachment-preview"/>
+        </style>
+        <child>
+          <object class="GtkScrolledWindow" id="attachment_scroll">
+            <property name="hscrollbar-policy">automatic</property>
+            <property name="vscrollbar-policy">never</property>
+            <property name="hexpand">true</property>
+            <property name="max-content-width">400</property>
+            <property name="propagate-natural-width">true</property>
+            <style>
+              <class name="attachment-scroll"/>
+            </style>
+            <child>
+              <object class="GtkBox" id="attachment_items_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <style>
+                  <class name="attachment-items"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="attachment_close_button">
+            <property name="icon-name">window-close-symbolic</property>
+            <property name="valign">center</property>
+            <property name="has-frame">false</property>
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+    <!-- Quote/Reply preview -->
+    <child>
+      <object class="GtkBox" id="quote_preview_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">8</property>
+        <property name="visible">false</property>
+        <style>
+          <class name="quote-preview"/>
+        </style>
+        <child>
+          <object class="GtkPicture" id="quote_preview_image">
+            <property name="visible">false</property>
+            <property name="can-shrink">true</property>
+            <property name="keep-aspect-ratio">true</property>
+            <property name="content-fit">contain</property>
+            <property name="valign">center</property>
+            <property name="width-request">48</property>
+            <property name="height-request">48</property>
+            <style>
+              <class name="quote-preview-image"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="hexpand">true</property>
+            <property name="spacing">2</property>
+            <child>
+              <object class="GtkLabel" id="quote_preview_author">
+                <property name="halign">start</property>
+                <property name="ellipsize">end</property>
+                <style>
+                  <class name="quote-preview-author"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="quote_preview_text">
+                <property name="halign">start</property>
+                <property name="ellipsize">end</property>
+                <property name="max-width-chars">60</property>
+                <style>
+                  <class name="quote-preview-text"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="quote_close_button">
+            <property name="icon-name">window-close-symbolic</property>
+            <property name="valign">center</property>
+            <property name="has-frame">false</property>
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

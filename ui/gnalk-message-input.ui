@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <menu id="media_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">Attach File</attribute>
+        <attribute name="action">msg-input.media-action</attribute>
+        <attribute name="target" type="i">0</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Record Voice</attribute>
+        <attribute name="action">msg-input.media-action</attribute>
+        <attribute name="target" type="i">1</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Take Photo/Video</attribute>
+        <attribute name="action">msg-input.media-action</attribute>
+        <attribute name="target" type="i">2</attribute>
+      </item>
+    </section>
+  </menu>
+  <template class="GnalkMessageInput" parent="GtkBox">
+    <property name="orientation">horizontal</property>
+    <property name="spacing">8</property>
+    <style>
+      <class name="message-entry-box"/>
+    </style>
+    <child>
+      <object class="AdwSplitButton" id="media_button">
+        <property name="icon-name">mail-attachment-symbolic</property>
+        <property name="tooltip-text" translatable="yes">Attach File</property>
+        <property name="menu-model">media_menu</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkMenuButton" id="emoji_button">
+        <property name="icon-name">face-smile-symbolic</property>
+        <property name="tooltip-text" translatable="yes">Insert Emoji</property>
+        <property name="popover">
+          <object class="GtkEmojiChooser" id="emoji_chooser"/>
+        </property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkEntry" id="message_entry">
+        <property name="hexpand">true</property>
+        <property name="placeholder-text" translatable="yes">Type a message...</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkButton" id="send_button">
+        <property name="icon-name">mail-send-symbolic</property>
+        <property name="tooltip-text" translatable="yes">Send</property>
+        <style>
+          <class name="suggested-action"/>
+        </style>
+      </object>
+    </child>
+  </template>
+</interface>

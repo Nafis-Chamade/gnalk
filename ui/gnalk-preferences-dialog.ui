@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="GnalkPreferencesDialog" parent="AdwDialog">
+    <property name="title" translatable="yes">Preferences</property>
+    <property name="content-width">500</property>
+    <property name="content-height">600</property>
+    <property name="child">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-end-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="close_button">
+                <property name="icon-name">window-close-symbolic</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">never</property>
+            <property name="vscrollbar-policy">automatic</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">500</property>
+                <property name="margin-top">24</property>
+                <property name="margin-bottom">24</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">24</property>
+                    <!-- Appearance Section -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Appearance</property>
+                        <child>
+                          <object class="AdwComboRow" id="color_scheme_row">
+                            <property name="title" translatable="yes">Style</property>
+                            <property name="subtitle" translatable="yes">Choose light or dark appearance</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- Video Section -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Video</property>
+                        <child>
+                          <object class="AdwComboRow" id="video_source_row">
+                            <property name="title" translatable="yes">Camera</property>
+                            <property name="subtitle" translatable="yes">Select video input device</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwComboRow" id="video_quality_row">
+                            <property name="title" translatable="yes">Quality</property>
+                            <property name="subtitle" translatable="yes">Higher quality uses more CPU</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="margin-top">12</property>
+                            <property name="halign">center</property>
+                            <child>
+                              <object class="GtkFrame">
+                                <child>
+                                  <object class="GtkOverlay" id="video_preview_overlay">
+                                    <property name="width-request">320</property>
+                                    <property name="height-request">240</property>
+                                    <child type="overlay">
+                                      <object class="GtkLabel" id="video_placeholder_label">
+                                        <property name="label" translatable="yes">No camera selected</property>
+                                        <property name="halign">center</property>
+                                        <property name="valign">center</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <!-- Audio Section -->
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Audio</property>
+                        <child>
+                          <object class="AdwComboRow" id="audio_source_row">
+                            <property name="title" translatable="yes">Microphone</property>
+                            <property name="subtitle" translatable="yes">Select audio input device</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">6</property>
+                            <property name="margin-top">12</property>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Input Level</property>
+                                <property name="halign">start</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLevelBar" id="audio_level_bar">
+                                <property name="min-value">0.0</property>
+                                <property name="max-value">1.0</property>
+                                <property name="value">0.0</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

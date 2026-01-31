@@ -1,0 +1,396 @@
+#include "gnalk-message-view.h"
+#include "gnalk-log.h"
+
+struct _GnalkMessageView
+{
+  GtkBox parent_instance;
+
+  GtkWidget *stack;
+  GtkWidget *scrolled_window;
+  GtkWidget *list_view;
+  GtkWidget *scroll_to_bottom_button;
+
+  gboolean loading_older;
+};
+
+G_DEFINE_FINAL_TYPE (GnalkMessageView, gnalk_message_view, GTK_TYPE_BOX)
+
+enum
+{
+  SIGNAL_LOAD_OLDER_REQUESTED,
+  SIGNAL_SCROLL_CHANGED,
+  SIGNAL_SCROLL_TO_BOTTOM_CLICKED,
+  N_SIGNALS
+};
+
+static guint signals[N_SIGNALS];
+
+static gboolean
+scroll_to_bottom_idle (gpointer user_data)
+{
+  GtkScrolledWindow *scroll = GTK_SCROLLED_WINDOW (user_data);
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroll);
+  gtk_adjustment_set_value (adj, gtk_adjustment_get_upper (adj));
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+is_scrolled_to_bottom (GtkScrolledWindow *scroll)
+{
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroll);
+  gdouble value = gtk_adjustment_get_value (adj);
+  gdouble upper = gtk_adjustment_get_upper (adj);
+  gdouble page_size = gtk_adjustment_get_page_size (adj);
+
+  /* Consider "at bottom" if within 50px of the bottom */
+  return (upper - page_size - value) < 50.0;
+}
+
+static void
+on_scroll_adjustment_changed (GtkAdjustment     *adj,
+                               GnalkMessageView *self)
+{
+  (void) adj;
+
+  gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
+  gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
+
+  g_signal_emit (self, signals[SIGNAL_SCROLL_CHANGED], 0);
+}
+
+static void
+on_scroll_to_bottom_clicked (GtkButton         *button,
+                              GnalkMessageView *self)
+{
+  (void) button;
+
+  g_signal_emit (self, signals[SIGNAL_SCROLL_TO_BOTTOM_CLICKED], 0);
+  gnalk_message_view_scroll_to_bottom (self);
+}
+
+static void
+on_edge_reached (GtkScrolledWindow *scrolled_window,
+                 GtkPositionType    pos,
+                 GnalkMessageView *self)
+{
+  (void) scrolled_window;
+
+  if (pos == GTK_POS_TOP && !self->loading_older)
+    {
+      g_signal_emit (self, signals[SIGNAL_LOAD_OLDER_REQUESTED], 0);
+    }
+}
+
+static void
+gnalk_message_view_class_init (GnalkMessageViewClass *klass)
+{
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+
+  gtk_widget_class_set_template_from_resource (widget_class,
+                                                "/net/skilpa/gnalk/gnalk-message-view.ui");
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageView, stack);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageView, scrolled_window);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageView, list_view);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageView, scroll_to_bottom_button);
+
+  signals[SIGNAL_LOAD_OLDER_REQUESTED] =
+    g_signal_new ("load-older-requested",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 0);
+
+  signals[SIGNAL_SCROLL_CHANGED] =
+    g_signal_new ("scroll-changed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 0);
+
+  signals[SIGNAL_SCROLL_TO_BOTTOM_CLICKED] =
+    g_signal_new ("scroll-to-bottom-clicked",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 0);
+}
+
+static void
+gnalk_message_view_init (GnalkMessageView *self)
+{
+  gtk_widget_init_template (GTK_WIDGET (self));
+
+  /* Connect scroll button */
+  g_signal_connect (self->scroll_to_bottom_button, "clicked",
+                    G_CALLBACK (on_scroll_to_bottom_clicked), self);
+
+  /* Connect scroll adjustment signals */
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (self->scrolled_window));
+  g_signal_connect (adj, "value-changed", G_CALLBACK (on_scroll_adjustment_changed), self);
+  g_signal_connect (adj, "changed", G_CALLBACK (on_scroll_adjustment_changed), self);
+
+  /* Connect edge-reached for lazy loading */
+  g_signal_connect (self->scrolled_window, "edge-reached",
+                    G_CALLBACK (on_edge_reached), self);
+}
+
+GnalkMessageView *
+gnalk_message_view_new (void)
+{
+  return g_object_new (GNALK_TYPE_MESSAGE_VIEW, NULL);
+}
+
+void
+gnalk_message_view_set_model (GnalkMessageView  *self,
+                                GtkSelectionModel  *model,
+                                GtkListItemFactory *factory)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  gtk_list_view_set_model (GTK_LIST_VIEW (self->list_view), model);
+  if (factory)
+    gtk_list_view_set_factory (GTK_LIST_VIEW (self->list_view), factory);
+}
+
+void
+gnalk_message_view_show_empty (GnalkMessageView *self)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  gtk_stack_set_visible_child_name (GTK_STACK (self->stack), "empty");
+}
+
+void
+gnalk_message_view_show_messages (GnalkMessageView *self)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  gtk_stack_set_visible_child_name (GTK_STACK (self->stack), "messages");
+}
+
+/* Callback to restore opacity after scroll is processed */
+static gboolean
+restore_opacity_idle (gpointer user_data)
+{
+  GtkWidget *widget = GTK_WIDGET (user_data);
+  gtk_widget_set_opacity (widget, 1.0);
+  GNALK_TRACE_UI ("restore_opacity_idle: restored opacity");
+  return G_SOURCE_REMOVE;
+}
+
+void
+gnalk_message_view_show_messages_at_bottom (GnalkMessageView *self)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  GNALK_TRACE_UI ("show_messages_at_bottom: hiding view, showing, scrolling, then revealing");
+
+  /* Hide the scrolled window to prevent visual jump */
+  gtk_widget_set_opacity (self->scrolled_window, 0.0);
+
+  /* Show the messages page */
+  gtk_stack_set_visible_child_name (GTK_STACK (self->stack), "messages");
+
+  /* Scroll to bottom */
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (self->scrolled_window));
+  gtk_adjustment_set_value (adj, gtk_adjustment_get_upper (adj));
+
+  /* Restore opacity after GTK has processed the layout and scroll */
+  g_idle_add (restore_opacity_idle, self->scrolled_window);
+}
+
+void
+gnalk_message_view_show_messages_at_item (GnalkMessageView *self,
+                                            guint              position)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  GNALK_TRACE_UI ("show_messages_at_item: hiding view, showing at position %u, then revealing", position);
+
+  /* Hide the scrolled window to prevent visual jump */
+  gtk_widget_set_opacity (self->scrolled_window, 0.0);
+
+  /* Show the messages page */
+  gtk_stack_set_visible_child_name (GTK_STACK (self->stack), "messages");
+
+  /* Scroll to the specified item */
+  gtk_list_view_scroll_to (GTK_LIST_VIEW (self->list_view), position, GTK_LIST_SCROLL_NONE, NULL);
+
+  /* Restore opacity after GTK has processed the layout and scroll */
+  g_idle_add (restore_opacity_idle, self->scrolled_window);
+}
+
+void
+gnalk_message_view_scroll_to_bottom (GnalkMessageView *self)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  GNALK_TRACE_SCROLL ("message_view_scroll_to_bottom: scheduling scroll");
+  g_idle_add (scroll_to_bottom_idle, self->scrolled_window);
+}
+
+void
+gnalk_message_view_scroll_to_item (GnalkMessageView *self,
+                                     guint              position,
+                                     GtkListScrollFlags flags)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  GNALK_TRACE_SCROLL ("message_view_scroll_to_item: scrolling to position %u, flags=%d", position, flags);
+  gtk_list_view_scroll_to (GTK_LIST_VIEW (self->list_view), position, flags, NULL);
+}
+
+GtkListView *
+gnalk_message_view_get_list_view (GnalkMessageView *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_VIEW (self), NULL);
+
+  return GTK_LIST_VIEW (self->list_view);
+}
+
+GtkScrolledWindow *
+gnalk_message_view_get_scrolled_window (GnalkMessageView *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_VIEW (self), NULL);
+
+  return GTK_SCROLLED_WINDOW (self->scrolled_window);
+}
+
+void
+gnalk_message_view_set_loading_older (GnalkMessageView *self,
+                                        gboolean           loading)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  self->loading_older = loading;
+}
+
+gboolean
+gnalk_message_view_get_loading_older (GnalkMessageView *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_VIEW (self), FALSE);
+
+  return self->loading_older;
+}
+
+gboolean
+gnalk_message_view_is_at_bottom (GnalkMessageView *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_VIEW (self), TRUE);
+
+  return is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
+}
+
+gboolean
+gnalk_message_view_is_item_visible (GnalkMessageView *self,
+                                      guint              position)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_VIEW (self), FALSE);
+
+  GtkScrolledWindow *scroll = GTK_SCROLLED_WINDOW (self->scrolled_window);
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroll);
+  gdouble scroll_top = gtk_adjustment_get_value (adj);
+  gdouble page_size = gtk_adjustment_get_page_size (adj);
+  gdouble scroll_bottom = scroll_top + page_size;
+
+  /* Get the widget at this position using GtkListView's internal mechanisms.
+   * We need to check if the row for this position is within the visible range.
+   * Since GtkListView uses a factory pattern, we compute approximate position
+   * based on scroll position and estimated row height. */
+  GtkListView *list_view = GTK_LIST_VIEW (self->list_view);
+  GtkSelectionModel *model = gtk_list_view_get_model (list_view);
+
+  if (!model)
+    return FALSE;
+
+  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (model));
+  if (position >= n_items)
+    return FALSE;
+
+  /* Use scroll_to to check position - if the item is visible, we're scrolled
+   * in a position where it would be rendered.
+   * Alternative: use gtk_widget_compute_bounds on the child if available.
+   * For now, use a heuristic based on scroll position. */
+
+  /* Estimate: average row height is about 60px. This is a reasonable approximation. */
+  gdouble estimated_row_height = 60.0;
+  gdouble item_top = position * estimated_row_height;
+  gdouble item_bottom = item_top + estimated_row_height;
+
+  /* Item is visible if it overlaps with the viewport */
+  return (item_bottom > scroll_top) && (item_top < scroll_bottom);
+}
+
+void
+gnalk_message_view_get_viewport_size (GnalkMessageView *self,
+                                        int               *width,
+                                        int               *height)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  int w = gtk_widget_get_width (self->scrolled_window);
+  int h = gtk_widget_get_height (self->scrolled_window);
+
+  if (width)
+    *width = w;
+  if (height)
+    *height = h;
+
+  GNALK_TRACE_SCROLL ("message_view_get_viewport_size: %dx%d", w, h);
+}
+
+gdouble
+gnalk_message_view_get_scroll_position (GnalkMessageView *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_VIEW (self), 0.0);
+
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (self->scrolled_window));
+  gdouble pos = gtk_adjustment_get_value (adj);
+  GNALK_TRACE_SCROLL ("message_view_get_scroll_position: %.1f", pos);
+  return pos;
+}
+
+void
+gnalk_message_view_set_scroll_position (GnalkMessageView *self,
+                                          gdouble            position)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  GNALK_TRACE_SCROLL ("message_view_set_scroll_position: %.1f", position);
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (self->scrolled_window));
+  gtk_adjustment_set_value (adj, position);
+}
+
+guint
+gnalk_message_view_get_first_visible_position (GnalkMessageView *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_VIEW (self), 0);
+
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (self->scrolled_window));
+  gdouble scroll_top = gtk_adjustment_get_value (adj);
+
+  GtkSelectionModel *model = gtk_list_view_get_model (GTK_LIST_VIEW (self->list_view));
+  if (!model)
+    return 0;
+
+  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (model));
+  if (n_items == 0)
+    return 0;
+
+  /* Estimate position based on scroll offset and average row height.
+   * This is an approximation since row heights vary. */
+  gdouble estimated_row_height = 60.0;
+  guint estimated_pos = (guint) (scroll_top / estimated_row_height);
+
+  /* Clamp to valid range */
+  if (estimated_pos >= n_items)
+    estimated_pos = n_items - 1;
+
+  return estimated_pos;
+}

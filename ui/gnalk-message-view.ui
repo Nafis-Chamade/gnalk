@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkMessageView" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <property name="vexpand">true</property>
+    <child>
+      <object class="GtkStack" id="stack">
+        <property name="vexpand">true</property>
+        <child>
+          <object class="GtkStackPage">
+            <property name="name">empty</property>
+            <property name="child">
+              <object class="AdwStatusPage">
+                <property name="icon-name">chat-bubbles-empty-symbolic</property>
+                <property name="title" translatable="yes">No Conversation Selected</property>
+                <property name="description" translatable="yes">Select a conversation from the sidebar to start chatting</property>
+                <style>
+                  <class name="empty-state"/>
+                </style>
+              </object>
+            </property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkStackPage">
+            <property name="name">messages</property>
+            <property name="child">
+              <object class="GtkOverlay">
+                <property name="vexpand">true</property>
+                <child>
+                  <object class="GtkScrolledWindow" id="scrolled_window">
+                    <property name="vexpand">true</property>
+                    <property name="hscrollbar-policy">never</property>
+                    <child>
+                      <object class="GtkListView" id="list_view">
+                        <style>
+                          <class name="message-list"/>
+                          <class name="background"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child type="overlay">
+                  <object class="GtkButton" id="scroll_to_bottom_button">
+                    <property name="visible">false</property>
+                    <property name="halign">end</property>
+                    <property name="valign">end</property>
+                    <property name="margin-bottom">12</property>
+                    <property name="margin-end">12</property>
+                    <property name="icon-name">go-down-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Scroll to bottom</property>
+                    <style>
+                      <class name="circular"/>
+                      <class name="suggested-action"/>
+                      <class name="scroll-to-bottom"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

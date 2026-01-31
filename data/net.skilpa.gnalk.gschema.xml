@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="gnalk">
+  <schema id="net.skilpa.gnalk" path="/net/skilpa/gnalk/">
+    <key name="window-width" type="i">
+      <default>900</default>
+      <summary>Window width</summary>
+      <description>The width of the main window</description>
+    </key>
+    <key name="window-height" type="i">
+      <default>600</default>
+      <summary>Window height</summary>
+      <description>The height of the main window</description>
+    </key>
+    <key name="window-maximized" type="b">
+      <default>false</default>
+      <summary>Window maximized</summary>
+      <description>Whether the window is maximized</description>
+    </key>
+    <key name="last-server-url" type="s">
+      <default>''</default>
+      <summary>Last server URL</summary>
+      <description>The URL of the last connected Nextcloud server</description>
+    </key>
+    <key name="last-user-id" type="s">
+      <default>''</default>
+      <summary>Last user ID</summary>
+      <description>The user ID used for the last connection</description>
+    </key>
+    <key name="last-display-name" type="s">
+      <default>''</default>
+      <summary>Last display name</summary>
+      <description>The display name of the last logged in user</description>
+    </key>
+    <key name="autologin-enabled" type="b">
+      <default>false</default>
+      <summary>Auto-login enabled</summary>
+      <description>Whether to automatically log in on startup using saved credentials</description>
+    </key>
+    <key name="last-room-token" type="s">
+      <default>''</default>
+      <summary>Last opened room</summary>
+      <description>The token of the last opened conversation room</description>
+    </key>
+    <key name="last-account-id" type="x">
+      <default>0</default>
+      <summary>Last active account</summary>
+      <description>The ID of the last active account for multi-account support</description>
+    </key>
+    <key name="preferred-video-device" type="s">
+      <default>''</default>
+      <summary>Preferred video device</summary>
+      <description>The device path or name of the preferred camera</description>
+    </key>
+    <key name="preferred-audio-device" type="s">
+      <default>''</default>
+      <summary>Preferred audio device</summary>
+      <description>The device path or name of the preferred microphone</description>
+    </key>
+    <key name="camera-quality" type="i">
+      <default>2</default>
+      <summary>Camera quality</summary>
+      <description>Camera quality preset: 0=Low (fast), 1=Medium, 2=High (best FOV)</description>
+    </key>
+    <key name="camera-position" type="i">
+      <default>0</default>
+      <summary>Camera position</summary>
+      <description>Default camera position: 0=Front, 1=Back, 2=Generic</description>
+    </key>
+    <key name="color-scheme" type="i">
+      <default>0</default>
+      <summary>Color scheme</summary>
+      <description>Application color scheme: 0=Auto (follow system), 1=Light, 2=Dark</description>
+    </key>
+    <key name="show-participants" type="b">
+      <default>true</default>
+      <summary>Show participants list</summary>
+      <description>Whether to show the participants list in group conversations</description>
+    </key>
+    <key name="default-media-action" type="i">
+      <default>0</default>
+      <summary>Default media action</summary>
+      <description>Default action for the media button: 0=Attach file, 1=Record voice, 2=Take photo/video</description>
+    </key>
+    <key name="max-loaded-rooms" type="i">
+      <default>5</default>
+      <summary>Maximum rooms to keep loaded</summary>
+      <description>Maximum number of rooms to keep loaded in memory with their messages. Older rooms are evicted when this limit is exceeded.</description>
+    </key>
+    <key name="background-tab-height-multiplier" type="d">
+      <default>3.0</default>
+      <summary>Background tab message retention</summary>
+      <description>How many viewports worth of messages to keep in backgrounded room tabs. Higher values keep more messages but use more memory.</description>
+    </key>
+  </schema>
+</schemalist>

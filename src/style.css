@@ -1,0 +1,748 @@
+/* Conversation list styling */
+.conversation-row {
+  padding: 8px 12px;
+}
+
+.conversation-avatar {
+  border-radius: 50%;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.conversation-title {
+  font-weight: bold;
+}
+
+.conversation-subtitle {
+  font-size: 0.9em;
+  opacity: 0.7;
+}
+
+.conversation-unread .conversation-title {
+  font-weight: bold;
+}
+
+.conversation-unread .conversation-subtitle {
+  opacity: 0.9;
+  font-weight: 500;
+}
+
+/* Currently active/selected conversation */
+.conversation-active {
+  background-color: alpha(@accent_bg_color, 0.12);
+  border-radius: 8px;
+  margin: 2px 6px;
+}
+
+/* Conversation section header */
+.conversation-section-header {
+  padding: 8px 12px;
+  font-size: 0.85em;
+  font-weight: bold;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Unread message badge */
+.unread-badge {
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
+  border-radius: 50%;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 2px 6px;
+  font-size: 0.8em;
+  font-weight: bold;
+}
+
+/* User status indicator */
+.status-indicator {
+  background-color: @window_bg_color;
+  border-radius: 50%;
+  padding: 1px;
+}
+
+.status-online {
+  color: #2ec27e;
+}
+
+.status-away {
+  color: #e5a50a;
+}
+
+.status-dnd {
+  color: #c01c28;
+}
+
+.status-offline {
+  color: #77767b;
+}
+
+/* User avatar in header */
+.user-avatar {
+  border-radius: 50%;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+/* Message list - transparent background to match surroundings */
+.message-list {
+  background: transparent;
+}
+
+/* Message styling */
+.message-row {
+  padding: 3px 16px;
+}
+
+/* Reduced spacing for consecutive messages from same author with same time */
+.message-grouped {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+/* Bubble mode: own messages right, others left */
+.display-bubbles.message-self {
+  margin-left: 48px;
+}
+
+.display-bubbles.message-self .message-bubble {
+  /* background-color set dynamically from avatar */
+  /* Corner at bottom-right for own messages (right side) */
+  border-radius: 18px 18px 4px 18px;
+  padding: 8px 14px;
+}
+
+.display-bubbles.message-other {
+  margin-right: 48px;
+}
+
+.display-bubbles.message-other .message-bubble {
+  /* background-color set dynamically from avatar */
+  /* Corner at top-left for other's messages (left side) */
+  border-radius: 4px 18px 18px 18px;
+  padding: 8px 14px;
+}
+
+/* Aligned mode: all messages left-aligned (desktop/wide view) */
+.display-aligned .message-bubble {
+  /* background-color set dynamically from avatar */
+  border-radius: 4px 18px 18px 18px;
+  padding: 8px 14px;
+}
+
+/* System messages: more subtle appearance */
+.message-system {
+  opacity: 0.7;
+}
+
+.message-system .message-bubble {
+  font-size: 0.9em;
+  padding: 4px 10px;
+}
+
+.message-avatar {
+  border-radius: 50%;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.quote-avatar {
+  border-radius: 50%;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.message-username {
+  font-size: 0.85em;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.message-timestamp {
+  font-size: 0.75em;
+  opacity: 0.6;
+  margin-top: 2px;
+}
+
+.message-status-icon {
+  opacity: 0.6;
+  margin-top: 2px;
+}
+
+.message-reactions {
+  font-size: 0.85em;
+  margin-top: 2px;
+}
+
+.message-quote {
+  padding: 4px 8px;
+  margin-top: 6px;
+  margin-bottom: 0px;
+  border-left: 2px solid alpha(@accent_color, 0.6);
+  background-color: alpha(@card_bg_color, 0.3);
+  border-radius: 4px;
+}
+
+.message-quote-username {
+  font-size: 0.8em;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.message-quote-text {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+/* File preview in messages */
+.message-file-preview {
+  border-radius: 8px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  max-width: 280px;
+  max-height: 350px;
+}
+
+/* Quote file preview (small thumbnail) */
+.message-quote-preview {
+  border-radius: 4px;
+}
+
+/* Quote preview image in compose area */
+.quote-preview-image {
+  border-radius: 4px;
+}
+
+.reaction-picker {
+  padding: 4px;
+}
+
+.reaction-button {
+  font-size: 1.2em;
+  padding: 4px 8px;
+  min-width: 0;
+}
+
+.message-content {
+  line-height: 1.4;
+}
+
+.message-emoji-only {
+  font-size: 2.5em;
+  line-height: 1.2;
+}
+
+/* Room header */
+.room-header-button {
+  padding: 0;
+}
+
+.room-header-button > box {
+  padding: 4px 8px;
+}
+
+.room-header {
+  padding: 4px 8px;
+}
+
+.room-header-avatar {
+  border-radius: 50%;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.room-header-title {
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+/* Room info popover */
+.room-info-popover {
+  min-width: 200px;
+}
+
+/* Message entry */
+.message-entry-box {
+  padding: 8px 12px;
+  border-top: 1px solid alpha(@borders, 0.5);
+}
+
+/* Call dialog */
+.call-video {
+  background-color: #000;
+}
+
+.call-video-overlay {
+  background-color: #000;
+  border-radius: 8px;
+  border: none;
+}
+
+/* Local preview frame - constrain size across GTK versions */
+.local-preview-frame {
+  border: none;
+  border-radius: 8px;
+  background-color: #000;
+  padding: 0;
+}
+
+.local-preview-frame > picture {
+  border-radius: 8px;
+}
+
+.call-controls {
+  padding: 12px;
+}
+
+/* Connecting state */
+.call-connecting {
+  background-color: #000;
+}
+
+.call-connecting label {
+  color: white;
+}
+
+.call-connecting spinner {
+  color: white;
+}
+
+/* Empty state */
+.empty-state {
+  opacity: 0.5;
+}
+
+/* Quote preview above message entry */
+.quote-preview {
+  padding: 8px 12px;
+  margin: 4px 12px;
+  background-color: alpha(@card_bg_color, 0.5);
+  border-left: 3px solid @accent_color;
+  border-radius: 4px;
+}
+
+.quote-preview-author {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: @accent_color;
+}
+
+.quote-preview-text {
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+
+/* Date separator */
+.date-separator {
+  padding: 4px 16px;
+}
+
+.date-separator-label {
+  font-size: 0.85em;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+/* Typing indicator */
+.typing-indicator {
+  font-size: 0.85em;
+  font-style: italic;
+  opacity: 0.7;
+  padding: 4px 12px;
+  min-height: 1em;
+}
+
+/* Incoming call banner */
+.incoming-call-banner {
+  background-color: alpha(@accent_bg_color, 0.15);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.incoming-call-icon {
+  color: @accent_color;
+}
+
+.incoming-call-text {
+  font-weight: 600;
+}
+
+/* Participants bar */
+.participants-bar {
+  border-bottom: 1px solid alpha(@borders, 0.5);
+}
+
+.participant-item {
+  padding: 4px;
+  min-width: 50px;
+}
+
+.participant-avatar {
+  border-radius: 50%;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.participant-name {
+  font-size: 0.75em;
+  opacity: 0.8;
+}
+
+/* Call state indicators */
+.call-indicator {
+  background-color: @window_bg_color;
+  border-radius: 50%;
+  padding: 1px;
+}
+
+.call-audio {
+  color: #2ec27e;
+}
+
+.call-video {
+  color: #3584e4;
+}
+
+.call-screen {
+  color: #e5a50a;
+}
+
+/* Highlight for scroll-to-quote target */
+.message-highlight {
+  animation: highlight-fade 2s ease-out forwards;
+  border-radius: 8px;
+}
+
+@keyframes highlight-fade {
+  0% { background-color: alpha(@accent_bg_color, 0.4); }
+  70% { background-color: alpha(@accent_bg_color, 0.3); }
+  100% { background-color: transparent; }
+}
+
+/* File cached icon */
+.file-cached-icon {
+  background-color: @success_bg_color;
+  border-radius: 50%;
+  padding: 2px;
+  color: @success_fg_color;
+}
+
+/* File not cached overlay (dimmed) */
+.file-not-cached-overlay {
+  background-color: alpha(black, 0.4);
+  border-radius: 8px;
+}
+
+/* File download icon */
+.file-download-icon {
+  color: white;
+  background-color: alpha(black, 0.5);
+  border-radius: 50%;
+  padding: 8px;
+}
+
+/* Attachment preview above message entry */
+.attachment-preview {
+  padding: 8px 12px;
+  margin: 4px 12px;
+  background-color: alpha(@card_bg_color, 0.5);
+  border-left: 3px solid @accent_color;
+  border-radius: 4px;
+}
+
+/* Horizontal scrollable attachment preview */
+.attachment-scroll {
+  background: transparent;
+}
+
+.attachment-items {
+  padding: 4px 0;
+}
+
+.attachment-item {
+  padding: 4px 8px;
+  background-color: alpha(@card_bg_color, 0.8);
+  border-radius: 8px;
+  min-width: 80px;
+}
+
+.attachment-item-name {
+  font-size: 0.75em;
+  color: alpha(@window_fg_color, 0.6);
+}
+
+.attachment-preview-image {
+  border-radius: 4px;
+}
+
+/* Upload progress in message row */
+.upload-progress-box {
+  padding: 8px;
+  background-color: alpha(@card_bg_color, 0.3);
+  border-radius: 8px;
+}
+
+.upload-preview-image {
+  border-radius: 8px;
+  opacity: 0.7;
+}
+
+.upload-file-name {
+  font-weight: 500;
+}
+
+.upload-progress-bar {
+  min-width: 200px;
+}
+
+/* Multi-participant call styling */
+.video-grid {
+  background-color: #000;
+  padding: 4px;
+}
+
+.speaker-view {
+  background-color: #000;
+  padding: 4px;
+}
+
+.speaker-main {
+  background-color: #000;
+}
+
+.speaker-strip {
+  background-color: #000;
+  padding: 4px;
+}
+
+/* Participant tile styling */
+.participant-tile {
+  background-color: #1a1a1a;
+  border-radius: 8px;
+  min-width: 160px;
+  min-height: 120px;
+}
+
+.participant-tile .tile-video {
+  background-color: #000;
+}
+
+.participant-tile .tile-name {
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.participant-tile .tile-mute-indicator {
+  background-color: rgba(192, 28, 40, 0.8);
+  color: white;
+  border-radius: 50%;
+  padding: 4px;
+}
+
+.participant-tile .avatar-overlay {
+  background-color: #2a2a2a;
+}
+
+/* Local tile highlight */
+.participant-tile.local-tile {
+  border: 2px solid @accent_color;
+}
+
+/* Active speaker highlight */
+.participant-tile.active-speaker {
+  border: 3px solid #2ec27e;
+}
+
+/* Loading spinner for frozen/loading streams */
+.tile-loading-spinner {
+  color: white;
+  opacity: 0.9;
+}
+
+/* Speaker main tile (large in speaker focus mode) */
+.speaker-main-tile {
+  min-height: 400px;
+}
+
+/* Speaker strip tile (small in speaker focus mode) */
+.speaker-strip-tile {
+  min-width: 160px;
+  min-height: 120px;
+}
+
+/* Screen share tile styling */
+.participant-tile.screen-share-tile {
+  border: 2px solid #e5a50a;
+}
+
+.participant-tile.screen-share-tile .tile-name {
+  background-color: rgba(229, 165, 10, 0.7);
+}
+
+/* Screen share button active state */
+.screen-share-active {
+  background-color: #e5a50a;
+  color: white;
+}
+
+/* Success toast - green background that covers the toast area */
+.toast-success {
+  background-color: #2ec27e;
+  color: white;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: -10px;
+}
+
+.toast-success label {
+  font-weight: bold;
+}
+
+/* Unread message styling */
+.message-unread .message-bubble {
+  animation: unread-glow 2s ease-in-out infinite alternate;
+}
+
+@keyframes unread-glow {
+  from { box-shadow: 0 0 4px alpha(@accent_bg_color, 0.3); }
+  to { box-shadow: 0 0 12px alpha(@accent_bg_color, 0.6); }
+}
+
+.message-marking-read .message-bubble {
+  animation: unread-fadeout 0.5s ease-out forwards;
+}
+
+@keyframes unread-fadeout {
+  from { box-shadow: 0 0 8px alpha(@accent_bg_color, 0.5); }
+  to { box-shadow: none; }
+}
+
+/* Image Gallery */
+image-gallery {
+  background-color: rgba(0, 0, 0, 0.95);
+}
+
+.image-gallery-overlay {
+  background-color: rgba(0, 0, 0, 0.95);
+}
+
+.gallery-image {
+  background-color: transparent;
+}
+
+.gallery-header {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
+  padding-bottom: 24px;
+}
+
+.gallery-counter {
+  color: white;
+  font-size: 1em;
+  font-weight: 500;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.gallery-close-button {
+  background-color: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+
+.gallery-close-button:hover {
+  background-color: rgba(255, 255, 255, 0.25);
+}
+
+.gallery-nav-button {
+  background-color: rgba(255, 255, 255, 0.15);
+  color: white;
+  min-width: 48px;
+  min-height: 48px;
+}
+
+.gallery-nav-button:hover {
+  background-color: rgba(255, 255, 255, 0.25);
+}
+
+.gallery-nav-button:disabled {
+  opacity: 0.3;
+}
+
+.gallery-spinner {
+  color: white;
+}
+
+/* Audio player */
+.audio-player {
+  background-color: alpha(@card_bg_color, 0.6);
+  border-radius: 18px;
+  padding: 4px 12px;
+  min-height: 36px;
+}
+
+/* Waveform seekbar */
+waveform-seekbar {
+  min-height: 28px;
+  min-width: 80px;
+}
+
+/* Camera capture dialog overlay - fills the dialog content area */
+.camera-capture-overlay {
+  background-color: #000;
+}
+
+/* Capture dialog record button - ensure circular shape, smaller size */
+.capture-record-button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 6px;
+}
+
+/* Video thumbnail in messages */
+.video-thumbnail {
+  background-color: #1a1a1a;
+  border-radius: 8px;
+  min-width: 120px;
+  min-height: 90px;
+  max-width: 280px;
+  max-height: 210px;
+}
+
+/* Play icon overlay on video thumbnail */
+.video-play-overlay {
+  color: white;
+  background-color: rgba(0, 0, 0, 0.5);
+  border-radius: 50%;
+  padding: 8px;
+}
+
+/* Video player styling */
+.video-player {
+  background-color: #000;
+}
+
+.video-player .video-controls {
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.video-player .video-controls label,
+.video-time-label {
+  color: white;
+  opacity: 1;
+}
+
+.video-player .video-controls button {
+  color: white;
+}

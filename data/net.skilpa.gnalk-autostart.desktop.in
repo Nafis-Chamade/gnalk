@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Gnalk Background Service
+Comment=Receive Nextcloud Talk notifications
+Exec=gnalk --gapplication-service
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Phase=Applications
