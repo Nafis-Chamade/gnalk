@@ -6,7 +6,7 @@ pkgdesc="Nextcloud Talk client with bundled WebRTC support"
 url="https://codeberg.org/skilpa/gnalk"
 arch="aarch64"
 license="GPL-3.0-or-later"
-options="!check"
+options="!check !fhs !tracedeps"
 
 # Runtime deps (system libs we still use)
 depends="
@@ -52,18 +52,25 @@ source="
 builddir="$srcdir/gnalk"
 
 build() {
-	# 1. Build libnice to private prefix
+	local _staging="$srcdir/staging"
+
+	# 1. Build and install libnice to staging dir
 	cd "$srcdir/libnice-$_libnice_ver"
 	meson setup build --prefix=/opt/gnalk \
 		-Dtests=disabled -Dexamples=disabled -Dgstreamer=enabled
 	meson compile -C build
+	DESTDIR="$_staging" meson install -C build --no-rebuild
 
-	# 2. Build gst-plugins-bad webrtc (using our libnice)
+	# Fix .pc files to point to staging paths
+	sed -i "s|/opt/gnalk|$_staging/opt/gnalk|g" "$_staging"/opt/gnalk/lib/pkgconfig/*.pc
+
+	# 2. Build gst-plugins-bad webrtc (using staged libnice)
 	cd "$srcdir/gst-plugins-bad-$_gst_ver"
-	export PKG_CONFIG_PATH="$srcdir/libnice-$_libnice_ver/build/meson-private"
+	export PKG_CONFIG_PATH="$_staging/opt/gnalk/lib/pkgconfig:$PKG_CONFIG_PATH"
+	export LDFLAGS="-L$_staging/opt/gnalk/lib"
 	meson setup build --prefix=/opt/gnalk \
 		-Dauto_features=disabled \
-		-Dwebrtc=enabled -Ddtls=enabled -Dsrtp=enabled
+		-Dwebrtc=enabled -Ddtls=enabled -Dsrtp=enabled -Dsctp=enabled
 	meson compile -C build
 
 	# 3. Build gnalk
@@ -84,6 +91,7 @@ package() {
 	install -Dm755 ext/webrtc/libgstwebrtc.so "$pkgdir/opt/gnalk/lib/gstreamer-1.0/libgstwebrtc.so"
 	install -Dm755 ext/dtls/libgstdtls.so "$pkgdir/opt/gnalk/lib/gstreamer-1.0/libgstdtls.so"
 	install -Dm755 ext/srtp/libgstsrtp.so "$pkgdir/opt/gnalk/lib/gstreamer-1.0/libgstsrtp.so"
+	install -Dm755 ext/sctp/libgstsctp.so "$pkgdir/opt/gnalk/lib/gstreamer-1.0/libgstsctp.so"
 
 	# Install gnalk
 	cd "$builddir"
@@ -113,4 +121,8 @@ EOF
 		"$pkgdir/usr/share/applications/"
 }
 
-sha512sums=""
+sha512sums="
+23ae86d03d5ca7af6517b1a0140a46dbc0fa860bcbc0a5de607ec6982aafaf31629e65f4066ce668882d98ebfb89cd0b7574170582ba0c73fbc17e1f001518c3  gnalk-0.1.0.tar.gz
+2533d3759117ab8fde7cdeb041193324dac7604599a891d47e07a37287af9989be1522c56af52c947598f93b18e60e2cb1b1d9c7ff4cf2bb3e21ce948907f076  libnice-0.1.23.tar.gz
+b4f0ca2899052ba48aca2b4364479cfe580f6150e2b2b043e2a0e687409f5529f548fa06dedd73733d857c1243871426668664228d74bbdfcbd7ed35aea24189  gst-plugins-bad-1.24.10.tar.xz
+"
