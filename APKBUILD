@@ -86,12 +86,16 @@ package() {
 	cd "$srcdir/libnice-$_libnice_ver"
 	DESTDIR="$pkgdir" meson install -C build --no-rebuild
 
-	# Install only webrtc gst plugins (not full gst-plugins-bad)
+	# Install webrtc gst plugins and libraries from gst-plugins-bad
 	cd "$srcdir/gst-plugins-bad-$_gst_ver/build"
+	# Plugins
 	install -Dm755 ext/webrtc/libgstwebrtc.so "$pkgdir/opt/gnalk/lib/gstreamer-1.0/libgstwebrtc.so"
 	install -Dm755 ext/dtls/libgstdtls.so "$pkgdir/opt/gnalk/lib/gstreamer-1.0/libgstdtls.so"
 	install -Dm755 ext/srtp/libgstsrtp.so "$pkgdir/opt/gnalk/lib/gstreamer-1.0/libgstsrtp.so"
 	install -Dm755 ext/sctp/libgstsctp.so "$pkgdir/opt/gnalk/lib/gstreamer-1.0/libgstsctp.so"
+	# Libraries (libgstwebrtcnice bridges libnice to gstreamer-webrtc)
+	install -Dm755 gst-libs/gst/webrtc/nice/libgstwebrtcnice-1.0.so* "$pkgdir/opt/gnalk/lib/" 2>/dev/null || \
+		cp -a gst-libs/gst/webrtc/nice/libgstwebrtcnice-1.0.so* "$pkgdir/opt/gnalk/lib/"
 
 	# Install gnalk
 	cd "$builddir"
