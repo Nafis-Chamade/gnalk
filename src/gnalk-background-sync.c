@@ -187,8 +187,10 @@ on_background_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
       /* Emit signal so window can update */
       g_signal_emit (self, signals[SIGNAL_MESSAGES_SYNCED], 0, data->room_token);
 
-      /* Show notification if appropriate */
-      if (notification_msg_count > 0 && should_show_notification (self, data->room_token))
+      /* Show notification if appropriate (not for initial sync when last_known_id was 0) */
+      if (notification_msg_count > 0 &&
+          data->last_known_id > 0 &&
+          should_show_notification (self, data->room_token))
         {
           /* Use room name if we have it, otherwise use room token */
           const char *display_name = data->room_name ? data->room_name : data->room_token;
@@ -303,16 +305,28 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
               sync_data->room_name = g_strdup (display_name);
               sync_data->last_known_id = db_last_id;
 
-              /* Fetch only NEW messages we don't have yet.
-               * lookIntoFuture=TRUE gets messages AFTER lastKnownMessageId.
-               * timeout=0 returns immediately without long-polling. */
-              gnalk_http_client_get_messages (self->http_client,
-                                                token,
-                                                db_last_id,  /* Get messages after this ID */
-                                                TRUE,        /* lookIntoFuture */
-                                                0,           /* timeout=0 for immediate */
-                                                on_background_messages_synced,
-                                                sync_data);
+              if (db_last_id == 0)
+                {
+                  /* No cached messages - fetch recent messages (last 50) */
+                  gnalk_http_client_get_messages (self->http_client,
+                                                    token,
+                                                    0,
+                                                    FALSE,  /* lookIntoFuture=FALSE to get recent */
+                                                    0,
+                                                    on_background_messages_synced,
+                                                    sync_data);
+                }
+              else
+                {
+                  /* Have cached messages - fetch only NEW messages after last known ID */
+                  gnalk_http_client_get_messages (self->http_client,
+                                                    token,
+                                                    db_last_id,
+                                                    TRUE,   /* lookIntoFuture=TRUE */
+                                                    0,      /* timeout=0 for immediate */
+                                                    on_background_messages_synced,
+                                                    sync_data);
+                }
             }
         }
     }
@@ -388,6 +402,16 @@ gnalk_background_sync_set_account (GnalkBackgroundSync *self,
 }
 
 void
+gnalk_background_sync_set_http_client (GnalkBackgroundSync *self,
+                                         GnalkHttpClient      *http_client)
+{
+  g_return_if_fail (GNALK_IS_BACKGROUND_SYNC (self));
+  g_return_if_fail (GNALK_IS_HTTP_CLIENT (http_client));
+
+  self->http_client = http_client;
+}
+
+void
 gnalk_background_sync_trigger (GnalkBackgroundSync *self)
 {
   g_return_if_fail (GNALK_IS_BACKGROUND_SYNC (self));
@@ -395,6 +419,12 @@ gnalk_background_sync_trigger (GnalkBackgroundSync *self)
   if (self->account_id <= 0)
     {
       g_debug ("Background sync: no account set, skipping");
+      return;
+    }
+
+  if (!self->http_client)
+    {
+      g_debug ("Background sync: no HTTP client set, skipping");
       return;
     }
 

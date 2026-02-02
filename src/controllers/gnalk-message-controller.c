@@ -733,6 +733,10 @@ gnalk_message_controller_start_polling (GnalkMessageController *self,
   g_return_if_fail (self->http_client != NULL);
   g_return_if_fail (self->room_token != NULL);
 
+  /* Don't restart polling if already running */
+  if (self->polling)
+    return;
+
   self->polling = TRUE;
   self->last_known_message_id = last_known_id;
 

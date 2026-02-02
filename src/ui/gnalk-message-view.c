@@ -30,7 +30,14 @@ scroll_to_bottom_idle (gpointer user_data)
 {
   GtkScrolledWindow *scroll = GTK_SCROLLED_WINDOW (user_data);
   GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (scroll);
-  gtk_adjustment_set_value (adj, gtk_adjustment_get_upper (adj));
+  gdouble upper = gtk_adjustment_get_upper (adj);
+  gdouble page_size = gtk_adjustment_get_page_size (adj);
+  gdouble target = upper - page_size;
+
+  g_message ("scroll_to_bottom_idle: upper=%.1f page_size=%.1f target=%.1f",
+             upper, page_size, target);
+
+  gtk_adjustment_set_value (adj, target);
   return G_SOURCE_REMOVE;
 }
 
@@ -47,10 +54,32 @@ is_scrolled_to_bottom (GtkScrolledWindow *scroll)
 }
 
 static void
+on_scroll_adjustment_value_changed (GtkAdjustment     *adj,
+                                     GnalkMessageView *self)
+{
+  gdouble value = gtk_adjustment_get_value (adj);
+  gdouble upper = gtk_adjustment_get_upper (adj);
+  gdouble page_size = gtk_adjustment_get_page_size (adj);
+
+  g_message ("SCROLL value-changed: value=%.1f upper=%.1f page_size=%.1f (bottom=%.1f)",
+             value, upper, page_size, upper - page_size);
+
+  gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
+  gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
+
+  g_signal_emit (self, signals[SIGNAL_SCROLL_CHANGED], 0);
+}
+
+static void
 on_scroll_adjustment_changed (GtkAdjustment     *adj,
                                GnalkMessageView *self)
 {
-  (void) adj;
+  gdouble value = gtk_adjustment_get_value (adj);
+  gdouble upper = gtk_adjustment_get_upper (adj);
+  gdouble page_size = gtk_adjustment_get_page_size (adj);
+
+  g_message ("SCROLL changed: value=%.1f upper=%.1f page_size=%.1f (bottom=%.1f)",
+             value, upper, page_size, upper - page_size);
 
   gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
   gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
@@ -75,9 +104,11 @@ on_edge_reached (GtkScrolledWindow *scrolled_window,
 {
   (void) scrolled_window;
 
-  if (pos == GTK_POS_TOP && !self->loading_older)
+  if (pos == GTK_POS_TOP)
     {
-      g_signal_emit (self, signals[SIGNAL_LOAD_OLDER_REQUESTED], 0);
+      g_message ("edge-reached TOP: loading_older=%d", self->loading_older);
+      if (!self->loading_older)
+        g_signal_emit (self, signals[SIGNAL_LOAD_OLDER_REQUESTED], 0);
     }
 }
 
@@ -132,7 +163,7 @@ gnalk_message_view_init (GnalkMessageView *self)
 
   /* Connect scroll adjustment signals */
   GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (self->scrolled_window));
-  g_signal_connect (adj, "value-changed", G_CALLBACK (on_scroll_adjustment_changed), self);
+  g_signal_connect (adj, "value-changed", G_CALLBACK (on_scroll_adjustment_value_changed), self);
   g_signal_connect (adj, "changed", G_CALLBACK (on_scroll_adjustment_changed), self);
 
   /* Connect edge-reached for lazy loading */
@@ -197,9 +228,8 @@ gnalk_message_view_show_messages_at_bottom (GnalkMessageView *self)
   /* Show the messages page */
   gtk_stack_set_visible_child_name (GTK_STACK (self->stack), "messages");
 
-  /* Scroll to bottom */
-  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment (GTK_SCROLLED_WINDOW (self->scrolled_window));
-  gtk_adjustment_set_value (adj, gtk_adjustment_get_upper (adj));
+  /* Scroll to bottom - schedule for after layout */
+  g_idle_add (scroll_to_bottom_idle, self->scrolled_window);
 
   /* Restore opacity after GTK has processed the layout and scroll */
   g_idle_add (restore_opacity_idle, self->scrolled_window);

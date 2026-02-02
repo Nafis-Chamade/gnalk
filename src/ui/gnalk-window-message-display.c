@@ -66,43 +66,6 @@ gnalk_window_clear_messages_store (GnalkWindow *self)
   GNALK_TRACE_STORE ("clear_messages_store: cleared, store now has 0 items");
 }
 
-/* Force rebind of all messages to refresh file previews after avatar cache becomes ready */
-void
-gnalk_window_refresh_all_messages (GnalkWindow *self)
-{
-  if (!self->messages_store)
-    return;
-
-  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
-  if (n_items == 0)
-    return;
-
-  /* Skip refresh if messages were just loaded (initial_messages_loaded is FALSE means
-   * we're still in initial load sequence - nothing to refresh yet) */
-  if (!self->initial_messages_loaded)
-    return;
-
-  /* Disconnect model, clear and restore to force complete rebind */
-  gtk_no_selection_set_model (self->messages_selection, NULL);
-
-  /* Collect all messages */
-  g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func (g_object_unref);
-  for (guint i = 0; i < n_items; i++)
-    {
-      GnalkMessageData *data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
-      if (data)
-        g_ptr_array_add (messages, data);
-    }
-
-  /* Clear and re-add all messages */
-  g_list_store_remove_all (self->messages_store);
-  for (guint i = 0; i < messages->len; i++)
-    g_list_store_append (self->messages_store, g_ptr_array_index (messages, i));
-
-  /* Reconnect model */
-  gtk_no_selection_set_model (self->messages_selection, G_LIST_MODEL (self->messages_store));
-}
-
 /* ============ Save messages to database ============ */
 
 typedef struct {
@@ -200,9 +163,9 @@ load_messages_thread (GTask        *task,
 {
   LoadMessagesData *data = task_data;
 
-  /* Run DB query in background thread - load last 20 for fast initial display */
+  /* Run DB query in background thread - load last 15 for fast initial display */
   GListStore *cached = gnalk_database_load_messages (data->db, data->account_id,
-                                                       data->room_token, 20, 0);
+                                                       data->room_token, 15, 0);
   g_task_return_pointer (task, cached, g_object_unref);
 }
 
@@ -439,11 +402,12 @@ load_messages_from_db_finish (GObject      *source_object,
   /* Show the view positioned at bottom (no visual jump).
    * This hides the view, positions at bottom, then reveals it. */
   n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
+  g_message ("Messages displayed: %u (from cache)", n_items);
   GNALK_TRACE_SCROLL ("load_messages_from_db_finish: showing view at bottom (%u items)", n_items);
   self->scroll_to_bottom = TRUE;
 
   if (n_items > 0)
-    gnalk_message_view_show_messages_at_item (self->message_view, n_items - 1);
+    gnalk_message_view_show_messages_at_bottom (self->message_view);
   else
     gnalk_message_view_show_messages (self->message_view);
 
@@ -1140,8 +1104,34 @@ gnalk_window_on_message_controller_messages_loaded (GnalkMessageController *cont
 {
   gnalk_window_process_messages_array (self, messages, TRUE);
 
-  /* Save messages to database for offline access */
+  /* Save ALL messages to database for offline access (before trimming display) */
   gnalk_window_save_messages_to_db (self);
+
+  /* Trim display to last 15 messages for initial load (keep full cache in DB) */
+  guint total = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
+  if (total > 15)
+    {
+      guint to_remove = total - 15;
+
+      /* Disconnect model before trimming to avoid GTK scroll issues */
+      gtk_no_selection_set_model (self->messages_selection, NULL);
+      g_list_store_splice (self->messages_store, 0, to_remove, NULL, 0);
+      gtk_no_selection_set_model (self->messages_selection, G_LIST_MODEL (self->messages_store));
+
+      total = 15;
+
+      /* Update oldest_loaded_message_id to reflect displayed messages */
+      GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (self->messages_store), 0);
+      if (oldest)
+        {
+          self->oldest_loaded_message_id = gnalk_message_data_get_id (oldest);
+          g_object_unref (oldest);
+        }
+    }
+  g_message ("Messages displayed: %u (after server fetch)", total);
+
+  /* Scroll to bottom after any changes */
+  gnalk_message_view_scroll_to_bottom (self->message_view);
 
   /* Update tab state after server load */
   if (self->tab_manager && self->current_room_token)
@@ -1184,6 +1174,8 @@ gnalk_window_on_message_controller_poll_response (GnalkMessageController *contro
   /* Save new messages to database for offline access */
   if (len > 0)
     {
+      guint total = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
+      g_message ("Messages displayed: %u (+%u from poll)", total, len);
       GNALK_TRACE_DATABASE ("poll_response: saving %u messages to database", len);
       gnalk_window_save_messages_to_db (self);
     }

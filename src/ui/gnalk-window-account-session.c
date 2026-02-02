@@ -204,9 +204,6 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
         if (self->avatar_cache)
           gnalk_avatar_cache_set_online (self->avatar_cache, TRUE);
 
-        /* Refresh all message rows to load file previews now that avatar cache is ready */
-        gnalk_window_refresh_all_messages (self);
-
         /* Set user avatar and status */
         GnalkAccount *account = gnalk_session_get_account (session);
         const char *user_id = account ? gnalk_account_get_user_id (account) : NULL;

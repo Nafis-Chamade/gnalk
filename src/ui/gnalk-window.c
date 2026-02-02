@@ -112,7 +112,6 @@ static void on_new_conversation_created (GnalkNewConversationDialog *dialog, con
 
 /* clear_messages_store is now gnalk_window_clear_messages_store in gnalk-window-message-display.c */
 /* clear_search_results_store is now gnalk_window_clear_search_results in gnalk-window-conversation-list.c */
-/* refresh_all_messages is now gnalk_window_refresh_all_messages in gnalk-window-message-display.c */
 /* generate_reference_id is now gnalk_window_generate_reference_id in gnalk-window-message-composer.c */
 
 /* ============ Read Status Tracking ============
@@ -296,9 +295,6 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         /* Mark avatar cache as online */
         if (self->avatar_cache)
           gnalk_avatar_cache_set_online (self->avatar_cache, TRUE);
-
-        /* Refresh all message rows to load file previews now that avatar cache is ready */
-        gnalk_window_refresh_all_messages (self);
 
         /* Get account info for display name and user status setup */
         GnalkAccount *account = gnalk_session_get_account (session);
@@ -592,11 +588,11 @@ gnalk_window_on_session_room_joined (GnalkSession *session G_GNUC_UNUSED,
   if (app)
     gnalk_application_set_active_room (app, room_token);
 
-  /* Set room on message controller and start polling */
+  /* Set room on message controller */
   gnalk_message_controller_set_room (self->message_controller, room_token);
 
-  /* Start message polling if not already running (important for guests) */
-  if (self->message_controller)
+  /* For guests, start polling here since they skip the normal cache load path */
+  if (self->message_controller && gnalk_session_is_guest (session))
     gnalk_message_controller_start_polling (self->message_controller, 0);
 }
 

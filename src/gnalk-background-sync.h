@@ -37,6 +37,17 @@ void gnalk_background_sync_set_account (GnalkBackgroundSync *self,
                                           const char           *user_id);
 
 /**
+ * gnalk_background_sync_set_http_client:
+ * @self: The background sync service
+ * @http_client: The HTTP client to use for requests
+ *
+ * Sets the HTTP client to use for sync requests. Call this before triggering
+ * if you want to use a different client than the one passed to _new().
+ */
+void gnalk_background_sync_set_http_client (GnalkBackgroundSync *self,
+                                              GnalkHttpClient      *http_client);
+
+/**
  * gnalk_background_sync_trigger:
  * @self: The background sync service
  *

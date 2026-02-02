@@ -547,14 +547,32 @@ on_session_conversations_changed (GnalkSessionManager *manager G_GNUC_UNUSED,
 
 static void
 on_session_online_changed (GnalkSessionManager *manager,
-                             GnalkSession        *session G_GNUC_UNUSED,
+                             GnalkSession        *session,
                              int                   old_state G_GNUC_UNUSED,
-                             int                   new_state G_GNUC_UNUSED,
+                             int                   new_state,
                              GnalkApplication    *self)
 {
   /* Update online status based on any session being online */
   gboolean any_online = gnalk_session_manager_has_any_online (manager);
   gnalk_app_state_set_online (self->app_state, any_online);
+
+  /* Trigger background sync when a session goes online (not for guests) */
+  if (new_state == GNALK_SESSION_STATE_ONLINE &&
+      self->background_sync &&
+      !gnalk_session_is_guest (session))
+    {
+      GnalkAccount *account = gnalk_session_get_account (session);
+      gint64 account_id = gnalk_account_get_id (account);
+      const char *user_id = gnalk_account_get_user_id (account);
+
+      /* Use the session's HTTP client which already has credentials configured */
+      GnalkHttpClient *http_client = gnalk_session_get_http_client (session);
+
+      gnalk_background_sync_set_http_client (self->background_sync, http_client);
+      gnalk_background_sync_set_account (self->background_sync, account_id, user_id);
+      gnalk_background_sync_trigger (self->background_sync);
+      g_message ("Triggered initial background sync for account %s", user_id);
+    }
 }
 
 static void
