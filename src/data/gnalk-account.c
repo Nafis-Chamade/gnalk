@@ -12,6 +12,8 @@ struct _GnalkAccount
   gboolean enabled;
   gboolean autologin;
   char   *goa_account_id;
+  gboolean is_guest;    /* TRUE for guest accounts (not persisted) */
+  char   *room_token;   /* Room token for guest sessions */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkAccount, gnalk_account, G_TYPE_OBJECT)
@@ -41,6 +43,7 @@ gnalk_account_finalize (GObject *object)
   g_free (self->display_name);
   g_free (self->avatar_url);
   g_free (self->goa_account_id);
+  g_free (self->room_token);
 
   G_OBJECT_CLASS (gnalk_account_parent_class)->finalize (object);
 }
@@ -361,4 +364,35 @@ gnalk_account_set_goa_account_id (GnalkAccount *self,
   g_free (self->goa_account_id);
   self->goa_account_id = g_strdup (goa_account_id);
   g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_GOA_ACCOUNT_ID]);
+}
+
+GnalkAccount *
+gnalk_account_new_guest (const char *server_url,
+                           const char *room_token,
+                           const char *display_name)
+{
+  /* Guest accounts have id=-1 to indicate they are not persisted */
+  GnalkAccount *self = g_object_new (GNALK_TYPE_ACCOUNT,
+                                        "id", (gint64) -1,
+                                        "server-url", server_url,
+                                        "user-id", "",
+                                        "display-name", display_name,
+                                        NULL);
+  self->is_guest = TRUE;
+  self->room_token = g_strdup (room_token);
+  return self;
+}
+
+gboolean
+gnalk_account_get_is_guest (GnalkAccount *self)
+{
+  g_return_val_if_fail (GNALK_IS_ACCOUNT (self), FALSE);
+  return self->is_guest;
+}
+
+const char *
+gnalk_account_get_room_token (GnalkAccount *self)
+{
+  g_return_val_if_fail (GNALK_IS_ACCOUNT (self), NULL);
+  return self->room_token;
 }

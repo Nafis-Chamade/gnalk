@@ -723,6 +723,8 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
     gnalk_message_controller_start_polling (self, self->last_known_message_id);
 }
 
+static void on_initial_messages_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+
 void
 gnalk_message_controller_start_polling (GnalkMessageController *self,
                                           gint64                   last_known_id)
@@ -738,13 +740,95 @@ gnalk_message_controller_start_polling (GnalkMessageController *self,
   cb_data->controller = self;
   cb_data->generation = self->generation;
 
-  gnalk_http_client_get_messages (self->http_client,
-                                    self->room_token,
-                                    last_known_id,
-                                    TRUE,  /* wait (long poll) */
-                                    30,    /* 30 second timeout */
-                                    on_poll_response,
-                                    cb_data);
+  if (last_known_id == 0)
+    {
+      /* No cached messages - first fetch recent messages, then start polling */
+      gnalk_http_client_get_messages (self->http_client,
+                                        self->room_token,
+                                        0,
+                                        FALSE,  /* lookIntoFuture=FALSE to get recent messages */
+                                        0,      /* no timeout for non-polling request */
+                                        on_initial_messages_response,
+                                        cb_data);
+    }
+  else
+    {
+      /* Have cached messages - start long-polling for new ones */
+      gnalk_http_client_get_messages (self->http_client,
+                                        self->room_token,
+                                        last_known_id,
+                                        TRUE,  /* wait (long poll) */
+                                        30,    /* 30 second timeout */
+                                        on_poll_response,
+                                        cb_data);
+    }
+}
+
+static void
+on_initial_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                               JsonNode         *response,
+                               GError           *error,
+                               gpointer          user_data)
+{
+  MessageResponseData *cb_data = user_data;
+  guint expected_generation = cb_data->generation;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      g_slice_free (MessageResponseData, cb_data);
+      return;
+    }
+
+  GnalkMessageController *self = cb_data->controller;
+  g_slice_free (MessageResponseData, cb_data);
+
+  if (error)
+    {
+      g_warning ("Failed to get initial messages: %s", error->message);
+      return;
+    }
+
+  if (expected_generation != self->generation)
+    {
+      g_debug ("Discarding stale initial messages response");
+      return;
+    }
+
+  JsonArray *messages = extract_messages_array (response);
+  if (messages)
+    {
+      /* Find highest message ID */
+      gint64 highest_id = 0;
+      guint len = json_array_get_length (messages);
+      for (guint i = 0; i < len; i++)
+        {
+          JsonObject *msg = json_array_get_object_element (messages, i);
+          gint64 msg_id = json_object_get_int_member_with_default (msg, "id", 0);
+          if (msg_id > highest_id)
+            highest_id = msg_id;
+        }
+
+      /* Emit signal with messages for display */
+      g_signal_emit (self, signals[SIGNAL_MESSAGES_LOADED], 0, messages, TRUE);
+
+      /* Now start long-polling from the highest message ID */
+      if (highest_id > 0 && self->polling)
+        {
+          self->last_known_message_id = highest_id;
+
+          MessageResponseData *poll_data = g_slice_new (MessageResponseData);
+          poll_data->controller = self;
+          poll_data->generation = self->generation;
+
+          gnalk_http_client_get_messages (self->http_client,
+                                            self->room_token,
+                                            highest_id,
+                                            TRUE,  /* long poll */
+                                            30,
+                                            on_poll_response,
+                                            poll_data);
+        }
+    }
 }
 
 void

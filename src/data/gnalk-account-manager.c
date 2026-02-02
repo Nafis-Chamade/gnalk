@@ -264,6 +264,10 @@ gnalk_account_manager_save_account (GnalkAccountManager *self,
   g_return_if_fail (GNALK_IS_ACCOUNT_MANAGER (self));
   g_return_if_fail (GNALK_IS_ACCOUNT (account));
 
+  /* Don't persist guest accounts */
+  if (gnalk_account_get_is_guest (account))
+    return;
+
   gnalk_database_save_account (self->database, account);
 }
 

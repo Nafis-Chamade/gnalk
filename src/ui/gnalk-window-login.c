@@ -284,19 +284,93 @@ gnalk_window_start_login (GnalkWindow *self)
     gnalk_session_manager_set_active_session (self->session_manager, session);
 }
 
+/* Parse room URL like https://nc.example.com/call/TOKEN */
+static gboolean
+parse_room_url (const char  *url,
+                char       **out_server,
+                char       **out_token)
+{
+  if (!url || !*url)
+    return FALSE;
+
+  /* Parse the URL */
+  g_autoptr(GUri) uri = g_uri_parse (url, G_URI_FLAGS_NONE, NULL);
+  if (!uri)
+    return FALSE;
+
+  const char *scheme = g_uri_get_scheme (uri);
+  const char *host = g_uri_get_host (uri);
+  int port = g_uri_get_port (uri);
+  const char *path = g_uri_get_path (uri);
+
+  if (!scheme || !host || !path)
+    return FALSE;
+
+  /* Find /call/ in the path */
+  const char *call_pos = strstr (path, "/call/");
+  if (!call_pos)
+    return FALSE;
+
+  /* Extract token (everything after /call/) */
+  const char *token = call_pos + strlen ("/call/");
+  if (!token || !*token)
+    return FALSE;
+
+  /* Build server URL (without the path) */
+  if (port > 0 && port != 443 && port != 80)
+    *out_server = g_strdup_printf ("%s://%s:%d", scheme, host, port);
+  else
+    *out_server = g_strdup_printf ("%s://%s", scheme, host);
+
+  *out_token = g_strdup (token);
+
+  return TRUE;
+}
+
 void
 gnalk_window_start_guest_login (GnalkWindow *self)
 {
-  /* TODO: Implement guest login support in Session architecture.
-   * Guest login requires a different auth flow:
-   * 1. No user/password - just room join
-   * 2. Get room info to check if public
-   * 3. Join room as guest
-   * 4. Set guest display name
-   * 5. Get signaling settings
-   * For now, show error message. */
-  (void)self;
-  gnalk_window_login_show_error (self, _("Guest login is not yet supported. Please use regular login."));
+  const char *room_url = gnalk_login_view_get_room_url (self->login_view);
+  const char *display_name = gnalk_login_view_get_display_name (self->login_view);
+  const char *room_password = gnalk_login_view_get_room_password (self->login_view);
+
+  if (!room_url || !*room_url)
+    {
+      gnalk_window_login_show_error (self, _("Please enter a room URL"));
+      return;
+    }
+
+  if (!display_name || !*display_name)
+    {
+      gnalk_window_login_show_error (self, _("Please enter a display name"));
+      return;
+    }
+
+  /* Parse room URL → server_url, room_token */
+  g_autofree char *server_url = NULL;
+  g_autofree char *room_token = NULL;
+
+  if (!parse_room_url (room_url, &server_url, &room_token))
+    {
+      gnalk_window_login_show_error (self, _("Invalid room URL. Expected format: https://server.com/call/TOKEN"));
+      return;
+    }
+
+  /* Show connecting state */
+  gnalk_window_login_set_connecting (self, TRUE);
+
+  /* Set guest mode in application */
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  gnalk_application_set_guest_mode (app, TRUE, room_token);
+  gnalk_application_set_user_name (app, display_name);
+
+  /* Start guest session via SessionManager */
+  GnalkSession *session = gnalk_session_manager_start_guest_session (
+      self->session_manager, server_url, room_token, display_name,
+      (room_password && *room_password) ? room_password : NULL);
+
+  if (session)
+    gnalk_session_manager_set_active_session (self->session_manager, session);
 }
 
 void

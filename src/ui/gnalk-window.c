@@ -384,8 +384,9 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         self->initial_auth_done = TRUE;
         self->autologin_pending = FALSE;
 
-        /* Start conversation controller polling - it will sync new messages to DB */
-        if (self->conversation_controller)
+        /* Start conversation controller polling - it will sync new messages to DB
+         * Skip for guests - they can only access their single room */
+        if (self->conversation_controller && !gnalk_session_is_guest (session))
           gnalk_conversation_controller_start_polling (self->conversation_controller);
 
         /* Reload messages from DB for current room (controller will sync new ones) */
@@ -591,8 +592,12 @@ gnalk_window_on_session_room_joined (GnalkSession *session G_GNUC_UNUSED,
   if (app)
     gnalk_application_set_active_room (app, room_token);
 
-  /* Set room on message controller - messages already loaded from DB in open_conversation_by_token */
+  /* Set room on message controller and start polling */
   gnalk_message_controller_set_room (self->message_controller, room_token);
+
+  /* Start message polling if not already running (important for guests) */
+  if (self->message_controller)
+    gnalk_message_controller_start_polling (self->message_controller, 0);
 }
 
 void

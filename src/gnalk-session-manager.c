@@ -11,6 +11,7 @@ struct _GnalkSessionManager
 
   GHashTable    *sessions;       /* gint64 account_id -> GnalkSession */
   GnalkSession *active_session;
+  GnalkSession *guest_session;   /* Single guest session (not in sessions hash) */
 
   int global_unread;
 };
@@ -38,6 +39,7 @@ gnalk_session_manager_finalize (GObject *object)
   GnalkSessionManager *self = GNALK_SESSION_MANAGER (object);
 
   gnalk_session_manager_disconnect_all (self);
+  gnalk_session_manager_stop_guest_session (self);
 
   g_clear_pointer (&self->sessions, g_hash_table_unref);
   g_clear_object (&self->account_manager);
@@ -407,6 +409,10 @@ gnalk_session_manager_has_any_online (GnalkSessionManager *self)
 {
   g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (self), FALSE);
 
+  /* Check guest session first */
+  if (self->guest_session && gnalk_session_is_online (self->guest_session))
+    return TRUE;
+
   GHashTableIter iter;
   gpointer value;
 
@@ -419,4 +425,82 @@ gnalk_session_manager_has_any_online (GnalkSessionManager *self)
     }
 
   return FALSE;
+}
+
+GnalkSession *
+gnalk_session_manager_start_guest_session (GnalkSessionManager *self,
+                                             const char           *server_url,
+                                             const char           *room_token,
+                                             const char           *display_name,
+                                             const char           *room_password)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (self), NULL);
+  g_return_val_if_fail (server_url != NULL, NULL);
+  g_return_val_if_fail (room_token != NULL, NULL);
+  g_return_val_if_fail (display_name != NULL && *display_name, NULL);
+
+  /* Stop any existing guest session first - only one at a time */
+  if (self->guest_session)
+    gnalk_session_manager_stop_guest_session (self);
+
+  /* Create guest session */
+  GnalkSession *session = gnalk_session_new_guest (server_url, room_token, display_name,
+                                                      room_password,
+                                                      self->database, self->network_monitor);
+  self->guest_session = session;
+
+  /* Connect signals */
+  connect_session_signals (self, session);
+
+  /* Emit signal */
+  g_signal_emit (self, signals[SIGNAL_SESSION_ADDED], 0, session);
+
+  /* Start connecting */
+  gnalk_session_connect_guest (session);
+
+  return session;
+}
+
+void
+gnalk_session_manager_stop_guest_session (GnalkSessionManager *self)
+{
+  g_return_if_fail (GNALK_IS_SESSION_MANAGER (self));
+
+  if (!self->guest_session)
+    return;
+
+  GnalkSession *session = self->guest_session;
+
+  /* If this was the active session, clear it */
+  if (self->active_session == session)
+    gnalk_session_manager_set_active_session (self, NULL);
+
+  /* Disconnect signals */
+  disconnect_session_signals (self, session);
+
+  /* Disconnect the session */
+  gnalk_session_disconnect (session);
+
+  /* Emit signal with account_id = -1 for guest */
+  g_signal_emit (self, signals[SIGNAL_SESSION_REMOVED], 0, (gint64) -1);
+
+  /* Clear and unref */
+  g_clear_object (&self->guest_session);
+
+  /* If we have other sessions, make one active */
+  if (!self->active_session && g_hash_table_size (self->sessions) > 0)
+    {
+      GHashTableIter iter;
+      gpointer value;
+      g_hash_table_iter_init (&iter, self->sessions);
+      if (g_hash_table_iter_next (&iter, NULL, &value))
+        gnalk_session_manager_set_active_session (self, GNALK_SESSION (value));
+    }
+}
+
+GnalkSession *
+gnalk_session_manager_get_guest_session (GnalkSessionManager *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (self), NULL);
+  return self->guest_session;
 }

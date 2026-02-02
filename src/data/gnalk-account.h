@@ -59,6 +59,15 @@ void gnalk_account_set_autologin      (GnalkAccount *self,
 void gnalk_account_set_goa_account_id (GnalkAccount *self,
                                          const char    *goa_account_id);
 
+/* Guest account constructor (not persisted) */
+GnalkAccount *gnalk_account_new_guest (const char *server_url,
+                                         const char *room_token,
+                                         const char *display_name);
+
+/* Guest-specific getters */
+gboolean    gnalk_account_get_is_guest   (GnalkAccount *self);
+const char *gnalk_account_get_room_token (GnalkAccount *self);
+
 /**
  * gnalk_account_get_unique_key:
  * @self: The account

@@ -84,9 +84,17 @@ GnalkSession *gnalk_session_new (GnalkAccount        *account,
                                      GnalkDatabase       *database,
                                      GnalkNetworkMonitor *network_monitor);
 
+GnalkSession *gnalk_session_new_guest (const char          *server_url,
+                                            const char          *room_token,
+                                            const char          *display_name,
+                                            const char          *room_password,
+                                            GnalkDatabase       *database,
+                                            GnalkNetworkMonitor *network_monitor);
+
 /* State queries */
 GnalkSessionState gnalk_session_get_state (GnalkSession *self);
 gboolean           gnalk_session_is_online (GnalkSession *self);
+gboolean           gnalk_session_is_guest  (GnalkSession *self);
 gboolean           gnalk_session_can_call  (GnalkSession *self);
 
 /* Account */
@@ -94,9 +102,10 @@ GnalkAccount *gnalk_session_get_account (GnalkSession *self);
 gint64         gnalk_session_get_account_id (GnalkSession *self);
 
 /* Connection lifecycle */
-void gnalk_session_connect    (GnalkSession *self,
-                                 const char    *password);
-void gnalk_session_disconnect (GnalkSession *self);
+void gnalk_session_connect       (GnalkSession *self,
+                                    const char    *password);
+void gnalk_session_connect_guest (GnalkSession *self);
+void gnalk_session_disconnect    (GnalkSession *self);
 
 /* Room management */
 void        gnalk_session_join_room  (GnalkSession *self,

@@ -9,6 +9,7 @@ struct _GnalkSignaling
   SoupWebsocketConnection *ws_connection;
   SoupMessage    *pending_ws_msg;  /* Keep message alive during async connect */
   char           *server_url;
+  char           *backend_url;  /* Nextcloud server URL for auth */
   char           *user_id;
   char           *ticket;
   char           *session_id;           /* Room session ID (from Nextcloud) */
@@ -95,6 +96,7 @@ gnalk_signaling_finalize (GObject *object)
   g_clear_pointer (&self->call_states, g_hash_table_unref);
   g_clear_pointer (&self->session_to_actor, g_hash_table_unref);
   g_free (self->server_url);
+  g_free (self->backend_url);
   g_free (self->user_id);
   g_free (self->ticket);
   g_free (self->session_id);
@@ -651,7 +653,8 @@ send_hello (GnalkSignaling *self)
 
   g_autofree char *auth_url = NULL;
 
-  g_autoptr(GUri) uri = g_uri_parse (self->server_url, G_URI_FLAGS_NONE, NULL);
+  /* Use backend_url (the Nextcloud server URL) for auth, not the signaling server URL */
+  g_autoptr(GUri) uri = g_uri_parse (self->backend_url ? self->backend_url : self->server_url, G_URI_FLAGS_NONE, NULL);
   if (uri)
     {
       const char *scheme = g_uri_get_scheme (uri);
@@ -659,7 +662,7 @@ send_hello (GnalkSignaling *self)
       int port = g_uri_get_port (uri);
 
       const char *http_scheme = "https";
-      if (g_strcmp0 (scheme, "ws") == 0)
+      if (g_strcmp0 (scheme, "http") == 0)
         http_scheme = "http";
 
       if (port > 0 && port != 80 && port != 443)
@@ -754,6 +757,7 @@ gnalk_signaling_do_connect (GnalkSignaling *self)
 void
 gnalk_signaling_connect (GnalkSignaling *self,
                            const char      *server_url,
+                           const char      *backend_url,
                            const char      *user_id,
                            const char      *ticket)
 {
@@ -764,8 +768,12 @@ gnalk_signaling_connect (GnalkSignaling *self,
 
   /* Store new credentials first */
   g_free (self->server_url);
+  g_free (self->backend_url);
   g_free (self->user_id);
   g_free (self->ticket);
+
+  /* Store the Nextcloud server URL for backend auth */
+  self->backend_url = g_strdup (backend_url);
 
   g_autofree char *ws_url = g_strdup (server_url);
   if (g_str_has_prefix (ws_url, "https://"))

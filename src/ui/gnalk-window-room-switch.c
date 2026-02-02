@@ -751,6 +751,10 @@ gnalk_window_open_conversation_by_token (GnalkWindow *self, const char *token)
           gnalk_session_join_room (self->active_session, token);
         }
 
+      /* Start message polling (important for guests who skip the found_data path) */
+      if (self->message_controller)
+        gnalk_message_controller_start_polling (self->message_controller, 0);
+
       /* Reload conversations from cache (controller keeps it fresh) */
       g_message ("open_conversation_by_token: reloading conversations");
       gnalk_window_load_conversations_from_db (self);

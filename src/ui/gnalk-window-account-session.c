@@ -222,12 +222,38 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
         if (user_id && self->avatar_cache)
           gnalk_user_status_menu_set_user (self->user_status_menu, user_id, self->avatar_cache);
 
-        /* Set user status to online */
+        /* Set user status to online (not for guests) */
         GnalkApplication *app = GNALK_APPLICATION (g_application_get_default ());
-        if (!gnalk_application_is_guest (app) && user_id)
+        gboolean is_guest = gnalk_application_is_guest (app);
+
+        if (!is_guest && user_id)
           {
             g_message ("switch_to_session: setting user status to online for %s", user_id);
             gnalk_user_status_menu_set_status (self->user_status_menu, "online");
+          }
+
+        /* Configure UI for guest mode */
+        if (is_guest)
+          {
+            /* Hide user avatar and status button for guests */
+            gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), FALSE);
+
+            /* Collapse sidebar for guests - they only have access to one room */
+            adw_navigation_split_view_set_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+            adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+
+            /* Disable back button for guests - they can't return to conversations list */
+            adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), FALSE);
+
+            /* Auto-select the guest room */
+            const char *room_token = gnalk_application_get_guest_room_token (app);
+            if (room_token)
+              gnalk_window_open_conversation_by_token (self, room_token);
+          }
+        else
+          {
+            /* Ensure status menu is visible for non-guests */
+            gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), TRUE);
           }
 
         /* Sync call capability from session */
@@ -334,7 +360,8 @@ gnalk_window_on_session_manager_active_changed (GnalkSessionManager *manager G_G
   gnalk_window_switch_to_session (self, session);
 
   /* Save last active account to settings for restore on next launch */
-  if (session)
+  /* Don't save guest sessions - they are not persisted */
+  if (session && !gnalk_session_is_guest (session))
     {
       gint64 account_id = gnalk_session_get_account_id (session);
       GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));

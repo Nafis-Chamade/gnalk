@@ -1162,6 +1162,10 @@ gnalk_database_save_account (GnalkDatabase *self,
   g_return_if_fail (self->db != NULL);
   g_return_if_fail (GNALK_IS_ACCOUNT (account));
 
+  /* Don't persist guest accounts (id=-1) */
+  if (gnalk_account_get_id (account) < 0)
+    return;
+
   sqlite3_stmt *stmt;
   const char *sql =
     "UPDATE accounts SET user_name = ?, avatar_url = ?, enabled = ?, autologin = ?, "

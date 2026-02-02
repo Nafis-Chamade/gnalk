@@ -21,6 +21,10 @@ struct _GnalkSession
 
   /* Connection state */
   GnalkSessionState state;
+  gboolean is_guest;           /* TRUE for guest sessions */
+  char *guest_display_name;    /* Display name for guest sessions */
+  char *room_password;         /* Room password for guest sessions (optional) */
+  char *guest_room_name;       /* Room display name for guest sessions */
   guint reconnect_timer_id;
   int   reconnect_attempts;
   guint health_check_timer_id;
@@ -114,6 +118,12 @@ static void on_conversations_response (GnalkHttpClient *client, JsonNode *respon
 static void on_capabilities_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_signaling_settings_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 
+/* Guest auth chain callbacks */
+static void on_guest_room_info_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_guest_join_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_guest_set_name_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_guest_signaling_settings_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+
 /* Cleanup */
 static void
 gnalk_session_finalize (GObject *object)
@@ -137,6 +147,9 @@ gnalk_session_finalize (GObject *object)
   g_clear_object (&self->network_monitor);
 
   g_free (self->password);
+  g_free (self->guest_display_name);
+  g_free (self->room_password);
+  g_free (self->guest_room_name);
   g_free (self->signaling_server);
   g_free (self->signaling_ticket);
   g_free (self->stun_server);
@@ -377,6 +390,64 @@ gnalk_session_new (GnalkAccount        *account,
   return self;
 }
 
+GnalkSession *
+gnalk_session_new_guest (const char          *server_url,
+                           const char          *room_token,
+                           const char          *display_name,
+                           const char          *room_password,
+                           GnalkDatabase       *database,
+                           GnalkNetworkMonitor *network_monitor)
+{
+  g_return_val_if_fail (server_url != NULL, NULL);
+  g_return_val_if_fail (room_token != NULL, NULL);
+  g_return_val_if_fail (display_name != NULL, NULL);
+  g_return_val_if_fail (GNALK_IS_DATABASE (database), NULL);
+  g_return_val_if_fail (GNALK_IS_NETWORK_MONITOR (network_monitor), NULL);
+
+  /* Create a guest account */
+  GnalkAccount *account = gnalk_account_new_guest (server_url, room_token, display_name);
+
+  GnalkSession *self = g_object_new (GNALK_TYPE_SESSION, NULL);
+
+  self->account = account;  /* Takes ownership */
+  self->database = g_object_ref (database);
+  self->network_monitor = g_object_ref (network_monitor);
+  self->is_guest = TRUE;
+  self->guest_display_name = g_strdup (display_name);
+  self->room_password = g_strdup (room_password);
+
+  /* Create HTTP client in guest mode */
+  self->http_client = gnalk_http_client_new ();
+  gnalk_http_client_set_guest_mode (self->http_client, server_url, room_token);
+
+  /* Create signaling */
+  self->signaling = gnalk_signaling_new ();
+  self->signaling_ready_handler_id =
+    g_signal_connect (self->signaling, "ready",
+                      G_CALLBACK (on_signaling_ready), self);
+  self->signaling_room_joined_handler_id =
+    g_signal_connect (self->signaling, "room-joined",
+                      G_CALLBACK (on_signaling_room_joined), self);
+  self->signaling_connection_lost_handler_id =
+    g_signal_connect (self->signaling, "connection-lost",
+                      G_CALLBACK (on_signaling_connection_lost), self);
+  self->signaling_typing_handler_id =
+    g_signal_connect (self->signaling, "typing",
+                      G_CALLBACK (on_signaling_typing), self);
+  self->signaling_incoming_call_handler_id =
+    g_signal_connect (self->signaling, "incoming-call",
+                      G_CALLBACK (on_signaling_incoming_call), self);
+
+  /* Listen for network changes */
+  self->network_changed_handler_id =
+    g_signal_connect (network_monitor, "network-changed",
+                      G_CALLBACK (on_network_changed), self);
+
+  /* Guest sessions don't load cached conversations - they only have one room */
+
+  return self;
+}
+
 /* State management */
 static void
 set_state (GnalkSession *self, GnalkSessionState new_state)
@@ -503,6 +574,10 @@ heartbeat_timeout (gpointer user_data)
 static void
 start_heartbeat (GnalkSession *self)
 {
+  /* Skip heartbeat for guest sessions - they can't set user status */
+  if (self->is_guest)
+    return;
+
   if (self->heartbeat_timer_id > 0)
     return;
 
@@ -581,12 +656,22 @@ attempt_reconnect (GnalkSession *self)
 
   set_state (self, GNALK_SESSION_STATE_RECONNECTING);
 
-  /* Start auth chain */
-  gnalk_http_client_get_server_status_with_timeout (
-    self->http_client,
-    GNALK_SESSION_AUTH_TIMEOUT_SEC,
-    on_server_status_response,
-    self);
+  if (self->is_guest)
+    {
+      /* Guest auth chain: start with room info */
+      const char *room_token = gnalk_account_get_room_token (self->account);
+      gnalk_http_client_get_room_info (self->http_client, room_token,
+                                         on_guest_room_info_response, self);
+    }
+  else
+    {
+      /* Normal auth chain: start with server status */
+      gnalk_http_client_get_server_status_with_timeout (
+        self->http_client,
+        GNALK_SESSION_AUTH_TIMEOUT_SEC,
+        on_server_status_response,
+        self);
+    }
 }
 
 /* Auth chain */
@@ -1048,6 +1133,7 @@ connect_signaling (GnalkSession *self)
 
   gnalk_signaling_connect (self->signaling,
                              self->signaling_server,
+                             gnalk_account_get_server_url (self->account),
                              gnalk_account_get_user_id (self->account),
                              self->signaling_ticket);
 }
@@ -1066,6 +1152,13 @@ gnalk_session_is_online (GnalkSession *self)
 {
   g_return_val_if_fail (GNALK_IS_SESSION (self), FALSE);
   return self->state == GNALK_SESSION_STATE_ONLINE;
+}
+
+gboolean
+gnalk_session_is_guest (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), FALSE);
+  return self->is_guest;
 }
 
 gboolean
@@ -1135,6 +1228,34 @@ gnalk_session_connect (GnalkSession *self,
   gnalk_http_client_get_server_status (self->http_client,
                                          on_server_status_response,
                                          self);
+}
+
+void
+gnalk_session_connect_guest (GnalkSession *self)
+{
+  g_return_if_fail (GNALK_IS_SESSION (self));
+  g_return_if_fail (self->is_guest);
+
+  if (self->state != GNALK_SESSION_STATE_DISCONNECTED)
+    {
+      g_debug ("Guest session: Already connected or connecting");
+      return;
+    }
+
+  /* Check network status before attempting connection */
+  if (!gnalk_network_monitor_is_online (self->network_monitor))
+    {
+      g_debug ("Guest session: Network offline, deferring connection");
+      set_state (self, GNALK_SESSION_STATE_OFFLINE);
+      return;
+    }
+
+  set_state (self, GNALK_SESSION_STATE_CONNECTING);
+
+  /* Start guest auth chain: get room info first to check if accessible */
+  const char *room_token = gnalk_account_get_room_token (self->account);
+  gnalk_http_client_get_room_info (self->http_client, room_token,
+                                     on_guest_room_info_response, self);
 }
 
 void
@@ -1492,4 +1613,293 @@ gnalk_session_set_last_known_message_id (GnalkSession *self,
   gnalk_database_set_last_known_message_id (self->database,
                                               gnalk_account_get_id (self->account),
                                               room_token, message_id);
+}
+
+/* ============ Guest Auth Chain Callbacks ============ */
+
+static void
+on_guest_room_info_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                              JsonNode         *response,
+                              GError           *error,
+                              gpointer          user_data)
+{
+  GnalkSession *self = GNALK_SESSION (user_data);
+
+  if (error)
+    {
+      auth_failed (self, error->message);
+      return;
+    }
+
+  /* Check if room is accessible */
+  if (!response || !JSON_NODE_HOLDS_OBJECT (response))
+    {
+      auth_failed (self, "Invalid room info response");
+      return;
+    }
+
+  JsonObject *root = json_node_get_object (response);
+  JsonObject *ocs = json_object_get_object_member (root, "ocs");
+  if (!ocs)
+    {
+      auth_failed (self, "Invalid room info response");
+      return;
+    }
+
+  JsonObject *meta = json_object_get_object_member (ocs, "meta");
+  if (meta)
+    {
+      int status_code = json_object_get_int_member_with_default (meta, "statuscode", 0);
+      if (status_code == 404)
+        {
+          auth_failed (self, "Room not found");
+          return;
+        }
+    }
+
+  JsonObject *data = json_object_get_object_member (ocs, "data");
+  if (!data)
+    {
+      auth_failed (self, "Room info missing data");
+      return;
+    }
+
+  /* Check room type - must be public (type 3) */
+  int room_type = json_object_get_int_member_with_default (data, "type", 0);
+  if (room_type != 3)
+    {
+      auth_failed (self, "Room is not public");
+      return;
+    }
+
+  /* Store room display name for later use */
+  const char *display_name = json_object_get_string_member_with_default (data, "displayName", NULL);
+  if (display_name && *display_name)
+    {
+      g_free (self->guest_room_name);
+      self->guest_room_name = g_strdup (display_name);
+    }
+
+  /* Check if password is required */
+  gboolean has_password = json_object_get_boolean_member_with_default (data, "hasPassword", FALSE);
+
+  /* Join room as guest */
+  const char *room_token = gnalk_account_get_room_token (self->account);
+  gnalk_http_client_join_room_as_guest (self->http_client, room_token,
+                                          has_password ? self->room_password : NULL,
+                                          on_guest_join_response, self);
+}
+
+static void
+on_guest_join_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                         JsonNode         *response,
+                         GError           *error,
+                         gpointer          user_data)
+{
+  GnalkSession *self = GNALK_SESSION (user_data);
+
+  if (error)
+    {
+      auth_failed (self, "Failed to join room as guest");
+      return;
+    }
+
+  /* Check for password error */
+  if (response && JSON_NODE_HOLDS_OBJECT (response))
+    {
+      JsonObject *root = json_node_get_object (response);
+      JsonObject *ocs = json_object_get_object_member (root, "ocs");
+      if (ocs)
+        {
+          JsonObject *meta = json_object_get_object_member (ocs, "meta");
+          if (meta)
+            {
+              int status_code = json_object_get_int_member_with_default (meta, "statuscode", 0);
+              if (status_code == 403)
+                {
+                  auth_failed (self, "Wrong room password");
+                  return;
+                }
+              if (status_code != 100 && status_code != 200)
+                {
+                  const char *message = json_object_get_string_member_with_default (meta, "message", "Failed to join");
+                  auth_failed (self, message);
+                  return;
+                }
+            }
+
+          /* Extract session ID */
+          JsonObject *data = json_object_get_object_member (ocs, "data");
+          if (data)
+            {
+              const char *session_id = json_object_get_string_member_with_default (data, "sessionId", NULL);
+              if (session_id)
+                {
+                  g_free (self->current_session_id);
+                  self->current_session_id = g_strdup (session_id);
+                }
+
+              /* Store room token */
+              const char *room_token = gnalk_account_get_room_token (self->account);
+              g_free (self->current_room_token);
+              self->current_room_token = g_strdup (room_token);
+            }
+        }
+    }
+
+  /* Set guest display name */
+  const char *room_token = gnalk_account_get_room_token (self->account);
+  gnalk_http_client_set_guest_name (self->http_client, room_token,
+                                      self->guest_display_name,
+                                      on_guest_set_name_response, self);
+}
+
+static void
+on_guest_set_name_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                             JsonNode         *response G_GNUC_UNUSED,
+                             GError           *error,
+                             gpointer          user_data)
+{
+  GnalkSession *self = GNALK_SESSION (user_data);
+
+  if (error)
+    {
+      g_warning ("Guest session: Failed to set display name: %s", error->message);
+      /* Continue anyway - name setting is not critical */
+    }
+
+  /* Get signaling settings */
+  gnalk_http_client_get_signaling_settings (self->http_client,
+                                              on_guest_signaling_settings_response, self);
+}
+
+static void
+on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                                       JsonNode         *response,
+                                       GError           *error,
+                                       gpointer          user_data)
+{
+  GnalkSession *self = GNALK_SESSION (user_data);
+
+  if (error)
+    {
+      g_warning ("Guest session: Failed to get signaling settings: %s", error->message);
+      /* We can still go online without signaling - just no calls */
+    }
+
+  /* Parse signaling settings (same as normal flow) */
+  if (response && JSON_NODE_HOLDS_OBJECT (response))
+    {
+      JsonObject *obj = json_node_get_object (response);
+      if (json_object_has_member (obj, "ocs"))
+        {
+          JsonObject *ocs = json_object_get_object_member (obj, "ocs");
+          if (json_object_has_member (ocs, "data"))
+            {
+              JsonObject *data = json_object_get_object_member (ocs, "data");
+
+              /* Signaling server and ticket */
+              const char *server = json_object_get_string_member_with_default (data, "server", NULL);
+              const char *ticket = json_object_get_string_member_with_default (data, "ticket", NULL);
+
+              if (server && ticket)
+                {
+                  g_free (self->signaling_server);
+                  g_free (self->signaling_ticket);
+                  self->signaling_server = g_strdup (server);
+                  self->signaling_ticket = g_strdup (ticket);
+                }
+
+              /* ICE servers */
+              if (json_object_has_member (data, "stunservers"))
+                {
+                  JsonArray *stun = json_object_get_array_member (data, "stunservers");
+                  if (json_array_get_length (stun) > 0)
+                    {
+                      JsonObject *s = json_array_get_object_element (stun, 0);
+                      if (json_object_has_member (s, "urls"))
+                        {
+                          JsonArray *urls = json_object_get_array_member (s, "urls");
+                          if (urls && json_array_get_length (urls) > 0)
+                            {
+                              g_free (self->stun_server);
+                              self->stun_server = g_strdup (json_array_get_string_element (urls, 0));
+                            }
+                        }
+                    }
+                }
+
+              if (json_object_has_member (data, "turnservers"))
+                {
+                  JsonArray *turn = json_object_get_array_member (data, "turnservers");
+                  if (json_array_get_length (turn) > 0)
+                    {
+                      JsonObject *t = json_array_get_object_element (turn, 0);
+                      if (json_object_has_member (t, "urls"))
+                        {
+                          JsonArray *urls = json_object_get_array_member (t, "urls");
+                          if (urls && json_array_get_length (urls) > 0)
+                            {
+                              g_free (self->turn_server);
+                              self->turn_server = g_strdup (json_array_get_string_element (urls, 0));
+                            }
+                        }
+                      const char *username = json_object_get_string_member_with_default (t, "username", NULL);
+                      const char *credential = json_object_get_string_member_with_default (t, "credential", NULL);
+                      if (username)
+                        {
+                          g_free (self->turn_username);
+                          self->turn_username = g_strdup (username);
+                        }
+                      if (credential)
+                        {
+                          g_free (self->turn_credential);
+                          self->turn_credential = g_strdup (credential);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+  /* Create guest conversation data and add to conversations list */
+  {
+    const char *room_name = self->guest_room_name ? self->guest_room_name : "Guest Room";
+    GnalkConversationData *conv = gnalk_conversation_data_new_from_db (
+        self->current_room_token,  /* token */
+        room_name,                 /* title */
+        room_name,                 /* name */
+        NULL,                      /* subtitle */
+        NULL,                      /* user_status */
+        NULL,                      /* actor_id */
+        3,                         /* room_type: public */
+        0,                         /* last_activity */
+        0,                         /* last_common_read_message */
+        0,                         /* unread_messages */
+        FALSE,                     /* is_favorite */
+        FALSE,                     /* can_leave (guests can't leave, they just close) */
+        FALSE,                     /* can_delete */
+        NULL,                      /* description */
+        6,                         /* participant_type: guest */
+        0,                         /* notification_level: default */
+        0,                         /* call_notification_level: default */
+        0,                         /* last_read_message */
+        self);                     /* session */
+
+    g_list_store_append (self->conversations, conv);
+    g_object_unref (conv);
+
+    /* Emit conversations-updated to notify window */
+    g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_UPDATED], 0);
+  }
+
+  /* Guest is now online */
+  set_state (self, GNALK_SESSION_STATE_ONLINE);
+
+  /* Connect signaling for calls */
+  connect_signaling (self);
+
+  /* Emit room-joined signal since we're already in the room */
+  g_signal_emit (self, signals[SIGNAL_ROOM_JOINED], 0,
+                 self->current_room_token, self->current_session_id);
 }

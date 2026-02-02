@@ -17,6 +17,7 @@ GnalkSignaling *gnalk_signaling_new (void);
 
 void gnalk_signaling_connect (GnalkSignaling *self,
                                 const char      *server_url,
+                                const char      *backend_url,
                                 const char      *user_id,
                                 const char      *ticket);
 

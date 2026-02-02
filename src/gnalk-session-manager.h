@@ -158,4 +158,39 @@ int gnalk_session_manager_get_global_unread (GnalkSessionManager *self);
  */
 gboolean gnalk_session_manager_has_any_online (GnalkSessionManager *self);
 
+/**
+ * gnalk_session_manager_start_guest_session:
+ * @self: The session manager
+ * @server_url: The Nextcloud server URL
+ * @room_token: The room token to join
+ * @display_name: Display name for the guest
+ * @room_password: Room password (nullable)
+ *
+ * Creates a guest session and starts connecting.
+ * Only one guest session can exist at a time.
+ *
+ * Returns: (transfer none): The new guest session
+ */
+GnalkSession *gnalk_session_manager_start_guest_session (GnalkSessionManager *self,
+                                                              const char           *server_url,
+                                                              const char           *room_token,
+                                                              const char           *display_name,
+                                                              const char           *room_password);
+
+/**
+ * gnalk_session_manager_stop_guest_session:
+ * @self: The session manager
+ *
+ * Stops and destroys the guest session if one exists.
+ */
+void gnalk_session_manager_stop_guest_session (GnalkSessionManager *self);
+
+/**
+ * gnalk_session_manager_get_guest_session:
+ * @self: The session manager
+ *
+ * Returns: (transfer none) (nullable): The guest session, or NULL
+ */
+GnalkSession *gnalk_session_manager_get_guest_session (GnalkSessionManager *self);
+
 G_END_DECLS
