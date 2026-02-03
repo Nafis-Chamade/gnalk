@@ -195,7 +195,89 @@ void gnalk_data_repository_save_participants_async (GnalkDataRepository         
                                                        GnalkDataRepositoryCallback   callback,
                                                        gpointer                        user_data);
 
-/* Sync state operations */
+/* Synchronous operations - prefer async when possible */
+
+/**
+ * gnalk_data_repository_save_conversation:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation: The conversation to save
+ *
+ * Saves a conversation synchronously and emits data-changed signal.
+ */
+void gnalk_data_repository_save_conversation (GnalkDataRepository   *self,
+                                              gint64                 account_id,
+                                              GnalkConversationData *conversation);
+
+/**
+ * gnalk_data_repository_delete_conversation:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @token: The conversation token
+ *
+ * Deletes a conversation synchronously and emits data-changed signal.
+ */
+void gnalk_data_repository_delete_conversation (GnalkDataRepository *self,
+                                                gint64               account_id,
+                                                const char          *token);
+
+/**
+ * gnalk_data_repository_delete_stale_conversations:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @valid_tokens: Array of valid tokens (conversations not in this list are deleted)
+ *
+ * Deletes conversations not in valid_tokens and emits data-changed signal.
+ *
+ * Returns: Number of deleted conversations
+ */
+int gnalk_data_repository_delete_stale_conversations (GnalkDataRepository *self,
+                                                      gint64               account_id,
+                                                      GPtrArray           *valid_tokens);
+
+/**
+ * gnalk_data_repository_save_message:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @message: The message to save
+ *
+ * Saves a message synchronously and emits data-changed signal.
+ */
+void gnalk_data_repository_save_message (GnalkDataRepository *self,
+                                         gint64               account_id,
+                                         const char          *conversation_token,
+                                         GnalkMessageData    *message);
+
+/**
+ * gnalk_data_repository_get_last_known_message_id:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ *
+ * Gets the last known message ID for a conversation synchronously.
+ *
+ * Returns: The last known message ID, or 0 if not set
+ */
+gint64 gnalk_data_repository_get_last_known_message_id (GnalkDataRepository *self,
+                                                        gint64               account_id,
+                                                        const char          *conversation_token);
+
+/**
+ * gnalk_data_repository_set_last_known_message_id:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @message_id: The message ID to set
+ *
+ * Sets the last known message ID synchronously (no signal emitted - internal state).
+ */
+void gnalk_data_repository_set_last_known_message_id (GnalkDataRepository *self,
+                                                      gint64               account_id,
+                                                      const char          *conversation_token,
+                                                      gint64               message_id);
+
+/* Sync state operations (async) */
 
 /**
  * gnalk_data_repository_get_last_known_message_id_async:

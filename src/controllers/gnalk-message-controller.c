@@ -8,10 +8,10 @@ struct _GnalkMessageController
 
   GnalkHttpClient *http_client;
 
-  /* Database integration - all fetched messages are saved here */
-  GnalkDatabase *db;
-  gint64          account_id;
-  char           *current_user;
+  /* Repository integration - all fetched messages are saved here */
+  GnalkDataRepository *repository;
+  gint64               account_id;
+  char                *current_user;
 
   /* Current room */
   char *room_token;
@@ -47,6 +47,7 @@ enum {
   SIGNAL_UPLOAD_COMPLETED,
   SIGNAL_UPLOAD_FAILED,
   SIGNAL_READ_STATUS_UPDATED,
+  SIGNAL_CONVERSATION_SUBTITLE_UPDATED,
   N_SIGNALS
 };
 
@@ -124,7 +125,7 @@ gnalk_message_controller_finalize (GObject *object)
   g_clear_pointer (&self->room_token, g_free);
   g_clear_pointer (&self->current_user, g_free);
   g_clear_object (&self->http_client);
-  g_clear_object (&self->db);
+  g_clear_object (&self->repository);
 
   G_OBJECT_CLASS (gnalk_message_controller_parent_class)->finalize (object);
 }
@@ -275,6 +276,13 @@ gnalk_message_controller_class_init (GnalkMessageControllerClass *klass)
                   0, NULL, NULL, NULL,
                   G_TYPE_NONE, 1,
                   G_TYPE_INT64);     /* last_common_read_message */
+
+  signals[SIGNAL_CONVERSATION_SUBTITLE_UPDATED] =
+    g_signal_new ("conversation-subtitle-updated",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 0);
 }
 
 static void
@@ -296,13 +304,13 @@ gnalk_message_controller_new (GnalkHttpClient *http_client)
 }
 
 void
-gnalk_message_controller_set_database (GnalkMessageController *self,
-                                         GnalkDatabase          *db,
-                                         gint64                   account_id)
+gnalk_message_controller_set_repository (GnalkMessageController *self,
+                                         GnalkDataRepository    *repository,
+                                         gint64                  account_id)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
 
-  g_set_object (&self->db, db);
+  g_set_object (&self->repository, repository);
   self->account_id = account_id;
 }
 
@@ -391,7 +399,7 @@ save_messages_to_db (GnalkMessageController *self,
                      JsonArray               *messages,
                      const char              *room_token)
 {
-  if (!self->db || self->account_id <= 0 || !messages)
+  if (!self->repository || self->account_id <= 0 || !messages)
     return 0;
 
   guint len = json_array_get_length (messages);
@@ -419,13 +427,13 @@ save_messages_to_db (GnalkMessageController *self,
       if (!msg_data)
         continue;
 
-      gnalk_database_save_message (self->db, self->account_id, room_token, msg_data);
+      gnalk_data_repository_save_message (self->repository, self->account_id, room_token, msg_data);
       g_object_unref (msg_data);
     }
 
   /* Update last known message ID in sync state */
   if (highest_id > 0)
-    gnalk_database_set_last_known_message_id (self->db, self->account_id, room_token, highest_id);
+    gnalk_data_repository_set_last_known_message_id (self->repository, self->account_id, room_token, highest_id);
 
   return highest_id;
 }
@@ -615,8 +623,11 @@ on_older_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
       save_messages_to_db (self, messages, self->room_token);
 
       /* Update has_more_history in DB */
-      if (self->db && self->account_id > 0)
-        gnalk_database_set_has_more_history (self->db, self->account_id, self->room_token, has_more);
+      if (self->repository && self->account_id > 0)
+        {
+          GnalkDatabase *db = gnalk_data_repository_get_database (self->repository);
+          gnalk_database_set_has_more_history (db, self->account_id, self->room_token, has_more);
+        }
 
       g_signal_emit (self, signals[SIGNAL_OLDER_MESSAGES_LOADED], 0, messages, has_more);
     }
@@ -716,11 +727,78 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
       save_messages_to_db (self, messages, self->room_token);
 
       g_signal_emit (self, signals[SIGNAL_POLL_RESPONSE], 0, messages);
+
+      /* Update conversation subtitle with the latest message */
+      if (self->repository && self->account_id > 0 && len > 0)
+        {
+          /* Find the message with highest ID (most recent) */
+          JsonObject *latest_msg = NULL;
+          gint64 latest_id = 0;
+          for (guint i = 0; i < len; i++)
+            {
+              JsonObject *msg = json_array_get_object_element (messages, i);
+              if (msg)
+                {
+                  gint64 msg_id = json_object_get_int_member_with_default (msg, "id", 0);
+                  if (msg_id > latest_id)
+                    {
+                      latest_id = msg_id;
+                      latest_msg = msg;
+                    }
+                }
+            }
+
+          if (latest_msg)
+            {
+              const char *message_text = json_object_get_string_member_with_default (latest_msg, "message", "");
+              const char *actor_name = json_object_get_string_member_with_default (latest_msg, "actorDisplayName", "");
+              const char *system_message = json_object_get_string_member_with_default (latest_msg, "systemMessage", "");
+              gint64 timestamp = json_object_get_int_member_with_default (latest_msg, "timestamp", 0);
+
+              g_autofree char *subtitle = NULL;
+              if (system_message && *system_message)
+                {
+                  /* System message - use text as-is */
+                  subtitle = g_strdup (message_text);
+                }
+              else if (actor_name && *actor_name)
+                {
+                  /* Regular message - "Actor: message" */
+                  subtitle = g_strdup_printf ("%s: %s", actor_name, message_text);
+                }
+              else
+                {
+                  subtitle = g_strdup (message_text);
+                }
+
+              GnalkDatabase *db = gnalk_data_repository_get_database (self->repository);
+              gnalk_database_update_conversation_subtitle (db,
+                                                           self->account_id,
+                                                           self->room_token,
+                                                           subtitle,
+                                                           timestamp);
+
+              g_signal_emit (self, signals[SIGNAL_CONVERSATION_SUBTITLE_UPDATED], 0);
+            }
+        }
     }
 
-  /* Continue polling if still active */
+  /* Continue polling if still active - directly start next request
+   * (don't call start_polling which would return early since polling=TRUE) */
   if (self->polling && self->room_token)
-    gnalk_message_controller_start_polling (self, self->last_known_message_id);
+    {
+      MessageResponseData *poll_data = g_slice_new (MessageResponseData);
+      poll_data->controller = self;
+      poll_data->generation = self->generation;
+
+      gnalk_http_client_get_messages (self->http_client,
+                                        self->room_token,
+                                        self->last_known_message_id,
+                                        TRUE,  /* long poll */
+                                        30,    /* 30 second timeout */
+                                        on_poll_response,
+                                        poll_data);
+    }
 }
 
 static void on_initial_messages_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
@@ -915,7 +993,7 @@ on_sync_room_response (GnalkHttpClient *client G_GNUC_UNUSED,
   guint len = json_array_get_length (messages);
 
   /* Save messages to database, filtering to only those newer than since_id */
-  if (self->db && self->account_id > 0)
+  if (self->repository && self->account_id > 0)
     {
       gint64 highest_id = 0;
       guint saved_count = 0;
@@ -938,7 +1016,7 @@ on_sync_room_response (GnalkHttpClient *client G_GNUC_UNUSED,
               if (msg_id > highest_id)
                 highest_id = msg_id;
 
-              gnalk_database_save_message (self->db, self->account_id, data->room_token, msg_data);
+              gnalk_data_repository_save_message (self->repository, self->account_id, data->room_token, msg_data);
               saved_count++;
             }
 
@@ -951,7 +1029,7 @@ on_sync_room_response (GnalkHttpClient *client G_GNUC_UNUSED,
 
           /* Update last known message ID so we don't re-fetch */
           if (highest_id > 0)
-            gnalk_database_set_last_known_message_id (self->db, self->account_id, data->room_token, highest_id);
+            gnalk_data_repository_set_last_known_message_id (self->repository, self->account_id, data->room_token, highest_id);
 
           /* Emit signal to notify listeners */
           g_signal_emit (self, signals[SIGNAL_MESSAGES_SYNCED], 0, data->room_token, saved_count);

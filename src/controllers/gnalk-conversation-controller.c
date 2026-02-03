@@ -7,8 +7,8 @@ struct _GnalkConversationController
 {
   GObject parent_instance;
 
-  GnalkDatabase   *database;
-  GnalkHttpClient *http_client;
+  GnalkDataRepository *repository;
+  GnalkHttpClient     *http_client;
 
   gint64   account_id;
   guint    poll_timer_id;
@@ -67,7 +67,7 @@ gnalk_conversation_controller_finalize (GObject *object)
 
   gnalk_conversation_controller_stop_polling (self);
 
-  g_clear_object (&self->database);
+  g_clear_object (&self->repository);
   g_clear_object (&self->http_client);
 
   G_OBJECT_CLASS (gnalk_conversation_controller_parent_class)->finalize (object);
@@ -138,12 +138,12 @@ gnalk_conversation_controller_init (GnalkConversationController *self)
 }
 
 GnalkConversationController *
-gnalk_conversation_controller_new (GnalkDatabase   *database,
-                                     GnalkHttpClient *http_client)
+gnalk_conversation_controller_new (GnalkDataRepository *repository,
+                                   GnalkHttpClient     *http_client)
 {
   GnalkConversationController *self = g_object_new (GNALK_TYPE_CONVERSATION_CONTROLLER, NULL);
 
-  self->database = database ? g_object_ref (database) : NULL;
+  self->repository = repository ? g_object_ref (repository) : NULL;
   self->http_client = http_client ? g_object_ref (http_client) : NULL;
 
   return self;
@@ -180,7 +180,7 @@ static gboolean
 process_conversations_response (GnalkConversationController *self,
                                  JsonArray                    *conversations)
 {
-  if (!self->database || self->account_id <= 0 || !conversations)
+  if (!self->repository || self->account_id <= 0 || !conversations)
     return FALSE;
 
   guint len = json_array_get_length (conversations);
@@ -204,9 +204,9 @@ process_conversations_response (GnalkConversationController *self,
       if (last_message)
         {
           gint64 server_last_msg_id = json_object_get_int_member_with_default (last_message, "id", 0);
-          gint64 db_last_msg_id = gnalk_database_get_last_known_message_id (self->database,
-                                                                               self->account_id,
-                                                                               token);
+          gint64 db_last_msg_id = gnalk_data_repository_get_last_known_message_id (self->repository,
+                                                                                   self->account_id,
+                                                                                   token);
 
           if (server_last_msg_id > db_last_msg_id)
             {
@@ -224,15 +224,15 @@ process_conversations_response (GnalkConversationController *self,
       GnalkConversationData *conv_data = gnalk_conversation_data_new_from_json (conv_obj, NULL);
       if (conv_data)
         {
-          gnalk_database_save_conversation (self->database, self->account_id, conv_data);
+          gnalk_data_repository_save_conversation (self->repository, self->account_id, conv_data);
           g_object_unref (conv_data);
         }
     }
 
   /* Delete conversations no longer on server */
-  int deleted = gnalk_database_delete_stale_conversations (self->database,
-                                                              self->account_id,
-                                                              valid_tokens);
+  int deleted = gnalk_data_repository_delete_stale_conversations (self->repository,
+                                                                  self->account_id,
+                                                                  valid_tokens);
   if (deleted > 0)
     {
       g_debug ("ConversationController: Deleted %d stale conversations", deleted);
@@ -449,12 +449,12 @@ on_create_response (GnalkHttpClient *client G_GNUC_UNUSED,
     return;
 
   /* Save the new conversation to database */
-  if (self->database && self->account_id > 0)
+  if (self->repository && self->account_id > 0)
     {
       GnalkConversationData *conv_data = gnalk_conversation_data_new_from_json (data, NULL);
       if (conv_data)
         {
-          gnalk_database_save_conversation (self->database, self->account_id, conv_data);
+          gnalk_data_repository_save_conversation (self->repository, self->account_id, conv_data);
           g_object_unref (conv_data);
         }
     }
@@ -514,8 +514,8 @@ on_leave_response (GnalkHttpClient *client G_GNUC_UNUSED,
     }
 
   /* Delete from database */
-  if (self->database && self->account_id > 0 && room_token)
-    gnalk_database_delete_conversation (self->database, self->account_id, room_token);
+  if (self->repository && self->account_id > 0 && room_token)
+    gnalk_data_repository_delete_conversation (self->repository, self->account_id, room_token);
 
   g_debug ("ConversationController: Left conversation %s", room_token);
   g_signal_emit (self, signals[SIGNAL_CONVERSATION_LEFT], 0, room_token);
@@ -571,8 +571,8 @@ on_delete_response (GnalkHttpClient *client G_GNUC_UNUSED,
     }
 
   /* Delete from database */
-  if (self->database && self->account_id > 0 && room_token)
-    gnalk_database_delete_conversation (self->database, self->account_id, room_token);
+  if (self->repository && self->account_id > 0 && room_token)
+    gnalk_data_repository_delete_conversation (self->repository, self->account_id, room_token);
 
   g_debug ("ConversationController: Deleted conversation %s", room_token);
   g_signal_emit (self, signals[SIGNAL_CONVERSATION_DELETED], 0, room_token);

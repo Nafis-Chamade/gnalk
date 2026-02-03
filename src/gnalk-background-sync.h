@@ -1,7 +1,7 @@
 #pragma once
 
 #include <glib-object.h>
-#include "gnalk-database.h"
+#include "gnalk-data-repository.h"
 #include "gnalk-http-client.h"
 #include "gnalk-notification-service.h"
 
@@ -20,9 +20,9 @@ G_DECLARE_FINAL_TYPE (GnalkBackgroundSync, gnalk_background_sync, GNALK, BACKGRO
  * allowing the window (if present) to update its UI.
  */
 
-GnalkBackgroundSync *gnalk_background_sync_new (GnalkDatabase            *database,
-                                                    GnalkHttpClient          *http_client,
-                                                    GnalkNotificationService *notification_service);
+GnalkBackgroundSync *gnalk_background_sync_new (GnalkDataRepository      *repository,
+                                                GnalkHttpClient          *http_client,
+                                                GnalkNotificationService *notification_service);
 
 /**
  * gnalk_background_sync_set_account:

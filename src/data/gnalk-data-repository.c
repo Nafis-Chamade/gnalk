@@ -10,6 +10,13 @@ struct _GnalkDataRepository
 
 G_DEFINE_FINAL_TYPE (GnalkDataRepository, gnalk_data_repository, G_TYPE_OBJECT)
 
+enum {
+  SIGNAL_DATA_CHANGED,
+  N_SIGNALS
+};
+
+static guint signals[N_SIGNALS];
+
 /* Task data structures for passing parameters to thread functions */
 
 typedef struct {
@@ -176,6 +183,21 @@ gnalk_data_repository_class_init (GnalkDataRepositoryClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
   object_class->finalize = gnalk_data_repository_finalize;
+
+  /**
+   * GnalkDataRepository::data-changed:
+   * @repository: The data repository
+   * @scope: The scope of the change ("conversations", "messages:TOKEN", "participants:TOKEN")
+   *
+   * Emitted when data has been modified through this repository.
+   */
+  signals[SIGNAL_DATA_CHANGED] =
+    g_signal_new ("data-changed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_STRING);
 }
 
 static void
@@ -649,4 +671,88 @@ gnalk_data_repository_set_last_known_message_id_async (GnalkDataRepository      
   g_task_set_source_tag (task, ctx);
   g_task_set_task_data (task, data, (GDestroyNotify) set_sync_state_data_free);
   g_task_run_in_thread (task, set_last_known_message_id_thread_func);
+}
+
+/* Synchronous operations */
+
+void
+gnalk_data_repository_save_conversation (GnalkDataRepository   *self,
+                                         gint64                 account_id,
+                                         GnalkConversationData *conversation)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (GNALK_IS_CONVERSATION_DATA (conversation));
+
+  gnalk_database_save_conversation (self->database, account_id, conversation);
+  g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
+}
+
+void
+gnalk_data_repository_delete_conversation (GnalkDataRepository *self,
+                                           gint64               account_id,
+                                           const char          *token)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (token != NULL);
+
+  gnalk_database_delete_conversation (self->database, account_id, token);
+  g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
+}
+
+int
+gnalk_data_repository_delete_stale_conversations (GnalkDataRepository *self,
+                                                  gint64               account_id,
+                                                  GPtrArray           *valid_tokens)
+{
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (self), 0);
+  g_return_val_if_fail (self->is_open, 0);
+
+  int deleted = gnalk_database_delete_stale_conversations (self->database, account_id, valid_tokens);
+  if (deleted > 0)
+    g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
+  return deleted;
+}
+
+void
+gnalk_data_repository_save_message (GnalkDataRepository *self,
+                                    gint64               account_id,
+                                    const char          *conversation_token,
+                                    GnalkMessageData    *message)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (conversation_token != NULL);
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (message));
+
+  gnalk_database_save_message (self->database, account_id, conversation_token, message);
+
+  g_autofree char *scope = g_strdup_printf ("messages:%s", conversation_token);
+  g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, scope);
+}
+
+gint64
+gnalk_data_repository_get_last_known_message_id (GnalkDataRepository *self,
+                                                 gint64               account_id,
+                                                 const char          *conversation_token)
+{
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (self), 0);
+  g_return_val_if_fail (self->is_open, 0);
+  g_return_val_if_fail (conversation_token != NULL, 0);
+
+  return gnalk_database_get_last_known_message_id (self->database, account_id, conversation_token);
+}
+
+void
+gnalk_data_repository_set_last_known_message_id (GnalkDataRepository *self,
+                                                 gint64               account_id,
+                                                 const char          *conversation_token,
+                                                 gint64               message_id)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (conversation_token != NULL);
+
+  gnalk_database_set_last_known_message_id (self->database, account_id, conversation_token, message_id);
 }

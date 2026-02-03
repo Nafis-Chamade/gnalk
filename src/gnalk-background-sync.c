@@ -7,7 +7,7 @@ struct _GnalkBackgroundSync
 {
   GObject parent_instance;
 
-  GnalkDatabase            *database;
+  GnalkDataRepository      *repository;
   GnalkHttpClient          *http_client;
   GnalkNotificationService *notification_service;
 
@@ -150,8 +150,8 @@ on_background_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
             newest_id = msg_id;
 
           /* Save to DB */
-          gnalk_database_save_message (self->database, self->account_id,
-                                         data->room_token, msg_data);
+          gnalk_data_repository_save_message (self->repository, self->account_id,
+                                              data->room_token, msg_data);
           saved_count++;
 
           /* Collect messages from others for notification */
@@ -217,8 +217,8 @@ on_background_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
 
   /* Update last known message ID so we don't re-fetch these */
   if (newest_id > 0)
-    gnalk_database_set_last_known_message_id (self->database, self->account_id,
-                                                 data->room_token, newest_id);
+    gnalk_data_repository_set_last_known_message_id (self->repository, self->account_id,
+                                                     data->room_token, newest_id);
 
   background_sync_data_free (data);
 }
@@ -279,8 +279,8 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
 
       if (server_last_id > 0)
         {
-          gint64 db_last_id = gnalk_database_get_last_known_message_id (
-              self->database, self->account_id, token);
+          gint64 db_last_id = gnalk_data_repository_get_last_known_message_id (
+              self->repository, self->account_id, token);
 
           g_debug ("Background sync: room %s comparing server=%ld vs db=%ld",
                    token, server_last_id, db_last_id);
@@ -295,7 +295,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
               GnalkConversationData *conv_data = gnalk_conversation_data_new_from_json (room, NULL);
               if (conv_data)
                 {
-                  gnalk_database_save_conversation (self->database, self->account_id, conv_data);
+                  gnalk_data_repository_save_conversation (self->repository, self->account_id, conv_data);
                   g_object_unref (conv_data);
                 }
 
@@ -376,13 +376,13 @@ gnalk_background_sync_init (GnalkBackgroundSync *self)
 }
 
 GnalkBackgroundSync *
-gnalk_background_sync_new (GnalkDatabase            *database,
-                             GnalkHttpClient          *http_client,
-                             GnalkNotificationService *notification_service)
+gnalk_background_sync_new (GnalkDataRepository      *repository,
+                           GnalkHttpClient          *http_client,
+                           GnalkNotificationService *notification_service)
 {
   GnalkBackgroundSync *self = g_object_new (GNALK_TYPE_BACKGROUND_SYNC, NULL);
 
-  self->database = database;
+  self->repository = repository;
   self->http_client = http_client;
   self->notification_service = notification_service;
 

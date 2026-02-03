@@ -3,7 +3,7 @@
 #include <glib-object.h>
 #include <json-glib/json-glib.h>
 #include "gnalk-http-client.h"
-#include "gnalk-database.h"
+#include "gnalk-data-repository.h"
 
 G_BEGIN_DECLS
 
@@ -47,10 +47,10 @@ G_DECLARE_FINAL_TYPE (GnalkMessageController, gnalk_message_controller, GNALK, M
 
 GnalkMessageController *gnalk_message_controller_new (GnalkHttpClient *http_client);
 
-/* Database integration - MessageController saves messages to DB */
-void gnalk_message_controller_set_database (GnalkMessageController *self,
-                                              GnalkDatabase          *db,
-                                              gint64                   account_id);
+/* Repository integration - MessageController saves messages to DB */
+void gnalk_message_controller_set_repository (GnalkMessageController *self,
+                                              GnalkDataRepository    *repository,
+                                              gint64                  account_id);
 
 /* Current user ID for message ownership detection */
 void gnalk_message_controller_set_current_user (GnalkMessageController *self,

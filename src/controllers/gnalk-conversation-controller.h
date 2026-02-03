@@ -1,7 +1,7 @@
 #pragma once
 
 #include <glib-object.h>
-#include "gnalk-database.h"
+#include "gnalk-data-repository.h"
 #include "gnalk-http-client.h"
 
 G_BEGIN_DECLS
@@ -33,15 +33,15 @@ G_DECLARE_FINAL_TYPE (GnalkConversationController, gnalk_conversation_controller
 
 /**
  * gnalk_conversation_controller_new:
- * @database: The database for caching
+ * @repository: The data repository for caching
  * @http_client: The HTTP client for server communication
  *
  * Creates a new conversation controller.
  *
  * Returns: (transfer full): A new conversation controller
  */
-GnalkConversationController *gnalk_conversation_controller_new (GnalkDatabase   *database,
-                                                                    GnalkHttpClient *http_client);
+GnalkConversationController *gnalk_conversation_controller_new (GnalkDataRepository *repository,
+                                                                GnalkHttpClient     *http_client);
 
 /**
  * gnalk_conversation_controller_set_account_id:

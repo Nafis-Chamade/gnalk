@@ -3402,9 +3402,9 @@ gnalk_window_init (GnalkWindow *self)
 
   /* Set up database integration for MessageController - account_id=0 until session switch */
   {
-    GnalkDatabase *db = gnalk_application_get_database (GNALK_APPLICATION (app));
+    GnalkDataRepository *repo = gnalk_application_get_data_repository (GNALK_APPLICATION (app));
     const char *user_id = gnalk_application_get_user_id (GNALK_APPLICATION (app));
-    gnalk_message_controller_set_database (self->message_controller, db, 0);
+    gnalk_message_controller_set_repository (self->message_controller, repo, 0);
     gnalk_message_controller_set_current_user (self->message_controller, user_id);
   }
 
@@ -3430,11 +3430,13 @@ gnalk_window_init (GnalkWindow *self)
                     G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
   g_signal_connect (self->message_controller, "messages-synced",
                     G_CALLBACK (gnalk_window_on_message_controller_messages_synced), self);
+  g_signal_connect_swapped (self->message_controller, "conversation-subtitle-updated",
+                            G_CALLBACK (gnalk_window_load_conversations_from_db), self);
 
   /* Create conversation controller (will be recreated in switch_to_session with correct account) */
   {
-    GnalkDatabase *db = gnalk_application_get_database (GNALK_APPLICATION (app));
-    self->conversation_controller = gnalk_conversation_controller_new (db, self->http_client);
+    GnalkDataRepository *repo = gnalk_application_get_data_repository (GNALK_APPLICATION (app));
+    self->conversation_controller = gnalk_conversation_controller_new (repo, self->http_client);
     gnalk_conversation_controller_set_account_id (self->conversation_controller, 0);
     g_signal_connect (self->conversation_controller, "conversations-updated",
                       G_CALLBACK (gnalk_window_on_conversation_controller_updated), self);

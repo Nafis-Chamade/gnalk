@@ -505,10 +505,10 @@ on_database_opened (GnalkDataRepository *repository G_GNUC_UNUSED,
                                                         self->data_repository,
                                                         self->session_manager);
 
-  /* Initialize background sync service (needs database) */
-  self->background_sync = gnalk_background_sync_new (self->database,
-                                                        self->http_client,
-                                                        self->notification_service);
+  /* Initialize background sync service (needs repository) */
+  self->background_sync = gnalk_background_sync_new (self->data_repository,
+                                                     self->http_client,
+                                                     self->notification_service);
 
   /* Set up push notification callback at application level */
   gnalk_push_client_set_notification_callback (self->push_client,

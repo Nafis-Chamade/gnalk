@@ -107,15 +107,15 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   g_clear_object (&self->message_controller);
   self->message_controller = gnalk_message_controller_new (self->http_client);
 
-  /* Set up database integration for MessageController */
+  /* Set up repository integration for MessageController */
   {
     GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
     if (app)
       {
-        GnalkDatabase *db = gnalk_application_get_database (app);
+        GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
         gint64 account_id = gnalk_session_get_account_id (session);
         const char *user_id = gnalk_application_get_user_id (app);
-        gnalk_message_controller_set_database (self->message_controller, db, account_id);
+        gnalk_message_controller_set_repository (self->message_controller, repo, account_id);
         gnalk_message_controller_set_current_user (self->message_controller, user_id);
       }
   }
@@ -141,6 +141,8 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
                     G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
   g_signal_connect (self->message_controller, "older-messages-loaded",
                     G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
+  g_signal_connect_swapped (self->message_controller, "conversation-subtitle-updated",
+                            G_CALLBACK (gnalk_window_load_conversations_from_db), self);
 
   /* Restore room_token if we had an active room */
   if (self->current_room_token)
@@ -156,11 +158,11 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   g_clear_object (&self->conversation_controller);
   {
     GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-    GnalkDatabase *db = gnalk_application_get_database (app);
+    GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
     gint64 account_id = gnalk_session_get_account_id (session);
 
     g_debug ("switch_to_session: recreating conversation_controller with account_id=%ld", (long)account_id);
-    self->conversation_controller = gnalk_conversation_controller_new (db, self->http_client);
+    self->conversation_controller = gnalk_conversation_controller_new (repo, self->http_client);
     gnalk_conversation_controller_set_account_id (self->conversation_controller, account_id);
     g_signal_connect (self->conversation_controller, "conversations-updated",
                       G_CALLBACK (gnalk_window_on_conversation_controller_updated), self);
