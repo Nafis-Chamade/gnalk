@@ -64,8 +64,10 @@ void           gnalk_conversation_data_set_session (GnalkConversationData *self,
 void gnalk_conversation_data_update_from_json (GnalkConversationData *self,
                                                  JsonObject             *room_data);
 
-/* Update conversation data in-place from another ConversationData (emits "updated" signal) */
-void gnalk_conversation_data_update_from_data (GnalkConversationData *self,
-                                                 GnalkConversationData *source);
+/* Update conversation data in-place from another ConversationData.
+ * Only emits "updated" signal if something actually changed.
+ * Returns TRUE if any field was modified. */
+gboolean gnalk_conversation_data_update_from_data (GnalkConversationData *self,
+                                                   GnalkConversationData *source);
 
 G_END_DECLS

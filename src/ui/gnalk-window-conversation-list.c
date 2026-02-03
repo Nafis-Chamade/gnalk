@@ -96,6 +96,7 @@ load_conversations_from_db_finish (GObject      *source_object,
                                    gpointer      user_data G_GNUC_UNUSED)
 {
   GnalkWindow *self = GNALK_WINDOW (source_object);
+  gboolean is_initial_load = !self->initial_conversations_loaded;
 
   GListStore *cached = g_task_propagate_pointer (G_TASK (result), NULL);
   if (!cached)
@@ -105,8 +106,12 @@ load_conversations_from_db_finish (GObject      *source_object,
   if (n_cached == 0)
     {
       g_object_unref (cached);
+      self->initial_conversations_loaded = TRUE;
       return;
     }
+
+  /* Track if any changes occurred */
+  gboolean has_changes = FALSE;
 
   /* Build hash table of new conversations by token */
   g_autoptr(GHashTable) new_convs = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_object_unref);
@@ -177,8 +182,9 @@ load_conversations_from_db_finish (GObject      *source_object,
               GnalkConversationData *new_data = g_hash_table_lookup (new_convs, token);
               if (new_data)
                 {
-                  /* Update existing item in-place */
-                  gnalk_conversation_data_update_from_data (existing, new_data);
+                  /* Update existing item in-place - track if it actually changed */
+                  if (gnalk_conversation_data_update_from_data (existing, new_data))
+                    has_changes = TRUE;
                   g_hash_table_add (seen_tokens, (gpointer) token);
                 }
               else
@@ -192,6 +198,8 @@ load_conversations_from_db_finish (GObject      *source_object,
     }
 
   /* Remove items in reverse order (to preserve indices) */
+  if (indices_to_remove->len > 0)
+    has_changes = TRUE;
   for (gint i = (gint) indices_to_remove->len - 1; i >= 0; i--)
     {
       guint idx = g_array_index (indices_to_remove, guint, i);
@@ -210,6 +218,7 @@ load_conversations_from_db_finish (GObject      *source_object,
         {
           GnalkConversationData *new_data = value;
           g_list_store_append (self->conversations_store, new_data);
+          has_changes = TRUE;
         }
     }
 
@@ -221,30 +230,40 @@ load_conversations_from_db_finish (GObject      *source_object,
           GnalkConversationData *fav_header = gnalk_conversation_data_new_section_header ("Favorites", TRUE);
           g_list_store_append (self->conversations_store, fav_header);
           g_object_unref (fav_header);
+          has_changes = TRUE;
         }
       if (!has_conv_header)
         {
           GnalkConversationData *conv_header = gnalk_conversation_data_new_section_header ("Conversations", FALSE);
           g_list_store_append (self->conversations_store, conv_header);
           g_object_unref (conv_header);
+          has_changes = TRUE;
         }
     }
 
-  /* Always sort to ensure conversations with new messages appear at top.
-   * Note: This may trigger widget recycling which closes open popovers,
-   * but correct ordering is more important for UX. */
-  g_list_store_sort (self->conversations_store, gnalk_window_compare_conversations_by_activity, NULL);
-
   g_object_unref (cached);
 
-  /* Scroll conversation list to top */
-  gtk_list_view_scroll_to (gnalk_conversation_sidebar_get_conversation_list (self->conversation_sidebar), 0,
-                           GTK_LIST_SCROLL_FOCUS, NULL);
+  /* Only sort if something changed - avoids UI flicker on unchanged data */
+  if (has_changes || is_initial_load)
+    {
+      g_list_store_sort (self->conversations_store, gnalk_window_compare_conversations_by_activity, NULL);
+      g_message ("Loaded %u conversations from database (changes: %s)", n_cached, has_changes ? "yes" : "no");
+    }
+  else
+    {
+      g_message ("Conversation list unchanged (%u items)", n_cached);
+    }
 
-  g_message ("Loaded %u conversations from database", n_cached);
+  /* Scroll to top only on initial load - preserves scroll position on refresh */
+  if (is_initial_load)
+    {
+      gtk_list_view_scroll_to (gnalk_conversation_sidebar_get_conversation_list (self->conversation_sidebar), 0,
+                               GTK_LIST_SCROLL_FOCUS, NULL);
+      self->initial_conversations_loaded = TRUE;
 
-  /* Call into window.c to handle post-load room restoration */
-  gnalk_window_maybe_restore_last_room (self);
+      /* Call into window.c to handle post-load room restoration */
+      gnalk_window_maybe_restore_last_room (self);
+    }
 }
 
 /* Load conversations from database asynchronously */

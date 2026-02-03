@@ -62,6 +62,9 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
 
   self->active_session = session;
 
+  /* Reset initial load flag so next conversation load scrolls to top */
+  self->initial_conversations_loaded = FALSE;
+
   if (!session)
     {
       /* No active session - show login view, but only after initial startup.
@@ -297,53 +300,8 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       break;
     }
 
-  /* Sync conversations from session (with section headers) */
-  GListStore *conversations = gnalk_session_get_conversations (session);
-  if (conversations)
-    {
-      /* Build complete list with headers before updating store */
-      gboolean has_favorites = FALSE;
-      gboolean has_non_favorites = FALSE;
-      GList *rooms = NULL;
-
-      guint n = g_list_model_get_n_items (G_LIST_MODEL (conversations));
-      for (guint i = 0; i < n; i++)
-        {
-          GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (conversations), i);
-          if (conv)
-            {
-              if (gnalk_conversation_data_get_is_favorite (conv))
-                has_favorites = TRUE;
-              else
-                has_non_favorites = TRUE;
-              rooms = g_list_prepend (rooms, g_object_ref (conv));
-              g_object_unref (conv);
-            }
-        }
-
-      /* Add section headers if we have both favorites and non-favorites */
-      if (has_favorites && has_non_favorites)
-        {
-          GnalkConversationData *fav_header = gnalk_conversation_data_new_section_header ("Favorites", TRUE);
-          rooms = g_list_prepend (rooms, fav_header);
-
-          GnalkConversationData *conv_header = gnalk_conversation_data_new_section_header ("Conversations", FALSE);
-          rooms = g_list_prepend (rooms, conv_header);
-        }
-
-      /* Sort before adding to store */
-      rooms = g_list_sort_with_data (rooms, gnalk_window_compare_conversations_by_activity, NULL);
-
-      /* Update store in one batch */
-      g_list_store_remove_all (self->conversations_store);
-      for (GList *l = rooms; l; l = l->next)
-        g_list_store_append (self->conversations_store, l->data);
-
-      g_list_free_full (rooms, g_object_unref);
-
-      /* If a room was opened from immediate restore, now load its full info and participants */
-      gnalk_window_maybe_restore_last_room (self);
-    }
+  /* Session state changed - reload conversations from DB for single code path */
+  gnalk_window_load_conversations_from_db (self);
 }
 
 /* ============ Session Manager Signal Handlers ============ */
@@ -382,7 +340,6 @@ gnalk_window_on_session_manager_any_state_changed (GnalkSessionManager *manager 
 }
 
 /* Rebuild conversation list from active session only.
- * Uses in-place updates to preserve row widgets and their state (e.g., open popovers).
  * Note: We only show conversations from the active session to ensure correct display
  * names for 1-to-1 rooms (e.g., a conversation between A and B shows as "B" for A
  * and "A" for B). */
@@ -396,141 +353,9 @@ gnalk_window_on_session_manager_conversations_changed (GnalkSessionManager *mana
   if (session != active)
     return;
 
-  g_message ("Window: session_manager conversations_changed (active session), updating store in-place");
-
-  /* Build hash table of new conversations by token */
-  g_autoptr(GHashTable) new_convs = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_object_unref);
-  gboolean has_favorites = FALSE;
-  gboolean has_non_favorites = FALSE;
-
-  /* Collect conversations from active session only */
-  GListStore *convs = gnalk_session_get_conversations (active);
-  guint n = g_list_model_get_n_items (G_LIST_MODEL (convs));
-
-  for (guint i = 0; i < n; i++)
-    {
-      GnalkConversationData *data = g_list_model_get_item (G_LIST_MODEL (convs), i);
-      if (data && !gnalk_conversation_data_is_section_header (data))
-        {
-          const char *token = gnalk_conversation_data_get_token (data);
-          if (token && *token)
-            {
-              g_hash_table_insert (new_convs, (gpointer) token, data);  /* Takes ownership of ref */
-              if (gnalk_conversation_data_get_is_favorite (data))
-                has_favorites = TRUE;
-              else
-                has_non_favorites = TRUE;
-            }
-          else
-            g_object_unref (data);
-        }
-      else
-        g_clear_object (&data);
-    }
-
-  /* Track which tokens we've seen in existing store */
-  g_autoptr(GHashTable) seen_tokens = g_hash_table_new (g_str_hash, g_str_equal);
-
-  /* Check if we need section headers */
-  gboolean need_headers = (has_favorites && has_non_favorites);
-
-  /* First pass: check existing headers and update existing items */
-  guint n_store = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
-  GArray *indices_to_remove = g_array_new (FALSE, FALSE, sizeof (guint));
-  gboolean has_fav_header = FALSE;
-  gboolean has_conv_header = FALSE;
-
-  for (guint i = 0; i < n_store; i++)
-    {
-      GnalkConversationData *existing = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
-      if (!existing)
-        continue;
-
-      if (gnalk_conversation_data_is_section_header (existing))
-        {
-          /* Track existing headers; remove if no longer needed */
-          if (gnalk_conversation_data_get_is_favorite (existing))
-            {
-              if (need_headers)
-                has_fav_header = TRUE;
-              else
-                g_array_append_val (indices_to_remove, i);
-            }
-          else
-            {
-              if (need_headers)
-                has_conv_header = TRUE;
-              else
-                g_array_append_val (indices_to_remove, i);
-            }
-        }
-      else
-        {
-          const char *token = gnalk_conversation_data_get_token (existing);
-          if (token && *token)
-            {
-              GnalkConversationData *new_data = g_hash_table_lookup (new_convs, token);
-              if (new_data)
-                {
-                  /* Update existing item in-place */
-                  gnalk_conversation_data_update_from_data (existing, new_data);
-                  g_hash_table_add (seen_tokens, (gpointer) token);
-                }
-              else
-                {
-                  /* Item no longer exists - mark for removal */
-                  g_array_append_val (indices_to_remove, i);
-                }
-            }
-        }
-      g_object_unref (existing);
-    }
-
-  /* Remove items in reverse order (to preserve indices) */
-  for (gint i = (gint) indices_to_remove->len - 1; i >= 0; i--)
-    {
-      guint idx = g_array_index (indices_to_remove, guint, i);
-      g_list_store_remove (self->conversations_store, idx);
-    }
-  g_array_unref (indices_to_remove);
-
-  /* Add new items that weren't in the existing store */
-  GHashTableIter iter;
-  gpointer key, value;
-  g_hash_table_iter_init (&iter, new_convs);
-  while (g_hash_table_iter_next (&iter, &key, &value))
-    {
-      const char *token = key;
-      if (!g_hash_table_contains (seen_tokens, token))
-        {
-          GnalkConversationData *new_data = value;
-          g_list_store_append (self->conversations_store, new_data);
-        }
-    }
-
-  /* Add section headers only if needed and not already present */
-  if (need_headers)
-    {
-      if (!has_fav_header)
-        {
-          GnalkConversationData *fav_header = gnalk_conversation_data_new_section_header ("Favorites", TRUE);
-          g_list_store_append (self->conversations_store, fav_header);
-          g_object_unref (fav_header);
-        }
-      if (!has_conv_header)
-        {
-          GnalkConversationData *conv_header = gnalk_conversation_data_new_section_header ("Conversations", FALSE);
-          g_list_store_append (self->conversations_store, conv_header);
-          g_object_unref (conv_header);
-        }
-    }
-
-  /* Always sort to ensure conversations with new messages appear at top */
-  g_list_store_sort (self->conversations_store, gnalk_window_compare_conversations_by_activity, NULL);
-
-  /* If a room was opened from immediate restore (before conversations loaded),
-   * now populate it with full info and load participants */
-  gnalk_window_maybe_restore_last_room (self);
+  /* Session manager notifies when conversations change - reload from DB for single code path */
+  g_message ("Window: session_manager conversations_changed (active session), reloading from DB");
+  gnalk_window_load_conversations_from_db (self);
 }
 
 /* ============ Session Disconnect Helper (for dispose) ============ */

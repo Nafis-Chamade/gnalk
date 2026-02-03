@@ -502,48 +502,115 @@ gnalk_conversation_data_update_from_json (GnalkConversationData *self,
   g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
 }
 
-void
+gboolean
 gnalk_conversation_data_update_from_data (GnalkConversationData *self,
                                             GnalkConversationData *source)
 {
-  g_return_if_fail (GNALK_IS_CONVERSATION_DATA (self));
-  g_return_if_fail (GNALK_IS_CONVERSATION_DATA (source));
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), FALSE);
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (source), FALSE);
 
-  /* Don't update from self - would corrupt data by freeing then copying freed memory */
+  /* Don't update from self */
   if (self == source)
+    return FALSE;
+
+  gboolean changed = FALSE;
+
+  /* Compare and update string fields */
+  if (g_strcmp0 (self->title, source->title) != 0)
     {
-      /* Still emit signal in case caller expects it */
-      g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
-      return;
+      g_free (self->title);
+      self->title = g_strdup (source->title);
+      changed = TRUE;
     }
 
-  /* Update mutable fields from source */
-  g_free (self->title);
-  self->title = g_strdup (source->title);
+  if (g_strcmp0 (self->subtitle, source->subtitle) != 0)
+    {
+      g_free (self->subtitle);
+      self->subtitle = g_strdup (source->subtitle);
+      changed = TRUE;
+    }
 
-  g_free (self->subtitle);
-  self->subtitle = g_strdup (source->subtitle);
+  if (g_strcmp0 (self->user_status, source->user_status) != 0)
+    {
+      g_free (self->user_status);
+      self->user_status = g_strdup (source->user_status);
+      changed = TRUE;
+    }
 
-  g_free (self->user_status);
-  self->user_status = g_strdup (source->user_status);
+  if (g_strcmp0 (self->description, source->description) != 0)
+    {
+      g_free (self->description);
+      self->description = g_strdup (source->description);
+      changed = TRUE;
+    }
 
-  g_free (self->description);
-  self->description = g_strdup (source->description);
+  /* Compare and update numeric fields */
+  if (self->last_activity != source->last_activity)
+    {
+      self->last_activity = source->last_activity;
+      changed = TRUE;
+    }
 
-  self->last_activity = source->last_activity;
-  self->last_common_read_message = source->last_common_read_message;
-  self->last_read_message = source->last_read_message;
-  self->unread_messages = source->unread_messages;
-  self->participant_type = source->participant_type;
-  self->notification_level = source->notification_level;
-  self->call_notification_level = source->call_notification_level;
-  self->is_favorite = source->is_favorite;
-  self->can_leave = source->can_leave;
-  self->can_delete = source->can_delete;
+  if (self->last_common_read_message != source->last_common_read_message)
+    {
+      self->last_common_read_message = source->last_common_read_message;
+      changed = TRUE;
+    }
 
-  /* Update session reference */
+  if (self->last_read_message != source->last_read_message)
+    {
+      self->last_read_message = source->last_read_message;
+      changed = TRUE;
+    }
+
+  if (self->unread_messages != source->unread_messages)
+    {
+      self->unread_messages = source->unread_messages;
+      changed = TRUE;
+    }
+
+  if (self->participant_type != source->participant_type)
+    {
+      self->participant_type = source->participant_type;
+      changed = TRUE;
+    }
+
+  if (self->notification_level != source->notification_level)
+    {
+      self->notification_level = source->notification_level;
+      changed = TRUE;
+    }
+
+  if (self->call_notification_level != source->call_notification_level)
+    {
+      self->call_notification_level = source->call_notification_level;
+      changed = TRUE;
+    }
+
+  if (self->is_favorite != source->is_favorite)
+    {
+      self->is_favorite = source->is_favorite;
+      changed = TRUE;
+    }
+
+  if (self->can_leave != source->can_leave)
+    {
+      self->can_leave = source->can_leave;
+      changed = TRUE;
+    }
+
+  if (self->can_delete != source->can_delete)
+    {
+      self->can_delete = source->can_delete;
+      changed = TRUE;
+    }
+
+  /* Update session reference (don't count as change for UI purposes) */
   self->session = source->session;
 
-  /* Emit signal so row can update */
-  g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
+  /* Only emit signal if something actually changed */
+  if (changed)
+    g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
+
+  return changed;
 }

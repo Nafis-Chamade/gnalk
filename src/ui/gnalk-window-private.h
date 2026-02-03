@@ -143,6 +143,7 @@ struct _GnalkWindow
   gboolean was_offline;              /* Was previously offline (for toast) */
   gboolean had_connection_error;     /* Had a connection error (for banner/toast) */
   gboolean initial_auth_done;        /* First auth attempt completed */
+  gboolean initial_conversations_loaded;  /* First conversation list load done */
   gboolean bg_sync_connected;        /* Background sync signal connected */
   gboolean was_active;               /* Previous window active state (to detect app switch vs popover) */
 
