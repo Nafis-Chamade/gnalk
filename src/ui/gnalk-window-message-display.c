@@ -1182,6 +1182,25 @@ gnalk_window_on_message_controller_poll_response (GnalkMessageController *contro
 }
 
 void
+gnalk_window_on_message_controller_messages_synced (GnalkMessageController *controller G_GNUC_UNUSED,
+                                                    const char              *room_token,
+                                                    guint                    count,
+                                                    GnalkWindow            *self)
+{
+  g_message ("Message controller: room %s synced (%u messages), refreshing UI", room_token, count);
+
+  /* If we're viewing this room, reload messages from DB to show the new ones */
+  if (self->current_room_token && g_strcmp0 (room_token, self->current_room_token) == 0)
+    {
+      g_debug ("Message controller sync: refreshing messages for current room %s", room_token);
+      gnalk_window_load_messages_from_db (self, room_token);
+    }
+
+  /* Also reload conversation list to update unread counts/subtitles */
+  gnalk_window_load_conversations_from_db (self);
+}
+
+void
 gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController *controller G_GNUC_UNUSED,
                                                             JsonArray               *messages,
                                                             gboolean                 has_more,

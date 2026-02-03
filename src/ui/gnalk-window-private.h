@@ -279,6 +279,9 @@ void gnalk_window_on_message_controller_poll_response   (GnalkMessageController 
 void gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController *controller,
                                                                   JsonArray *messages, gboolean has_more,
                                                                   GnalkWindow *self);
+void gnalk_window_on_message_controller_messages_synced (GnalkMessageController *controller,
+                                                         const char *room_token, guint count,
+                                                         GnalkWindow *self);
 
 /* ============ Conversation list functions (gnalk-window-conversation-list.c) ============ */
 

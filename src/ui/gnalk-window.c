@@ -3428,6 +3428,8 @@ gnalk_window_init (GnalkWindow *self)
                     G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
   g_signal_connect (self->message_controller, "older-messages-loaded",
                     G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
+  g_signal_connect (self->message_controller, "messages-synced",
+                    G_CALLBACK (gnalk_window_on_message_controller_messages_synced), self);
 
   /* Create conversation controller (will be recreated in switch_to_session with correct account) */
   {
