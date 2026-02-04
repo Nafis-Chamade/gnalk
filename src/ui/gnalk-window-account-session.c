@@ -144,9 +144,16 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   g_signal_connect_swapped (self->message_controller, "conversation-subtitle-updated",
                             G_CALLBACK (gnalk_window_load_conversations_from_db), self);
 
-  /* Restore room_token if we had an active room */
+  /* Restore room_token if we had an active room.
+   * Must reload messages because is_own flags differ per account. */
   if (self->current_room_token)
-    gnalk_message_controller_set_room (self->message_controller, self->current_room_token);
+    {
+      gnalk_message_controller_set_room (self->message_controller, self->current_room_token);
+
+      /* Clear and reload messages for the new account */
+      gnalk_window_clear_messages_store (self);
+      gnalk_window_load_messages_from_db (self, self->current_room_token);
+    }
 
   g_clear_object (&self->avatar_cache);
   gint64 account_id = gnalk_session_get_account_id (session);
