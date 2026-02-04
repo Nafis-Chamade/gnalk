@@ -371,6 +371,14 @@ gnalk_message_data_set_status (GnalkMessageData       *self,
 }
 
 void
+gnalk_message_data_set_is_own (GnalkMessageData *self,
+                                 gboolean           is_own)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  self->is_own = is_own;
+}
+
+void
 gnalk_message_data_confirm_sent (GnalkMessageData *self,
                                    gint64             message_id,
                                    gint64             timestamp)

@@ -62,8 +62,9 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
 
   self->active_session = session;
 
-  /* Reset initial load flag so next conversation load scrolls to top */
+  /* Reset initial load flags so next load works properly */
   self->initial_conversations_loaded = FALSE;
+  self->initial_messages_loaded = FALSE;
 
   if (!session)
     {

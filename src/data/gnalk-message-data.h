@@ -84,6 +84,8 @@ void gnalk_message_data_get_date (GnalkMessageData *self,
 /* Setters for mutable state */
 void gnalk_message_data_set_status       (GnalkMessageData       *self,
                                            GnalkMessageDataStatus  status);
+void gnalk_message_data_set_is_own       (GnalkMessageData *self,
+                                           gboolean           is_own);
 void gnalk_message_data_confirm_sent     (GnalkMessageData *self,
                                            gint64             message_id,
                                            gint64             timestamp);

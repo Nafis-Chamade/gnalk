@@ -1778,6 +1778,16 @@ gnalk_window_on_message_controller_sent (GnalkMessageController *controller G_GN
           /* Update the message with server-confirmed data */
           gnalk_message_data_confirm_sent (msg_data, message_id, timestamp);
 
+          /* Save confirmed message to database */
+          GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+          if (app)
+            {
+              GnalkDatabase *db = gnalk_application_get_database (app);
+              gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
+              if (db && account_id > 0 && self->current_room_token)
+                gnalk_database_save_message (db, account_id, self->current_room_token, msg_data);
+            }
+
           /* Force UI update by remove/insert at same position (preserve order while pending) */
           g_object_ref (msg_data);
           g_list_store_remove (self->messages_store, i);

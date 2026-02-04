@@ -273,9 +273,14 @@ load_messages_from_db_finish (GObject      *source_object,
       return;
     }
 
-  /* Get current user ID for unread message marking */
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  const char *current_user = app ? gnalk_application_get_user_id (app) : NULL;
+  /* Get current user ID from active session (not application, for multi-account support) */
+  const char *current_user = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      if (account)
+        current_user = gnalk_account_get_user_id (account);
+    }
 
   /* If last_read_message_id is not set (e.g., immediate restore at startup),
    * look it up from the conversation data now that conversations are loaded */
@@ -333,13 +338,16 @@ load_messages_from_db_finish (GObject      *source_object,
 
           if (!already_exists)
             {
+              /* Recalculate is_own based on current session's user_id
+               * (DB may have stored wrong value for multi-account scenarios) */
+              const char *author_id = gnalk_message_data_get_author_id (data);
+              gboolean is_own = current_user && g_strcmp0 (author_id, current_user) == 0;
+              gnalk_message_data_set_is_own (data, is_own);
+
               /* Mark as unread if message ID > last_read_message_id and not our own message */
               if (self->last_read_message_id > 0)
                 {
-                  const char *author_id = gnalk_message_data_get_author_id (data);
-
-                  if (msg_id > self->last_read_message_id &&
-                      g_strcmp0 (author_id, current_user) != 0)
+                  if (msg_id > self->last_read_message_id && !is_own)
                     {
                       gnalk_message_data_set_is_unread (data, TRUE);
 
@@ -692,7 +700,15 @@ gnalk_window_process_messages_array (GnalkWindow *self,
                                        gboolean      is_initial_load)
 {
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  const char *current_user = gnalk_application_get_user_id (app);
+
+  /* Get current user ID from active session (not application, for multi-account support) */
+  const char *current_user = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      if (account)
+        current_user = gnalk_account_get_user_id (account);
+    }
   guint len = json_array_get_length (messages);
 
   gboolean initial_load = is_initial_load &&
@@ -1225,8 +1241,14 @@ gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController
 
   /* Messages are already saved to DB by MessageController.
    * Now process and display them in the UI. */
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  const char *current_user = app ? gnalk_application_get_user_id (app) : NULL;
+  /* Get current user ID from active session (not application, for multi-account support) */
+  const char *current_user = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      if (account)
+        current_user = gnalk_account_get_user_id (account);
+    }
 
   /* Build list of messages (server returns newest first for lookIntoFuture=0) */
   GPtrArray *new_messages = g_ptr_array_new_with_free_func (g_object_unref);
