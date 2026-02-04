@@ -59,7 +59,7 @@ static const char *SCHEMA_SQL =
   "CREATE INDEX IF NOT EXISTS idx_conversations_token ON conversations(account_id, token);"
 
   "CREATE TABLE IF NOT EXISTS messages ("
-  "  id INTEGER PRIMARY KEY,"
+  "  id INTEGER NOT NULL,"
   "  account_id INTEGER NOT NULL,"
   "  conversation_token TEXT NOT NULL,"
   "  timestamp INTEGER NOT NULL,"
@@ -74,7 +74,8 @@ static const char *SCHEMA_SQL =
   "  status INTEGER DEFAULT 0,"
   "  reactions_json TEXT,"
   "  parent_json TEXT,"
-  "  message_parameters_json TEXT"
+  "  message_parameters_json TEXT,"
+  "  PRIMARY KEY (id, account_id)"
   ");"
 
   "CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(account_id, conversation_token, timestamp DESC);"
@@ -249,6 +250,74 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
   sqlite3_exec (self->db,
                 "CREATE INDEX IF NOT EXISTS idx_sync_state_lookup ON sync_state(account_id, conversation_token);",
                 NULL, NULL, NULL);
+
+  /* Migration: Change messages table primary key to (id, account_id) for multi-account support.
+   * Check if migration is needed by looking for tables without the composite key. */
+  {
+    sqlite3_stmt *check_stmt;
+    gboolean needs_migration = FALSE;
+
+    /* Check if the old messages table exists and has the old schema (id as sole primary key) */
+    const char *check_sql = "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'";
+    if (sqlite3_prepare_v2 (self->db, check_sql, -1, &check_stmt, NULL) == SQLITE_OK)
+      {
+        if (sqlite3_step (check_stmt) == SQLITE_ROW)
+          {
+            const char *schema = (const char *)sqlite3_column_text (check_stmt, 0);
+            /* Old schema has "id INTEGER PRIMARY KEY," - new has "PRIMARY KEY (id, account_id)" */
+            if (schema && strstr (schema, "id INTEGER PRIMARY KEY,") != NULL)
+              needs_migration = TRUE;
+          }
+        sqlite3_finalize (check_stmt);
+      }
+
+    if (needs_migration)
+      {
+        g_message ("Database migration: recreating messages table with composite primary key");
+
+        /* SQLite doesn't support ALTER TABLE to change primary key, so we need to recreate */
+        const char *migration_sql =
+          "BEGIN TRANSACTION;"
+          "CREATE TABLE messages_new ("
+          "  id INTEGER NOT NULL,"
+          "  account_id INTEGER NOT NULL,"
+          "  conversation_token TEXT NOT NULL,"
+          "  timestamp INTEGER NOT NULL,"
+          "  reply_to INTEGER,"
+          "  last_edit_timestamp INTEGER DEFAULT 0,"
+          "  message TEXT,"
+          "  author_id TEXT,"
+          "  author_name TEXT,"
+          "  reference_id TEXT,"
+          "  system_message TEXT,"
+          "  is_own INTEGER DEFAULT 0,"
+          "  status INTEGER DEFAULT 0,"
+          "  reactions_json TEXT,"
+          "  parent_json TEXT,"
+          "  message_parameters_json TEXT,"
+          "  PRIMARY KEY (id, account_id)"
+          ");"
+          "INSERT INTO messages_new SELECT * FROM messages;"
+          "DROP TABLE messages;"
+          "ALTER TABLE messages_new RENAME TO messages;"
+          "CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(account_id, conversation_token, timestamp DESC);"
+          "CREATE INDEX IF NOT EXISTS idx_messages_ref ON messages(reference_id);"
+          "COMMIT;";
+
+        char *err_msg = NULL;
+        if (sqlite3_exec (self->db, migration_sql, NULL, NULL, &err_msg) != SQLITE_OK)
+          {
+            g_warning ("Messages table migration failed: %s", err_msg ? err_msg : "unknown error");
+            sqlite3_free (err_msg);
+            /* Rollback if there was a failure */
+            sqlite3_exec (self->db, "ROLLBACK;", NULL, NULL, NULL);
+          }
+        else
+          {
+            g_message ("Database migration: messages table migration completed successfully");
+          }
+      }
+  }
 
   g_debug ("Database opened: %s", self->db_path);
   return TRUE;
