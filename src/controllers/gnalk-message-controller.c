@@ -739,31 +739,38 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
           if (latest_msg)
             {
               const char *message_text = json_object_get_string_member_with_default (latest_msg, "message", "");
+              const char *actor_id = json_object_get_string_member_with_default (latest_msg, "actorId", "");
               const char *actor_name = json_object_get_string_member_with_default (latest_msg, "actorDisplayName", "");
               const char *system_message = json_object_get_string_member_with_default (latest_msg, "systemMessage", "");
               gint64 timestamp = json_object_get_int_member_with_default (latest_msg, "timestamp", 0);
 
-              g_autofree char *subtitle = NULL;
-              if (system_message && *system_message)
+              /* Determine message type */
+              const char *message_type = (system_message && *system_message) ? "system" : "comment";
+
+              /* Serialize message parameters if present */
+              g_autofree char *params_json = NULL;
+              if (json_object_has_member (latest_msg, "messageParameters"))
                 {
-                  /* System message - use text as-is */
-                  subtitle = g_strdup (message_text);
-                }
-              else if (actor_name && *actor_name)
-                {
-                  /* Regular message - "Actor: message" */
-                  subtitle = g_strdup_printf ("%s: %s", actor_name, message_text);
-                }
-              else
-                {
-                  subtitle = g_strdup (message_text);
+                  JsonNode *params_node = json_object_get_member (latest_msg, "messageParameters");
+                  if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
+                    {
+                      JsonGenerator *gen = json_generator_new ();
+                      json_generator_set_root (gen, params_node);
+                      params_json = json_generator_to_data (gen, NULL);
+                      g_object_unref (gen);
+                    }
                 }
 
-              gnalk_data_repository_update_conversation_subtitle (self->repository,
-                                                                    self->account_id,
-                                                                    self->room_token,
-                                                                    subtitle,
-                                                                    timestamp);
+              gnalk_data_repository_update_conversation_last_message (self->repository,
+                                                                        self->account_id,
+                                                                        self->room_token,
+                                                                        timestamp,
+                                                                        latest_id,
+                                                                        message_text,
+                                                                        actor_id,
+                                                                        actor_name,
+                                                                        message_type,
+                                                                        params_json);
               /* Note: DataRepository already emits data-changed, but we keep this
                * signal for backwards compatibility with existing window connections */
               g_signal_emit (self, signals[SIGNAL_CONVERSATION_SUBTITLE_UPDATED], 0);
@@ -973,6 +980,41 @@ on_send_response (GnalkHttpClient *client G_GNUC_UNUSED,
                   g_signal_emit (self, signals[SIGNAL_MESSAGE_SENT], 0,
                                  ref_id, msg_id, timestamp);
                 }
+
+              /* Update conversation subtitle with sent message data */
+              const char *message_text = json_object_get_string_member_with_default (msg_data, "message", "");
+              const char *actor_id = json_object_get_string_member_with_default (msg_data, "actorId", "");
+              const char *actor_name = json_object_get_string_member_with_default (msg_data, "actorDisplayName", "");
+              const char *system_message = json_object_get_string_member_with_default (msg_data, "systemMessage", "");
+
+              /* Determine message type */
+              const char *message_type = (system_message && *system_message) ? "system" : "comment";
+
+              /* Serialize message parameters if present */
+              g_autofree char *params_json = NULL;
+              if (json_object_has_member (msg_data, "messageParameters"))
+                {
+                  JsonNode *params_node = json_object_get_member (msg_data, "messageParameters");
+                  if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
+                    {
+                      JsonGenerator *gen = json_generator_new ();
+                      json_generator_set_root (gen, params_node);
+                      params_json = json_generator_to_data (gen, NULL);
+                      g_object_unref (gen);
+                    }
+                }
+
+              gnalk_data_repository_update_conversation_last_message (self->repository,
+                                                                        self->account_id,
+                                                                        self->room_token,
+                                                                        timestamp,
+                                                                        msg_id,
+                                                                        message_text,
+                                                                        actor_id,
+                                                                        actor_name,
+                                                                        message_type,
+                                                                        params_json);
+              g_signal_emit (self, signals[SIGNAL_CONVERSATION_SUBTITLE_UPDATED], 0);
             }
         }
     }

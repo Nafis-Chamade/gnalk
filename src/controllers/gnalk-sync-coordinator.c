@@ -368,7 +368,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
       g_ptr_array_add (valid_tokens, g_strdup (token));
 
       /* Collect conversation for batch save */
-      GnalkConversationData *conv_data = gnalk_conversation_data_new_from_json (room, NULL);
+      GnalkConversationData *conv_data = gnalk_conversation_data_new_from_json_with_user (room, fetch_data->user_id);
       if (conv_data)
         {
           g_ptr_array_add (conversations_to_save, conv_data);  /* Takes ownership */

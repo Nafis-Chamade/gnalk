@@ -49,11 +49,16 @@ int gnalk_database_delete_stale_conversations (GnalkDatabase *self,
                                                   GPtrArray *valid_tokens);
 GListStore *gnalk_database_load_conversations (GnalkDatabase *self,
                                                  gint64 account_id);
-void gnalk_database_update_conversation_subtitle (GnalkDatabase *self,
-                                                    gint64 account_id,
-                                                    const char *token,
-                                                    const char *subtitle,
-                                                    gint64 last_activity);
+void gnalk_database_update_conversation_last_message (GnalkDatabase *self,
+                                                         gint64 account_id,
+                                                         const char *token,
+                                                         gint64 last_activity,
+                                                         gint64 last_message_id,
+                                                         const char *last_message_text,
+                                                         const char *last_message_actor_id,
+                                                         const char *last_message_actor_name,
+                                                         const char *last_message_type,
+                                                         const char *last_message_params_json);
 
 /* Messages */
 void gnalk_database_save_message (GnalkDatabase *self,

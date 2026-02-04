@@ -84,32 +84,53 @@ on_mark_chat_read_response (GnalkHttpClient *client G_GNUC_UNUSED,
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
+  g_debug ("read-status: mark_chat_read response received");
+
   if (error)
     {
-      g_debug ("mark_chat_read failed: %s", error->message);
+      g_debug ("read-status: mark_chat_read failed: %s", error->message);
       return;
     }
 
   /* Parse response to update conversation's unread count
    * Response format: {"ocs":{"data":{...room data with unreadMessages, token, etc...}}} */
   if (!response || !JSON_NODE_HOLDS_OBJECT (response))
-    return;
+    {
+      g_debug ("read-status: invalid response (no object)");
+      return;
+    }
 
   JsonObject *root = json_node_get_object (response);
   JsonObject *ocs = json_object_get_object_member (root, "ocs");
   if (!ocs)
-    return;
+    {
+      g_debug ("read-status: invalid response (no ocs)");
+      return;
+    }
 
   JsonObject *data = json_object_get_object_member (ocs, "data");
   if (!data)
-    return;
+    {
+      g_debug ("read-status: invalid response (no data)");
+      return;
+    }
 
   const char *token = json_object_get_string_member_with_default (data, "token", NULL);
+  gint64 unread = json_object_get_int_member_with_default (data, "unreadMessages", -1);
+  g_debug ("read-status: response token=%s, unreadMessages=%ld",
+           token ? token : "(null)", (long) unread);
+
   if (!token)
-    return;
+    {
+      g_debug ("read-status: invalid response (no token)");
+      return;
+    }
 
   /* Find and update the conversation in our store */
   guint n_convos = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+  g_debug ("read-status: searching %u conversations for token=%s", n_convos, token);
+
+  gboolean found = FALSE;
   for (guint i = 0; i < n_convos; i++)
     {
       GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
@@ -117,13 +138,18 @@ on_mark_chat_read_response (GnalkHttpClient *client G_GNUC_UNUSED,
 
       if (conv_token && g_strcmp0 (conv_token, token) == 0)
         {
+          g_debug ("read-status: found conversation at index %u, updating", i);
           /* Update the conversation data in-place (emits "updated" signal) */
           gnalk_conversation_data_update_from_json (conv, data);
+          found = TRUE;
           g_object_unref (conv);
           break;
         }
       g_object_unref (conv);
     }
+
+  if (!found)
+    g_debug ("read-status: conversation with token=%s not found in store!", token);
 }
 
 /* ============ Mark messages read up to ID ============ */
@@ -276,6 +302,9 @@ on_mark_read_debounce_timer (gpointer user_data)
   GnalkWindow *self = GNALK_WINDOW (user_data);
   self->mark_read_debounce_id = 0;
 
+  g_debug ("read-status: debounce timer fired, %u bound unread rows",
+           g_hash_table_size (self->bound_unread_rows));
+
   if (g_hash_table_size (self->bound_unread_rows) == 0)
     return G_SOURCE_REMOVE;
 
@@ -300,6 +329,9 @@ on_mark_read_debounce_timer (gpointer user_data)
         }
     }
 
+  g_debug ("read-status: %u visible unread messages, highest_id=%ld",
+           self->visible_unread_ids->len, (long) highest_id);
+
   if (self->visible_unread_ids->len == 0)
     return G_SOURCE_REMOVE;
 
@@ -307,12 +339,21 @@ on_mark_read_debounce_timer (gpointer user_data)
   if (highest_id > self->last_read_message_id &&
       self->current_room_token && self->http_client)
     {
+      g_debug ("read-status: calling mark_chat_read for token=%s, msg_id=%ld (last_read=%ld)",
+               self->current_room_token, (long) highest_id, (long) self->last_read_message_id);
       self->last_read_message_id = highest_id;
       gnalk_http_client_mark_chat_read (self->http_client,
                                           self->current_room_token,
                                           highest_id,
                                           on_mark_chat_read_response,
                                           self);
+    }
+  else
+    {
+      g_debug ("read-status: skipping HTTP call (highest_id=%ld <= last_read=%ld, token=%s, client=%p)",
+               (long) highest_id, (long) self->last_read_message_id,
+               self->current_room_token ? self->current_room_token : "(null)",
+               (void *) self->http_client);
     }
 
   /* Cancel any existing glow timer and start fresh - glow continues for 4s */
@@ -350,6 +391,8 @@ on_bound_unread_row_destroyed (gpointer data, GObject *where_the_object_was)
 void
 gnalk_window_track_bound_unread_row (GnalkWindow *self, gint64 msg_id, GtkWidget *row)
 {
+  g_debug ("read-status: tracking unread msg_id=%ld", (long) msg_id);
+
   /* Remove any existing weak ref if this msg_id was already tracked */
   gpointer old_row = g_hash_table_lookup (self->bound_unread_rows, GINT_TO_POINTER (msg_id));
   if (old_row != NULL)

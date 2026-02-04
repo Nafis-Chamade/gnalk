@@ -32,7 +32,6 @@ static const char *SCHEMA_SQL =
   "  token TEXT NOT NULL,"
   "  title TEXT,"
   "  name TEXT,"
-  "  subtitle TEXT,"
   "  user_status TEXT,"
   "  actor_id TEXT,"
   "  room_type INTEGER DEFAULT 0,"
@@ -47,6 +46,12 @@ static const char *SCHEMA_SQL =
   "  notification_level INTEGER DEFAULT 0,"
   "  call_notification_level INTEGER DEFAULT 0,"
   "  last_read_message INTEGER DEFAULT 0,"
+  "  last_message_id INTEGER DEFAULT 0,"
+  "  last_message_text TEXT,"
+  "  last_message_actor_id TEXT,"
+  "  last_message_actor_name TEXT,"
+  "  last_message_type TEXT,"
+  "  last_message_params_json TEXT,"
   "  UNIQUE(account_id, token)"
   ");"
 
@@ -220,6 +225,26 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
                 "ALTER TABLE conversations ADD COLUMN last_read_message INTEGER DEFAULT 0;",
                 NULL, NULL, NULL);
 
+  /* Migration: Add raw last message columns */
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN last_message_id INTEGER DEFAULT 0;",
+                NULL, NULL, NULL);
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN last_message_text TEXT;",
+                NULL, NULL, NULL);
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN last_message_actor_id TEXT;",
+                NULL, NULL, NULL);
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN last_message_actor_name TEXT;",
+                NULL, NULL, NULL);
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN last_message_type TEXT;",
+                NULL, NULL, NULL);
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN last_message_params_json TEXT;",
+                NULL, NULL, NULL);
+
   /* Migration: Add index for sync_state lookups */
   sqlite3_exec (self->db,
                 "CREATE INDEX IF NOT EXISTS idx_sync_state_lookup ON sync_state(account_id, conversation_token);",
@@ -322,11 +347,13 @@ gnalk_database_save_conversation (GnalkDatabase         *self,
   sqlite3_stmt *stmt;
   const char *sql =
     "INSERT OR REPLACE INTO conversations "
-    "(account_id, token, title, name, subtitle, user_status, actor_id, "
+    "(account_id, token, title, name, user_status, actor_id, "
     "room_type, last_activity, last_common_read_message, unread_messages, "
     "is_favorite, can_leave, can_delete, description, participant_type, "
-    "notification_level, call_notification_level, last_read_message) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    "notification_level, call_notification_level, last_read_message, "
+    "last_message_id, last_message_text, last_message_actor_id, "
+    "last_message_actor_name, last_message_type, last_message_params_json) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -334,21 +361,26 @@ gnalk_database_save_conversation (GnalkDatabase         *self,
       sqlite3_bind_text (stmt, 2, gnalk_conversation_data_get_token (data), -1, SQLITE_STATIC);
       sqlite3_bind_text (stmt, 3, gnalk_conversation_data_get_title (data), -1, SQLITE_STATIC);
       sqlite3_bind_text (stmt, 4, gnalk_conversation_data_get_name (data), -1, SQLITE_STATIC);
-      sqlite3_bind_text (stmt, 5, gnalk_conversation_data_get_subtitle (data), -1, SQLITE_STATIC);
-      sqlite3_bind_text (stmt, 6, gnalk_conversation_data_get_user_status (data), -1, SQLITE_STATIC);
-      sqlite3_bind_text (stmt, 7, gnalk_conversation_data_get_actor_id (data), -1, SQLITE_STATIC);
-      sqlite3_bind_int (stmt, 8, gnalk_conversation_data_get_room_type (data));
-      sqlite3_bind_int64 (stmt, 9, gnalk_conversation_data_get_last_activity (data));
-      sqlite3_bind_int64 (stmt, 10, gnalk_conversation_data_get_last_common_read_message (data));
-      sqlite3_bind_int (stmt, 11, gnalk_conversation_data_get_unread_messages (data));
-      sqlite3_bind_int (stmt, 12, gnalk_conversation_data_get_is_favorite (data) ? 1 : 0);
-      sqlite3_bind_int (stmt, 13, gnalk_conversation_data_get_can_leave (data) ? 1 : 0);
-      sqlite3_bind_int (stmt, 14, gnalk_conversation_data_get_can_delete (data) ? 1 : 0);
-      sqlite3_bind_text (stmt, 15, gnalk_conversation_data_get_description (data), -1, SQLITE_STATIC);
-      sqlite3_bind_int (stmt, 16, gnalk_conversation_data_get_participant_type (data));
-      sqlite3_bind_int (stmt, 17, gnalk_conversation_data_get_notification_level (data));
-      sqlite3_bind_int (stmt, 18, gnalk_conversation_data_get_call_notification_level (data));
-      sqlite3_bind_int64 (stmt, 19, gnalk_conversation_data_get_last_read_message (data));
+      sqlite3_bind_text (stmt, 5, gnalk_conversation_data_get_user_status (data), -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 6, gnalk_conversation_data_get_actor_id (data), -1, SQLITE_STATIC);
+      sqlite3_bind_int (stmt, 7, gnalk_conversation_data_get_room_type (data));
+      sqlite3_bind_int64 (stmt, 8, gnalk_conversation_data_get_last_activity (data));
+      sqlite3_bind_int64 (stmt, 9, gnalk_conversation_data_get_last_common_read_message (data));
+      sqlite3_bind_int (stmt, 10, gnalk_conversation_data_get_unread_messages (data));
+      sqlite3_bind_int (stmt, 11, gnalk_conversation_data_get_is_favorite (data) ? 1 : 0);
+      sqlite3_bind_int (stmt, 12, gnalk_conversation_data_get_can_leave (data) ? 1 : 0);
+      sqlite3_bind_int (stmt, 13, gnalk_conversation_data_get_can_delete (data) ? 1 : 0);
+      sqlite3_bind_text (stmt, 14, gnalk_conversation_data_get_description (data), -1, SQLITE_STATIC);
+      sqlite3_bind_int (stmt, 15, gnalk_conversation_data_get_participant_type (data));
+      sqlite3_bind_int (stmt, 16, gnalk_conversation_data_get_notification_level (data));
+      sqlite3_bind_int (stmt, 17, gnalk_conversation_data_get_call_notification_level (data));
+      sqlite3_bind_int64 (stmt, 18, gnalk_conversation_data_get_last_read_message (data));
+      sqlite3_bind_int64 (stmt, 19, gnalk_conversation_data_get_last_message_id (data));
+      sqlite3_bind_text (stmt, 20, gnalk_conversation_data_get_last_message_text (data), -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 21, gnalk_conversation_data_get_last_message_actor_id (data), -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 22, gnalk_conversation_data_get_last_message_actor_name (data), -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 23, gnalk_conversation_data_get_last_message_type (data), -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 24, gnalk_conversation_data_get_last_message_params_json (data), -1, SQLITE_STATIC);
 
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
@@ -396,26 +428,39 @@ gnalk_database_delete_conversation (GnalkDatabase *self,
 }
 
 void
-gnalk_database_update_conversation_subtitle (GnalkDatabase *self,
-                                               gint64          account_id,
-                                               const char     *token,
-                                               const char     *subtitle,
-                                               gint64          last_activity)
+gnalk_database_update_conversation_last_message (GnalkDatabase *self,
+                                                    gint64          account_id,
+                                                    const char     *token,
+                                                    gint64          last_activity,
+                                                    gint64          last_message_id,
+                                                    const char     *last_message_text,
+                                                    const char     *last_message_actor_id,
+                                                    const char     *last_message_actor_name,
+                                                    const char     *last_message_type,
+                                                    const char     *last_message_params_json)
 {
   g_return_if_fail (GNALK_IS_DATABASE (self));
   g_return_if_fail (self->db != NULL);
   g_return_if_fail (token != NULL);
 
   sqlite3_stmt *stmt;
-  const char *sql = "UPDATE conversations SET subtitle = ?, last_activity = ? "
+  const char *sql = "UPDATE conversations SET last_activity = ?, "
+                    "last_message_id = ?, last_message_text = ?, "
+                    "last_message_actor_id = ?, last_message_actor_name = ?, "
+                    "last_message_type = ?, last_message_params_json = ? "
                     "WHERE account_id = ? AND token = ?";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
-      sqlite3_bind_text (stmt, 1, subtitle ? subtitle : "", -1, SQLITE_STATIC);
-      sqlite3_bind_int64 (stmt, 2, last_activity);
-      sqlite3_bind_int64 (stmt, 3, account_id);
-      sqlite3_bind_text (stmt, 4, token, -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 1, last_activity);
+      sqlite3_bind_int64 (stmt, 2, last_message_id);
+      sqlite3_bind_text (stmt, 3, last_message_text ? last_message_text : "", -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 4, last_message_actor_id ? last_message_actor_id : "", -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 5, last_message_actor_name ? last_message_actor_name : "", -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 6, last_message_type ? last_message_type : "", -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 7, last_message_params_json, -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 8, account_id);
+      sqlite3_bind_text (stmt, 9, token, -1, SQLITE_STATIC);
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
     }
@@ -525,10 +570,12 @@ gnalk_database_load_conversations (GnalkDatabase *self,
   sqlite3_stmt *stmt;
 
   const char *sql =
-    "SELECT token, title, name, subtitle, user_status, actor_id, room_type, "
+    "SELECT token, title, name, user_status, actor_id, room_type, "
     "last_activity, last_common_read_message, unread_messages, is_favorite, "
     "can_leave, can_delete, description, participant_type, notification_level, "
-    "call_notification_level, last_read_message "
+    "call_notification_level, last_read_message, last_message_id, "
+    "last_message_text, last_message_actor_id, last_message_actor_name, "
+    "last_message_type, last_message_params_json "
     "FROM conversations WHERE account_id = ? ORDER BY last_activity DESC";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
@@ -541,21 +588,26 @@ gnalk_database_load_conversations (GnalkDatabase *self,
             (const char *) sqlite3_column_text (stmt, 0),   /* token */
             (const char *) sqlite3_column_text (stmt, 1),   /* title */
             (const char *) sqlite3_column_text (stmt, 2),   /* name */
-            (const char *) sqlite3_column_text (stmt, 3),   /* subtitle */
-            (const char *) sqlite3_column_text (stmt, 4),   /* user_status */
-            (const char *) sqlite3_column_text (stmt, 5),   /* actor_id */
-            sqlite3_column_int (stmt, 6),                    /* room_type */
-            sqlite3_column_int64 (stmt, 7),                  /* last_activity */
-            sqlite3_column_int64 (stmt, 8),                  /* last_common_read_message */
-            sqlite3_column_int (stmt, 9),                    /* unread_messages */
-            sqlite3_column_int (stmt, 10) != 0,              /* is_favorite */
-            sqlite3_column_int (stmt, 11) != 0,              /* can_leave */
-            sqlite3_column_int (stmt, 12) != 0,              /* can_delete */
-            (const char *) sqlite3_column_text (stmt, 13),  /* description */
-            sqlite3_column_int (stmt, 14),                   /* participant_type */
-            sqlite3_column_int (stmt, 15),                   /* notification_level */
-            sqlite3_column_int (stmt, 16),                   /* call_notification_level */
-            sqlite3_column_int64 (stmt, 17),                 /* last_read_message */
+            (const char *) sqlite3_column_text (stmt, 3),   /* user_status */
+            (const char *) sqlite3_column_text (stmt, 4),   /* actor_id */
+            sqlite3_column_int (stmt, 5),                    /* room_type */
+            sqlite3_column_int64 (stmt, 6),                  /* last_activity */
+            sqlite3_column_int64 (stmt, 7),                  /* last_common_read_message */
+            sqlite3_column_int (stmt, 8),                    /* unread_messages */
+            sqlite3_column_int (stmt, 9) != 0,               /* is_favorite */
+            sqlite3_column_int (stmt, 10) != 0,              /* can_leave */
+            sqlite3_column_int (stmt, 11) != 0,              /* can_delete */
+            (const char *) sqlite3_column_text (stmt, 12),  /* description */
+            sqlite3_column_int (stmt, 13),                   /* participant_type */
+            sqlite3_column_int (stmt, 14),                   /* notification_level */
+            sqlite3_column_int (stmt, 15),                   /* call_notification_level */
+            sqlite3_column_int64 (stmt, 16),                 /* last_read_message */
+            sqlite3_column_int64 (stmt, 17),                 /* last_message_id */
+            (const char *) sqlite3_column_text (stmt, 18),  /* last_message_text */
+            (const char *) sqlite3_column_text (stmt, 19),  /* last_message_actor_id */
+            (const char *) sqlite3_column_text (stmt, 20),  /* last_message_actor_name */
+            (const char *) sqlite3_column_text (stmt, 21),  /* last_message_type */
+            (const char *) sqlite3_column_text (stmt, 22),  /* last_message_params_json */
             NULL);                                           /* session (set later) */
 
           g_list_store_append (store, data);

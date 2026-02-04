@@ -791,17 +791,25 @@ gnalk_data_repository_set_has_more_history (GnalkDataRepository *self,
 }
 
 void
-gnalk_data_repository_update_conversation_subtitle (GnalkDataRepository *self,
-                                                     gint64               account_id,
-                                                     const char          *conversation_token,
-                                                     const char          *subtitle,
-                                                     gint64               last_activity)
+gnalk_data_repository_update_conversation_last_message (GnalkDataRepository *self,
+                                                          gint64               account_id,
+                                                          const char          *conversation_token,
+                                                          gint64               last_activity,
+                                                          gint64               last_message_id,
+                                                          const char          *last_message_text,
+                                                          const char          *last_message_actor_id,
+                                                          const char          *last_message_actor_name,
+                                                          const char          *last_message_type,
+                                                          const char          *last_message_params_json)
 {
   g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
   g_return_if_fail (self->is_open);
   g_return_if_fail (conversation_token != NULL);
 
-  gnalk_database_update_conversation_subtitle (self->database, account_id, conversation_token,
-                                                subtitle, last_activity);
+  gnalk_database_update_conversation_last_message (self->database, account_id, conversation_token,
+                                                     last_activity, last_message_id,
+                                                     last_message_text, last_message_actor_id,
+                                                     last_message_actor_name, last_message_type,
+                                                     last_message_params_json);
   g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
 }

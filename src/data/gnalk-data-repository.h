@@ -341,20 +341,30 @@ void gnalk_data_repository_set_has_more_history (GnalkDataRepository *self,
                                                   gboolean             has_more);
 
 /**
- * gnalk_data_repository_update_conversation_subtitle:
+ * gnalk_data_repository_update_conversation_last_message:
  * @self: The data repository
  * @account_id: The account ID
  * @conversation_token: The conversation token
- * @subtitle: The new subtitle
  * @last_activity: The timestamp for last activity
+ * @last_message_id: ID of the last message
+ * @last_message_text: Raw text of the last message
+ * @last_message_actor_id: Actor ID of the message author
+ * @last_message_actor_name: Display name of the message author
+ * @last_message_type: Message type (system, comment, etc.)
+ * @last_message_params_json: JSON string of message parameters (nullable)
  *
- * Updates the conversation subtitle and last_activity synchronously.
+ * Updates the conversation's last message data synchronously.
  * Emits data-changed signal with scope "conversations".
  */
-void gnalk_data_repository_update_conversation_subtitle (GnalkDataRepository *self,
-                                                          gint64               account_id,
-                                                          const char          *conversation_token,
-                                                          const char          *subtitle,
-                                                          gint64               last_activity);
+void gnalk_data_repository_update_conversation_last_message (GnalkDataRepository *self,
+                                                               gint64               account_id,
+                                                               const char          *conversation_token,
+                                                               gint64               last_activity,
+                                                               gint64               last_message_id,
+                                                               const char          *last_message_text,
+                                                               const char          *last_message_actor_id,
+                                                               const char          *last_message_actor_name,
+                                                               const char          *last_message_type,
+                                                               const char          *last_message_params_json);
 
 G_END_DECLS

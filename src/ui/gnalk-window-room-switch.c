@@ -628,11 +628,15 @@ gnalk_window_open_conversation_by_token (GnalkWindow *self, const char *token)
           }
       }
 
+      /* Get or create the tab, and store last_read_message_id BEFORE switch_to_room_tab
+       * (which would overwrite it with the tab's cached value) */
+      GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, token);
+      tab->last_read_message_id = self->last_read_message_id;
+
       /* Switch to the room's tab (may have cached messages) */
       switch_to_room_tab (self, token);
 
       /* If tab is empty (new tab), load messages from DB */
-      GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, token);
       guint tab_message_count = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
       GNALK_TRACE_ROOM_SWITCH ("open_conversation: tab for %s has %u messages, initial_load_done=%d",
                                  token, tab_message_count, tab->initial_load_done);
@@ -647,8 +651,6 @@ gnalk_window_open_conversation_by_token (GnalkWindow *self, const char *token)
               tab->initial_load_done = FALSE;
             }
           GNALK_TRACE_ROOM_SWITCH ("open_conversation: loading messages from DB for %s", token);
-          /* Store last_read_message_id in tab for unread marking */
-          tab->last_read_message_id = self->last_read_message_id;
           /* Don't show messages view yet - will be shown after load + scroll in load_messages_from_db_finish */
           gnalk_window_load_messages_from_db (self, token);
         }

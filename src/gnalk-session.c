@@ -1353,8 +1353,12 @@ gnalk_session_join_room (GnalkSession *self,
   /* If already in the same room, don't leave and re-join */
   if (g_strcmp0 (self->current_room_token, room_token) == 0)
     {
-      g_debug ("Session %s: Already in room %s, skipping re-join",
-               gnalk_account_get_user_id (self->account), room_token);
+      g_debug ("Session %s: Already in room %s, skipping re-join (sig_confirmed=%d, session_id=%s, state=%d, sig_connected=%d)",
+               gnalk_account_get_user_id (self->account), room_token,
+               self->signaling_room_confirmed,
+               self->current_session_id ? self->current_session_id : "(null)",
+               self->state,
+               gnalk_signaling_is_connected (self->signaling));
 
       /* If signaling not confirmed yet but we have a session_id, try to join signaling */
       if (!self->signaling_room_confirmed && self->current_session_id &&
@@ -1364,6 +1368,14 @@ gnalk_session_join_room (GnalkSession *self,
           g_message ("Session %s: Re-joining signaling for room %s",
                      gnalk_account_get_user_id (self->account), room_token);
           gnalk_signaling_join_room (self->signaling, room_token, self->current_session_id);
+        }
+      /* If we don't have a session_id yet, do the HTTP join to get one */
+      else if (!self->current_session_id && self->state == GNALK_SESSION_STATE_ONLINE)
+        {
+          g_message ("Session %s: Doing HTTP join for room %s to get session_id",
+                     gnalk_account_get_user_id (self->account), room_token);
+          gnalk_http_client_join_room (self->http_client, room_token,
+                                       on_room_join_response, self);
         }
       return;
     }
@@ -1869,7 +1881,6 @@ on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
         self->current_room_token,  /* token */
         room_name,                 /* title */
         room_name,                 /* name */
-        NULL,                      /* subtitle */
         NULL,                      /* user_status */
         NULL,                      /* actor_id */
         3,                         /* room_type: public */
@@ -1884,6 +1895,12 @@ on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
         0,                         /* notification_level: default */
         0,                         /* call_notification_level: default */
         0,                         /* last_read_message */
+        0,                         /* last_message_id */
+        NULL,                      /* last_message_text */
+        NULL,                      /* last_message_actor_id */
+        NULL,                      /* last_message_actor_name */
+        NULL,                      /* last_message_type */
+        NULL,                      /* last_message_params_json */
         self);                     /* session */
 
     g_list_store_append (self->conversations, conv);

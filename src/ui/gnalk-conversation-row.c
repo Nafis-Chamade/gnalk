@@ -1,5 +1,7 @@
 #include "gnalk-conversation-row.h"
 #include "gnalk-markdown.h"
+#include "gnalk-session.h"
+#include "gnalk-account.h"
 
 struct _GnalkConversationRow
 {
@@ -8,6 +10,7 @@ struct _GnalkConversationRow
   GtkWidget *avatar;
   GtkWidget *title_label;
   GtkWidget *subtitle_label;
+  GtkWidget *sent_status_icon;
   GtkWidget *status_icon;
   GtkWidget *unread_badge;
 
@@ -25,12 +28,14 @@ struct _GnalkConversationRow
   char  *actor_id;  /* User ID for 1:1 conversations (for avatar loading) */
   gint64 last_activity;
   gint64 last_common_read_message;
+  gint64 last_message_id;
   gint   unread_messages;
   gint   room_type;
   gboolean is_active;
   gboolean is_favorite;
   gboolean can_leave;
   gboolean can_delete;
+  gboolean last_message_is_own;
 
   /* Bound data for in-place updates */
   GnalkConversationData *bound_data;
@@ -179,24 +184,42 @@ gnalk_conversation_row_class_init (GnalkConversationRowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, avatar);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, title_label);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, subtitle_label);
+  gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, sent_status_icon);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, status_icon);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, unread_badge);
 }
 
 static void update_status_indicator (GnalkConversationRow *self);
 
+/* Helper to get current user ID from conversation data's session */
+static const char *
+get_current_user_id (GnalkConversationData *data)
+{
+  GnalkSession *session = gnalk_conversation_data_get_session (data);
+  if (session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (session);
+      if (account)
+        return gnalk_account_get_user_id (account);
+    }
+  return NULL;
+}
+
 /* Callback for in-place data updates */
 static void
 on_data_updated (GnalkConversationData *data,
                  GnalkConversationRow  *self)
 {
+  /* Get current user ID for subtitle formatting */
+  const char *current_user_id = get_current_user_id (data);
+
   /* Re-read values from data and update UI */
   g_free (self->title);
   self->title = g_strdup (gnalk_conversation_data_get_title (data));
   gtk_label_set_text (GTK_LABEL (self->title_label), self->title ? self->title : "");
 
   g_free (self->subtitle);
-  self->subtitle = g_strdup (gnalk_conversation_data_get_subtitle (data));
+  self->subtitle = gnalk_conversation_data_get_subtitle (data, current_user_id);
   if (self->subtitle && *self->subtitle)
     {
       g_autofree char *markup = gnalk_markdown_to_pango (self->subtitle, NULL);
@@ -213,6 +236,11 @@ on_data_updated (GnalkConversationData *data,
   self->last_activity = gnalk_conversation_data_get_last_activity (data);
   self->unread_messages = gnalk_conversation_data_get_unread_messages (data);
   self->is_favorite = gnalk_conversation_data_get_is_favorite (data);
+  self->last_message_id = gnalk_conversation_data_get_last_message_id (data);
+  self->last_message_is_own = gnalk_conversation_data_get_last_message_is_own (data, current_user_id);
+
+  /* Update sent status icon - show only if last message is from current user */
+  gtk_widget_set_visible (self->sent_status_icon, self->last_message_is_own);
 
   /* Update unread badge */
   if (self->unread_messages > 0)
@@ -475,62 +503,61 @@ gnalk_conversation_row_set_data (GnalkConversationRow *self,
   /* Get actorId for user avatar loading (from search results) */
   self->actor_id = g_strdup (json_object_get_string_member_with_default (room_data, "actorId", ""));
 
+  /* Note: This function doesn't have access to session, so we can't determine
+   * if the last message is from the current user. Only used for legacy code paths. */
+  self->last_message_is_own = FALSE;
+  self->last_message_id = 0;
+
   JsonNode *last_message_node = json_object_get_member (room_data, "lastMessage");
   if (last_message_node && JSON_NODE_HOLDS_OBJECT (last_message_node))
     {
       JsonObject *last_message = json_node_get_object (last_message_node);
       const char *message_text = json_object_get_string_member_with_default (last_message, "message", "");
-      const char *message_type = json_object_get_string_member_with_default (last_message, "messageType", "comment");
       const char *actor_name = json_object_get_string_member_with_default (last_message, "actorDisplayName", "");
 
-      if (g_strcmp0 (message_type, "system") == 0)
+      /* Replace {actor} with actor name */
+      g_autofree char *processed = g_strdup (message_text);
+      g_autoptr(GRegex) actor_regex = g_regex_new ("\\{actor\\}", 0, 0, NULL);
+      if (actor_regex && actor_name && *actor_name)
         {
-          /* Start with the original message */
-          self->subtitle = g_strdup (message_text);
+          g_autofree char *tmp = processed;
+          processed = g_regex_replace_literal (actor_regex, tmp, -1, 0, actor_name, 0, NULL);
+          if (!processed)
+            processed = g_strdup (tmp);
+        }
 
-          /* Replace {actor} with actor name */
-          g_autoptr(GRegex) actor_regex = g_regex_new ("\\{actor\\}", 0, 0, NULL);
-          if (actor_regex)
+      /* Parse messageParameters for user1, user2, etc. */
+      if (json_object_has_member (last_message, "messageParameters"))
+        {
+          JsonNode *params_node = json_object_get_member (last_message, "messageParameters");
+          if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
             {
-              g_autofree char *tmp = self->subtitle;
-              self->subtitle = g_regex_replace_literal (actor_regex, tmp, -1, 0, actor_name, 0, NULL);
-              if (!self->subtitle)
-                self->subtitle = g_strdup (tmp);
-            }
-
-          /* Parse messageParameters for user1, user2, etc. (may be [] instead of {}) */
-          if (json_object_has_member (last_message, "messageParameters"))
-            {
-              JsonNode *params_node = json_object_get_member (last_message, "messageParameters");
-              if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
+              JsonObject *params = json_node_get_object (params_node);
+              if (params)
                 {
-                  JsonObject *params = json_node_get_object (params_node);
-                  if (params)
+                  JsonObjectIter iter;
+                  const char *param_key;
+                  JsonNode *param_node;
+
+                  json_object_iter_init (&iter, params);
+                  while (json_object_iter_next (&iter, &param_key, &param_node))
                     {
-                      JsonObjectIter iter;
-                      const char *param_key;
-                      JsonNode *param_node;
-
-                      json_object_iter_init (&iter, params);
-                      while (json_object_iter_next (&iter, &param_key, &param_node))
+                      if (JSON_NODE_HOLDS_OBJECT (param_node))
                         {
-                          if (JSON_NODE_HOLDS_OBJECT (param_node))
+                          JsonObject *param_obj = json_node_get_object (param_node);
+                          const char *name = json_object_get_string_member_with_default (param_obj, "name", NULL);
+
+                          if (name)
                             {
-                              JsonObject *param_obj = json_node_get_object (param_node);
-                              const char *name = json_object_get_string_member_with_default (param_obj, "name", NULL);
+                              g_autofree char *pattern = g_strdup_printf ("\\{%s\\}", param_key);
+                              g_autoptr(GRegex) param_regex = g_regex_new (pattern, 0, 0, NULL);
 
-                              if (name)
+                              if (param_regex)
                                 {
-                                  g_autofree char *pattern = g_strdup_printf ("\\{%s\\}", param_key);
-                                  g_autoptr(GRegex) param_regex = g_regex_new (pattern, 0, 0, NULL);
-
-                                  if (param_regex)
-                                    {
-                                      g_autofree char *tmp = self->subtitle;
-                                      self->subtitle = g_regex_replace_literal (param_regex, tmp, -1, 0, name, 0, NULL);
-                                      if (!self->subtitle)
-                                        self->subtitle = g_strdup (tmp);
-                                    }
+                                  g_autofree char *tmp = processed;
+                                  processed = g_regex_replace_literal (param_regex, tmp, -1, 0, name, 0, NULL);
+                                  if (!processed)
+                                    processed = g_strdup (tmp);
                                 }
                             }
                         }
@@ -538,10 +565,13 @@ gnalk_conversation_row_set_data (GnalkConversationRow *self,
                 }
             }
         }
+
+      /* Extract only the first line */
+      const char *newline = strchr (processed, '\n');
+      if (newline)
+        self->subtitle = g_strndup (processed, newline - processed);
       else
-        {
-          self->subtitle = g_strdup (message_text);
-        }
+        self->subtitle = g_strdup (processed);
     }
   else
     self->subtitle = g_strdup ("");
@@ -560,6 +590,9 @@ gnalk_conversation_row_set_data (GnalkConversationRow *self,
     {
       gtk_label_set_text (GTK_LABEL (self->subtitle_label), "");
     }
+
+  /* Hide sent status icon (no session to determine ownership) */
+  gtk_widget_set_visible (self->sent_status_icon, FALSE);
 
   /* Apply/remove unread CSS class and update badge */
   if (self->unread_messages > 0)
@@ -673,6 +706,9 @@ gnalk_conversation_row_set_from_data (GnalkConversationRow  *self,
   self->updated_handler_id = g_signal_connect (data, "updated",
                                                 G_CALLBACK (on_data_updated), self);
 
+  /* Get current user ID for subtitle formatting */
+  const char *current_user_id = get_current_user_id (data);
+
   g_free (self->token);
   g_free (self->title);
   g_free (self->name);
@@ -683,7 +719,7 @@ gnalk_conversation_row_set_from_data (GnalkConversationRow  *self,
   self->token = g_strdup (gnalk_conversation_data_get_token (data));
   self->title = g_strdup (gnalk_conversation_data_get_title (data));
   self->name = g_strdup (gnalk_conversation_data_get_name (data));
-  self->subtitle = g_strdup (gnalk_conversation_data_get_subtitle (data));
+  self->subtitle = gnalk_conversation_data_get_subtitle (data, current_user_id);
   self->user_status = g_strdup (gnalk_conversation_data_get_user_status (data));
   self->actor_id = g_strdup (gnalk_conversation_data_get_actor_id (data));
   self->room_type = gnalk_conversation_data_get_room_type (data);
@@ -693,6 +729,8 @@ gnalk_conversation_row_set_from_data (GnalkConversationRow  *self,
   self->is_favorite = gnalk_conversation_data_get_is_favorite (data);
   self->can_leave = gnalk_conversation_data_get_can_leave (data);
   self->can_delete = gnalk_conversation_data_get_can_delete (data);
+  self->last_message_id = gnalk_conversation_data_get_last_message_id (data);
+  self->last_message_is_own = gnalk_conversation_data_get_last_message_is_own (data, current_user_id);
 
   gtk_label_set_text (GTK_LABEL (self->title_label), self->title ? self->title : "");
   if (self->subtitle && *self->subtitle)
@@ -704,6 +742,9 @@ gnalk_conversation_row_set_from_data (GnalkConversationRow  *self,
     {
       gtk_label_set_text (GTK_LABEL (self->subtitle_label), "");
     }
+
+  /* Update sent status icon - show only if last message is from current user */
+  gtk_widget_set_visible (self->sent_status_icon, self->last_message_is_own);
 
   /* Apply/remove unread CSS class and update badge */
   if (self->unread_messages > 0)
@@ -757,13 +798,16 @@ gnalk_conversation_row_reset (GnalkConversationRow *self)
 
   self->last_activity = 0;
   self->last_common_read_message = 0;
+  self->last_message_id = 0;
   self->unread_messages = 0;
   self->room_type = 0;
   self->is_active = FALSE;
+  self->last_message_is_own = FALSE;
 
   gtk_label_set_text (GTK_LABEL (self->title_label), "");
   gtk_label_set_text (GTK_LABEL (self->subtitle_label), "");
   gtk_widget_set_visible (self->unread_badge, FALSE);
+  gtk_widget_set_visible (self->sent_status_icon, FALSE);
   gtk_widget_set_visible (self->status_icon, FALSE);
   gtk_widget_remove_css_class (GTK_WIDGET (self), "conversation-unread");
   gtk_widget_remove_css_class (GTK_WIDGET (self), "conversation-active");

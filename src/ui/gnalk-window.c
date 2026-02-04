@@ -558,6 +558,11 @@ gnalk_window_on_session_signaling_ready (GnalkSession *session,
         gnalk_session_join_room (self->active_session, self->pending_room_token);
       g_clear_pointer (&self->pending_room_token, g_free);
     }
+  /* Also join the current room if we have one (e.g., from immediate restore at startup) */
+  else if (self->current_room_token && self->has_active_room && self->active_session)
+    {
+      gnalk_session_join_room (self->active_session, self->current_room_token);
+    }
 
   /* Update call button now that signaling is ready */
   gnalk_window_update_call_button_state (self);

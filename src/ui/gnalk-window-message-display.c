@@ -277,6 +277,25 @@ load_messages_from_db_finish (GObject      *source_object,
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
   const char *current_user = app ? gnalk_application_get_user_id (app) : NULL;
 
+  /* If last_read_message_id is not set (e.g., immediate restore at startup),
+   * look it up from the conversation data now that conversations are loaded */
+  if (self->last_read_message_id == 0 && self->current_room_token)
+    {
+      guint n_convos = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+      for (guint i = 0; i < n_convos; i++)
+        {
+          GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
+          const char *conv_token = gnalk_conversation_data_get_token (conv);
+          if (conv_token && g_strcmp0 (conv_token, self->current_room_token) == 0)
+            {
+              self->last_read_message_id = gnalk_conversation_data_get_last_read_message (conv);
+              g_object_unref (conv);
+              break;
+            }
+          g_object_unref (conv);
+        }
+    }
+
   /* Reset first_unread_message_id before populating */
   self->first_unread_message_id = 0;
 
