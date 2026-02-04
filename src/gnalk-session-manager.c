@@ -5,9 +5,11 @@ struct _GnalkSessionManager
 {
   GObject parent_instance;
 
-  GnalkAccountManager *account_manager;
-  GnalkDatabase       *database;
-  GnalkNetworkMonitor *network_monitor;
+  GnalkAccountManager      *account_manager;
+  GnalkDatabase            *database;
+  GnalkNetworkMonitor      *network_monitor;
+  GnalkDataRepository      *data_repository;       /* Shared, not owned */
+  GnalkNotificationService *notification_service;  /* Shared, not owned */
 
   GHashTable    *sessions;       /* gint64 account_id -> GnalkSession */
   GnalkSession *active_session;
@@ -156,19 +158,25 @@ update_global_unread (GnalkSessionManager *self)
 
 /* Constructor */
 GnalkSessionManager *
-gnalk_session_manager_new (GnalkAccountManager *account_manager,
-                             GnalkDatabase       *database,
-                             GnalkNetworkMonitor *network_monitor)
+gnalk_session_manager_new (GnalkAccountManager      *account_manager,
+                           GnalkDatabase            *database,
+                           GnalkNetworkMonitor      *network_monitor,
+                           GnalkDataRepository      *data_repository,
+                           GnalkNotificationService *notification_service)
 {
   g_return_val_if_fail (GNALK_IS_ACCOUNT_MANAGER (account_manager), NULL);
   g_return_val_if_fail (GNALK_IS_DATABASE (database), NULL);
   g_return_val_if_fail (GNALK_IS_NETWORK_MONITOR (network_monitor), NULL);
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (data_repository), NULL);
+  g_return_val_if_fail (GNALK_IS_NOTIFICATION_SERVICE (notification_service), NULL);
 
   GnalkSessionManager *self = g_object_new (GNALK_TYPE_SESSION_MANAGER, NULL);
 
   self->account_manager = g_object_ref (account_manager);
   self->database = g_object_ref (database);
   self->network_monitor = g_object_ref (network_monitor);
+  self->data_repository = data_repository;  /* Not owned */
+  self->notification_service = notification_service;  /* Not owned */
 
   return self;
 }
@@ -227,7 +235,8 @@ gnalk_session_manager_start_session (GnalkSessionManager *self,
     }
 
   /* Create new session */
-  GnalkSession *session = gnalk_session_new (account, self->database, self->network_monitor);
+  GnalkSession *session = gnalk_session_new (account, self->database, self->network_monitor,
+                                             self->data_repository, self->notification_service);
 
   /* Store in hash table */
   gint64 *key = g_new (gint64, 1);
@@ -445,8 +454,9 @@ gnalk_session_manager_start_guest_session (GnalkSessionManager *self,
 
   /* Create guest session */
   GnalkSession *session = gnalk_session_new_guest (server_url, room_token, display_name,
-                                                      room_password,
-                                                      self->database, self->network_monitor);
+                                                   room_password,
+                                                   self->database, self->network_monitor,
+                                                   self->data_repository, self->notification_service);
   self->guest_session = session;
 
   /* Connect signals */

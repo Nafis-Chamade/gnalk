@@ -432,19 +432,8 @@ on_user_info_response (GnalkHttpClient *client,
       const char *display_name = json_object_get_string_member_with_default (data, "displayname", "");
 
       GtkWindow *win = GTK_WINDOW (gtk_widget_get_root (GTK_WIDGET (self)));
-      if (win)
-        {
-          GApplication *app = G_APPLICATION (gtk_window_get_application (win));
-          if (GNALK_IS_APPLICATION (app))
-            {
-              const char *server = gtk_editable_get_text (GTK_EDITABLE (self->server_entry));
-              const char *user = gtk_editable_get_text (GTK_EDITABLE (self->user_entry));
-              const char *password = gtk_editable_get_text (GTK_EDITABLE (self->password_entry));
-
-              gnalk_application_set_credentials (GNALK_APPLICATION (app), server, user, password);
-              gnalk_application_set_user_name (GNALK_APPLICATION (app), display_name);
-            }
-        }
+      /* Credentials are stored in Account, not Application */
+      (void) win;
     }
 
   self->step = 3;
@@ -782,11 +771,7 @@ on_guest_name_response (GnalkHttpClient *client,
     {
       GApplication *app = G_APPLICATION (gtk_window_get_application (win));
       if (GNALK_IS_APPLICATION (app))
-        {
-          const char *display_name = gtk_editable_get_text (GTK_EDITABLE (self->display_name_entry));
-          gnalk_application_set_user_name (GNALK_APPLICATION (app), display_name);
-          gnalk_application_set_guest_mode (GNALK_APPLICATION (app), TRUE, self->room_token);
-        }
+        gnalk_application_set_guest_mode (GNALK_APPLICATION (app), TRUE, self->room_token);
     }
 
   /* Get signaling settings for calls */

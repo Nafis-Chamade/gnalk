@@ -7,9 +7,12 @@
 #include "gnalk-http-client.h"
 #include "gnalk-signaling.h"
 #include "gnalk-sync-manager.h"
+#include "gnalk-sync-coordinator.h"
 #include "gnalk-database.h"
 #include "gnalk-network-monitor.h"
 #include "gnalk-conversation-data.h"
+#include "gnalk-data-repository.h"
+#include "gnalk-notification-service.h"
 
 G_BEGIN_DECLS
 
@@ -80,16 +83,20 @@ typedef enum {
  *     Emitted when typing indicator changes
  */
 
-GnalkSession *gnalk_session_new (GnalkAccount        *account,
-                                     GnalkDatabase       *database,
-                                     GnalkNetworkMonitor *network_monitor);
+GnalkSession *gnalk_session_new (GnalkAccount             *account,
+                                GnalkDatabase            *database,
+                                GnalkNetworkMonitor      *network_monitor,
+                                GnalkDataRepository      *data_repository,
+                                GnalkNotificationService *notification_service);
 
-GnalkSession *gnalk_session_new_guest (const char          *server_url,
-                                            const char          *room_token,
-                                            const char          *display_name,
-                                            const char          *room_password,
-                                            GnalkDatabase       *database,
-                                            GnalkNetworkMonitor *network_monitor);
+GnalkSession *gnalk_session_new_guest (const char               *server_url,
+                                       const char               *room_token,
+                                       const char               *display_name,
+                                       const char               *room_password,
+                                       GnalkDatabase            *database,
+                                       GnalkNetworkMonitor      *network_monitor,
+                                       GnalkDataRepository      *data_repository,
+                                       GnalkNotificationService *notification_service);
 
 /* State queries */
 GnalkSessionState gnalk_session_get_state (GnalkSession *self);
@@ -136,9 +143,10 @@ void gnalk_session_send_file (GnalkSession *self,
                                 const char    *reference_id);
 
 /* Internal component access (for call window, etc.) */
-GnalkHttpClient  *gnalk_session_get_http_client  (GnalkSession *self);
-GnalkSignaling   *gnalk_session_get_signaling    (GnalkSession *self);
-GnalkSyncManager *gnalk_session_get_sync_manager (GnalkSession *self);
+GnalkHttpClient      *gnalk_session_get_http_client      (GnalkSession *self);
+GnalkSignaling       *gnalk_session_get_signaling        (GnalkSession *self);
+GnalkSyncManager     *gnalk_session_get_sync_manager     (GnalkSession *self);
+GnalkSyncCoordinator *gnalk_session_get_sync_coordinator (GnalkSession *self);
 
 /* Signaling settings (set after auth, used for connecting signaling) */
 void gnalk_session_set_signaling_settings (GnalkSession *self,

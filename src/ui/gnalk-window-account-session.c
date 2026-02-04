@@ -54,8 +54,15 @@ disconnect_session_signals (GnalkWindow  *self G_GNUC_UNUSED,
 
 void
 gnalk_window_switch_to_session (GnalkWindow  *self,
-                                 GnalkSession *session)
+                                GnalkSession *session)
 {
+  /* Disconnect from old sync coordinator signals */
+  if (self->connected_sync_coordinator)
+    {
+      g_signal_handlers_disconnect_by_data (self->connected_sync_coordinator, self);
+      self->connected_sync_coordinator = NULL;
+    }
+
   /* Disconnect from old session */
   if (self->active_session)
     disconnect_session_signals (self, self->active_session);
@@ -89,6 +96,20 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   self->signaling = gnalk_session_get_signaling (session);
   self->sync_manager = gnalk_session_get_sync_manager (session);
 
+  /* Connect to session's sync coordinator for message/conversation update signals */
+  GnalkSyncCoordinator *coordinator = gnalk_session_get_sync_coordinator (session);
+  if (coordinator)
+    {
+      g_signal_connect_object (coordinator, "room-messages-synced",
+                               G_CALLBACK (gnalk_window_on_sync_coordinator_room_messages_synced), self,
+                               G_CONNECT_DEFAULT);
+      g_signal_connect_object (coordinator, "conversations-synced",
+                               G_CALLBACK (gnalk_window_on_sync_coordinator_conversations_synced), self,
+                               G_CONNECT_DEFAULT);
+      self->connected_sync_coordinator = coordinator;
+      g_debug ("Window: Connected to session's sync coordinator signals");
+    }
+
   /* Connect window handlers to session's signaling */
   if (self->signaling)
     {
@@ -115,7 +136,9 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       {
         GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
         gint64 account_id = gnalk_session_get_account_id (session);
-        const char *user_id = gnalk_application_get_user_id (app);
+        /* Get user_id from session's account, not application (multi-account fix) */
+        GnalkAccount *account = gnalk_session_get_account (session);
+        const char *user_id = gnalk_account_get_user_id (account);
         gnalk_message_controller_set_repository (self->message_controller, repo, account_id);
         gnalk_message_controller_set_current_user (self->message_controller, user_id);
       }

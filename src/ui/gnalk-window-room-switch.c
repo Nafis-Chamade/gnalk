@@ -333,7 +333,12 @@ gnalk_window_load_participants (GnalkWindow *self, const char *token)
   /* Load cached participants for immediate display */
   GnalkDatabase *db = gnalk_application_get_database (app);
   gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
-  const char *my_user_id = gnalk_application_get_user_id (app);
+  const char *my_user_id = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      my_user_id = gnalk_account_get_user_id (account);
+    }
 
   g_debug ("load_participants: token=%s, account_id=%ld, room_type=%d",
            token, (long)account_id, self->current_room_type);
@@ -901,7 +906,12 @@ gnalk_window_maybe_restore_last_room (GnalkWindow *self)
               JsonArray *cached_participants = gnalk_database_load_participants (db, account_id, token);
               if (cached_participants && json_array_get_length (cached_participants) > 0)
                 {
-                  const char *my_user_id = gnalk_application_get_user_id (app);
+                  const char *my_user_id = NULL;
+                  if (self->active_session)
+                    {
+                      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+                      my_user_id = gnalk_account_get_user_id (account);
+                    }
                   gint my_participant_type = gnalk_conversation_data_get_participant_type (conv);
                   gnalk_participants_list_set_participants (self->participants_list, cached_participants,
                                                               self->avatar_cache, NULL, my_user_id,

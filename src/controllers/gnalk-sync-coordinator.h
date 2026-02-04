@@ -151,4 +151,12 @@ void gnalk_sync_coordinator_set_window_focused (GnalkSyncCoordinator *self,
  */
 gboolean gnalk_sync_coordinator_is_syncing (GnalkSyncCoordinator *self);
 
+/**
+ * gnalk_sync_coordinator_get_account_id:
+ * @self: The sync coordinator
+ *
+ * Returns: The account ID currently configured for sync operations
+ */
+gint64 gnalk_sync_coordinator_get_account_id (GnalkSyncCoordinator *self);
+
 G_END_DECLS

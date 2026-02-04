@@ -67,10 +67,6 @@ static void on_set_status_response (GnalkHttpClient *client, JsonNode *response,
 /* AppState signal handlers (new async startup architecture) */
 static void on_app_state_loading_changed (GnalkAppState *app_state, gboolean is_loading, GnalkWindow *self);
 
-/* Sync coordinator signal handlers */
-static void on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator, const char *room_token, guint count, gpointer user_data);
-static void on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator, gpointer user_data);
-
 /* Session signal handlers - connected by gnalk-window-account-session.c, implemented here.
  * Declarations are in gnalk-window-private.h for use by account-session.c */
 
@@ -240,26 +236,8 @@ on_app_state_loading_changed (GnalkAppState *app_state G_GNUC_UNUSED,
   if (self->connecting_spinner)
     gtk_widget_set_visible (self->connecting_spinner, is_loading);
 
-  /* When async loading completes, connect to sync coordinator for message notifications.
-   * We do this here because sync_coordinator is created during async initialization,
-   * which happens AFTER the window is constructed. The window's initial connection
-   * attempt in constructed() will fail because sync_coordinator doesn't exist yet. */
-  if (!is_loading && !self->sync_coordinator_connected)
-    {
-      GtkApplication *app = gtk_window_get_application (GTK_WINDOW (self));
-      GnalkSyncCoordinator *coordinator = gnalk_application_get_sync_coordinator (GNALK_APPLICATION (app));
-      if (coordinator)
-        {
-          g_signal_connect_object (coordinator, "room-messages-synced",
-                                   G_CALLBACK (on_sync_coordinator_room_messages_synced), self,
-                                   G_CONNECT_DEFAULT);
-          g_signal_connect_object (coordinator, "conversations-synced",
-                                   G_CALLBACK (on_sync_coordinator_conversations_synced), self,
-                                   G_CONNECT_DEFAULT);
-          self->sync_coordinator_connected = TRUE;
-          g_debug ("Window: Connected to sync coordinator signals");
-        }
-    }
+  /* Sync coordinator connection is now handled in switch_to_session when
+   * attaching to a session. Each session has its own sync coordinator. */
 }
 
 /* ============ Session Signal Handlers ============
@@ -329,20 +307,10 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
             const char *push_url = gnalk_application_get_push_websocket_url (app);
             const char *server_url = account ? gnalk_account_get_server_url (account) : NULL;
 
-            /* Get password - try application first, then fall back to keyring */
-            const char *app_password = gnalk_application_get_password (app);
-            g_autofree char *keyring_password = NULL;
-            const char *password = app_password;
-
-            if (!password && server_url && user_id)
-              {
-                keyring_password = gnalk_keyring_lookup_password_sync (server_url, user_id, NULL);
-                password = keyring_password;
-              }
-
-            /* Set app-level credentials for background sync service */
-            if (server_url && user_id && password)
-              gnalk_application_set_credentials (app, server_url, user_id, password);
+            /* Get password from keyring */
+            g_autofree char *password = NULL;
+            if (server_url && user_id)
+              password = gnalk_keyring_lookup_password_sync (server_url, user_id, NULL);
 
             g_message ("PUSH: Checking push client connection - url='%s', user='%s', has_password=%d",
                        push_url ? push_url : "(null)", user_id ? user_id : "(null)", password != NULL);
@@ -833,8 +801,12 @@ on_conversation_info_requested (GnalkConversationHeader *header G_GNUC_UNUSED,
   gnalk_conversation_info_dialog_set_conversation (dialog, conversation);
 
   /* Set my_user_id for context menu permission checks */
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  const char *my_user_id = gnalk_application_get_user_id (app);
+  const char *my_user_id = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      my_user_id = gnalk_account_get_user_id (account);
+    }
   gnalk_conversation_info_dialog_set_my_user_id (dialog, my_user_id);
 
   g_signal_connect (dialog, "media-clicked",
@@ -1459,7 +1431,12 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
   GnalkDatabase *db = gnalk_application_get_database (app);
   gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
-  const char *my_user_id = gnalk_application_get_user_id (app);
+  const char *my_user_id = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      my_user_id = gnalk_account_get_user_id (account);
+    }
 
   g_debug ("on_participant_controller_changed: room=%s, account_id=%ld", room_token, (long)account_id);
 
@@ -3235,18 +3212,19 @@ on_window_is_active_changed (GObject    *object,
   self->was_active = is_active;
 }
 
-/* Sync coordinator notification - refresh messages when room synced */
-static void
-on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
-                                          const char           *room_token,
-                                          guint                 count,
-                                          gpointer              user_data)
+/* Sync coordinator notification - refresh messages when room synced.
+ * Connected by gnalk-window-account-session.c to the active session's coordinator. */
+void
+gnalk_window_on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
+                                                       const char           *room_token,
+                                                       guint                 count,
+                                                       gpointer              user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  g_message ("SyncCoordinator: room %s synced (%u messages), refreshing UI", room_token, count);
+  g_message ("SyncCoordinator: room %s synced (%u messages)", room_token, count);
 
-  /* Reload conversation list from cache (sync coordinator already updated DB) */
+  /* Reload conversation list to show updated last message/unread count */
   gnalk_window_load_conversations_from_db (self);
 
   /* If we're viewing this room, reload messages from DB to show the new ones */
@@ -3258,16 +3236,16 @@ on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GN
   else if (self->tab_manager && gnalk_room_tab_manager_has_tab (self->tab_manager, room_token))
     {
       /* Room has a tab but is not the active room - the tab's store will be
-       * refreshed from DB when the user switches to it. We don't need to
-       * do anything here since the tab system handles this on foreground. */
+       * refreshed from DB when the user switches to it. */
       g_debug ("SyncCoordinator: room %s has background tab, will refresh on switch", room_token);
     }
 }
 
-/* Sync coordinator notification - refresh conversations list when synced */
-static void
-on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
-                                          gpointer              user_data)
+/* Sync coordinator notification - refresh conversations list when synced.
+ * Connected by gnalk-window-account-session.c to the active session's coordinator. */
+void
+gnalk_window_on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
+                                                       gpointer              user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
@@ -3413,22 +3391,8 @@ gnalk_window_init (GnalkWindow *self)
   /* Get push_client from application (shared for service mode support) */
   self->push_client = gnalk_application_get_push_client (GNALK_APPLICATION (app));
 
-  /* Connect to sync coordinator for message refresh notifications.
-   * Use g_signal_connect_object so the handler is automatically disconnected
-   * when the window is destroyed (sync coordinator outlives the window).
-   * NOTE: coordinator may be NULL here if async initialization hasn't completed yet.
-   * In that case, the connection will be made in on_app_state_loading_changed. */
-  GnalkSyncCoordinator *coordinator = gnalk_application_get_sync_coordinator (GNALK_APPLICATION (app));
-  if (coordinator && !self->sync_coordinator_connected)
-    {
-      g_signal_connect_object (coordinator, "room-messages-synced",
-                               G_CALLBACK (on_sync_coordinator_room_messages_synced), self,
-                               G_CONNECT_DEFAULT);
-      g_signal_connect_object (coordinator, "conversations-synced",
-                               G_CALLBACK (on_sync_coordinator_conversations_synced), self,
-                               G_CONNECT_DEFAULT);
-      self->sync_coordinator_connected = TRUE;
-    }
+  /* Sync coordinator connection is now handled in switch_to_session when
+   * attaching to a session. Each session has its own sync coordinator. */
 
   /* Track window focus for notification decisions */
   g_signal_connect (self, "notify::is-active",
@@ -3441,12 +3405,12 @@ gnalk_window_init (GnalkWindow *self)
   /* Create message controller (will be recreated in switch_to_session with correct account) */
   self->message_controller = gnalk_message_controller_new (self->http_client);
 
-  /* Set up database integration for MessageController - account_id=0 until session switch */
+  /* Set up database integration for MessageController - placeholder until session switch.
+   * The message controller will be recreated with correct account in switch_to_session. */
   {
     GnalkDataRepository *repo = gnalk_application_get_data_repository (GNALK_APPLICATION (app));
-    const char *user_id = gnalk_application_get_user_id (GNALK_APPLICATION (app));
     gnalk_message_controller_set_repository (self->message_controller, repo, 0);
-    gnalk_message_controller_set_current_user (self->message_controller, user_id);
+    gnalk_message_controller_set_current_user (self->message_controller, NULL);
   }
 
   g_signal_connect (self->message_controller, "message-sent",

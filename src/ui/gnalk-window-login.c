@@ -205,9 +205,6 @@ on_login_view_goa_account_selected (GnalkLoginView *view G_GNUC_UNUSED,
   g_settings_set_string (settings, "last-server-url", server_url);
   g_settings_set_string (settings, "last-user-id", user_id);
 
-  /* Set credentials in application */
-  gnalk_application_set_credentials (app, server_url, user_id, password);
-
   /* Start session via SessionManager */
   GnalkSession *session = gnalk_session_manager_start_session (self->session_manager, account, password);
   if (session)
@@ -273,9 +270,6 @@ gnalk_window_start_login (GnalkWindow *self)
   g_settings_set_boolean (settings, "autologin-enabled", TRUE);
   g_settings_set_string (settings, "last-server-url", server);
   g_settings_set_string (settings, "last-user-id", user);
-
-  /* Set credentials in application (for components that still need it) */
-  gnalk_application_set_credentials (app, server, user, password);
 
   /* Start session via SessionManager - state changes will update UI.
    * Make the new session active since user explicitly logged in with these credentials. */
@@ -362,7 +356,6 @@ gnalk_window_start_guest_login (GnalkWindow *self)
   /* Set guest mode in application */
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
   gnalk_application_set_guest_mode (app, TRUE, room_token);
-  gnalk_application_set_user_name (app, display_name);
 
   /* Start guest session via SessionManager */
   GnalkSession *session = gnalk_session_manager_start_guest_session (
@@ -398,13 +391,14 @@ gnalk_window_show_login_view (GnalkWindow *self)
   refresh_goa_accounts_list (self);
 #endif /* HAVE_GOA */
 
-  /* Pre-fill defaults from application */
-  const char *server_url = gnalk_application_get_server_url (app);
-  const char *user_id = gnalk_application_get_user_id (app);
+  /* Pre-fill defaults from settings (last used values) */
+  GSettings *settings = gnalk_application_get_settings (app);
+  g_autofree char *server_url = g_settings_get_string (settings, "last-server-url");
+  g_autofree char *user_id = g_settings_get_string (settings, "last-user-id");
 
-  if (server_url)
+  if (server_url && *server_url)
     gnalk_login_view_set_server (self->login_view, server_url);
-  if (user_id)
+  if (user_id && *user_id)
     gnalk_login_view_set_user (self->login_view, user_id);
 
   gtk_stack_set_visible_child_name (GTK_STACK (self->main_stack), "login");

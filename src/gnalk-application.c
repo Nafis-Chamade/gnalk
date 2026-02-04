@@ -18,10 +18,6 @@ struct _GnalkApplication
   AdwApplication parent_instance;
 
   GSettings *settings;
-  char      *server_url;
-  char      *user_id;
-  char      *user_name;
-  char      *password;
   char      *signaling_server;
   char      *signaling_ticket;
   char      *stun_server;
@@ -59,7 +55,6 @@ struct _GnalkApplication
   GnalkPushClient          *push_client;
   GnalkNotificationService *notification_service;
   GnalkHttpClient          *http_client;  /* App-level HTTP client for service mode */
-  GnalkSyncCoordinator     *sync_coordinator;
   char                      *pending_open_room;  /* Room to open when window is created */
 
   /* Async startup tracking */
@@ -355,10 +350,9 @@ on_app_push_notification (GnalkPushClient *client G_GNUC_UNUSED,
   if (g_strcmp0 (notification_type, "notify_notification") == 0 ||
       g_strcmp0 (notification_type, "notify_activity") == 0)
     {
-      /* Trigger sync for ALL online sessions, not just one.
-       * This ensures multi-account setups get updates regardless of which
-       * account the push notification is for. */
-      if (!self->sync_coordinator || !self->session_manager)
+      /* Trigger sync for ALL online sessions.
+       * Each session owns its own sync coordinator. */
+      if (!self->session_manager)
         return;
 
       GList *sessions = gnalk_session_manager_get_all_sessions (self->session_manager);
@@ -372,16 +366,13 @@ on_app_push_notification (GnalkPushClient *client G_GNUC_UNUSED,
           if (gnalk_session_is_guest (session))
             continue;
 
-          GnalkAccount *account = gnalk_session_get_account (session);
-          gint64 account_id = gnalk_account_get_id (account);
-          const char *user_id = gnalk_account_get_user_id (account);
-          GnalkHttpClient *http_client = gnalk_session_get_http_client (session);
-
-          g_message ("App: Triggering sync for account %s (push)", user_id);
-
-          gnalk_sync_coordinator_set_http_client (self->sync_coordinator, http_client);
-          gnalk_sync_coordinator_set_account (self->sync_coordinator, account_id, user_id);
-          gnalk_sync_coordinator_trigger (self->sync_coordinator, GNALK_SYNC_TRIGGER_PUSH);
+          GnalkSyncCoordinator *coordinator = gnalk_session_get_sync_coordinator (session);
+          if (coordinator)
+            {
+              const char *user_id = gnalk_account_get_user_id (gnalk_session_get_account (session));
+              g_message ("App: Triggering sync for account %s (push)", user_id);
+              gnalk_sync_coordinator_trigger (coordinator, GNALK_SYNC_TRIGGER_PUSH);
+            }
         }
       g_list_free (sessions);
     }
@@ -422,11 +413,6 @@ gnalk_application_startup (GApplication *app)
   apply_color_scheme (self);
   g_signal_connect (self->settings, "changed::color-scheme",
                     G_CALLBACK (on_color_scheme_changed), self);
-
-  g_free (self->server_url);
-  g_free (self->user_id);
-  self->server_url = g_settings_get_string (self->settings, "last-server-url");
-  self->user_id = g_settings_get_string (self->settings, "last-user-id");
 
   /* Initialize network monitor - this is quick, synchronous is fine */
   self->network_monitor = gnalk_network_monitor_new ();
@@ -517,8 +503,10 @@ on_database_opened (GnalkDataRepository *repository G_GNUC_UNUSED,
 
   /* Initialize session manager */
   self->session_manager = gnalk_session_manager_new (self->account_manager,
-                                                        self->database,
-                                                        self->network_monitor);
+                                                     self->database,
+                                                     self->network_monitor,
+                                                     self->data_repository,
+                                                     self->notification_service);
 
   /* Connect session manager signals to update app state */
   g_signal_connect (self->session_manager, "conversations-changed",
@@ -528,15 +516,8 @@ on_database_opened (GnalkDataRepository *repository G_GNUC_UNUSED,
 
   /* Create room controller */
   self->room_controller = gnalk_room_controller_new (self->app_state,
-                                                        self->data_repository,
-                                                        self->session_manager);
-
-  /* Initialize sync coordinator (needs repository) */
-  self->sync_coordinator = gnalk_sync_coordinator_new (self->data_repository,
-                                                       self->notification_service);
-
-  /* Start periodic sync */
-  gnalk_sync_coordinator_start_periodic_sync (self->sync_coordinator);
+                                                     self->data_repository,
+                                                     self->session_manager);
 
   /* Set up push notification callback at application level */
   gnalk_push_client_set_notification_callback (self->push_client,
@@ -575,44 +556,20 @@ on_session_conversations_changed (GnalkSessionManager *manager G_GNUC_UNUSED,
 
 static void
 on_session_online_changed (GnalkSessionManager *manager,
-                             GnalkSession        *session,
-                             int                   old_state G_GNUC_UNUSED,
-                             int                   new_state,
-                             GnalkApplication    *self)
+                           GnalkSession        *session G_GNUC_UNUSED,
+                           int                  old_state G_GNUC_UNUSED,
+                           int                  new_state G_GNUC_UNUSED,
+                           GnalkApplication    *self)
 {
-  /* Update online status based on any session being online */
+  /* Update online status based on any session being online.
+   * Sync is now handled by each session's own SyncCoordinator. */
   gboolean any_online = gnalk_session_manager_has_any_online (manager);
   gnalk_app_state_set_online (self->app_state, any_online);
-
-  /* Trigger sync when a session goes online (not for guests) */
-  if (new_state == GNALK_SESSION_STATE_ONLINE &&
-      self->sync_coordinator &&
-      !gnalk_session_is_guest (session))
-    {
-      GnalkAccount *account = gnalk_session_get_account (session);
-      gint64 account_id = gnalk_account_get_id (account);
-      const char *user_id = gnalk_account_get_user_id (account);
-
-      /* Use the session's HTTP client which already has credentials configured */
-      GnalkHttpClient *http_client = gnalk_session_get_http_client (session);
-
-      gnalk_sync_coordinator_set_http_client (self->sync_coordinator, http_client);
-      gnalk_sync_coordinator_set_account (self->sync_coordinator, account_id, user_id);
-      gnalk_sync_coordinator_trigger (self->sync_coordinator, GNALK_SYNC_TRIGGER_RECONNECT);
-      g_message ("Triggered initial sync for account %s (reconnect)", user_id);
-    }
 }
 
 static void
 gnalk_application_shutdown (GApplication *app)
 {
-  GnalkApplication *self = GNALK_APPLICATION (app);
-
-  if (self->server_url)
-    g_settings_set_string (self->settings, "last-server-url", self->server_url);
-  if (self->user_id)
-    g_settings_set_string (self->settings, "last-user-id", self->user_id);
-
   G_APPLICATION_CLASS (gnalk_application_parent_class)->shutdown (app);
 }
 
@@ -622,7 +579,6 @@ gnalk_application_finalize (GObject *object)
   GnalkApplication *self = GNALK_APPLICATION (object);
 
   g_clear_object (&self->notification_service);
-  g_clear_object (&self->sync_coordinator);
   g_clear_object (&self->http_client);
   g_clear_object (&self->push_client);
   g_clear_object (&self->room_controller);
@@ -634,10 +590,6 @@ gnalk_application_finalize (GObject *object)
   g_clear_object (&self->app_state);
   g_clear_object (&self->network_monitor);
   g_clear_object (&self->settings);
-  g_free (self->server_url);
-  g_free (self->user_id);
-  g_free (self->user_name);
-  g_free (self->password);
   g_free (self->signaling_server);
   g_free (self->signaling_ticket);
   g_free (self->stun_server);
@@ -666,10 +618,8 @@ gnalk_application_class_init (GnalkApplicationClass *klass)
 }
 
 static void
-gnalk_application_init (GnalkApplication *self)
+gnalk_application_init (GnalkApplication *self G_GNUC_UNUSED)
 {
-  self->server_url = g_strdup ("");
-  self->user_id = g_strdup ("");
 }
 
 GnalkApplication *
@@ -681,72 +631,8 @@ gnalk_application_new (void)
                        NULL);
 }
 
-const char *
-gnalk_application_get_server_url (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->server_url;
-}
-
-const char *
-gnalk_application_get_user_id (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->user_id;
-}
-
-const char *
-gnalk_application_get_user_name (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->user_name;
-}
-
-const char *
-gnalk_application_get_password (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->password;
-}
-
-void
-gnalk_application_set_credentials (GnalkApplication *self,
-                                    const char        *server_url,
-                                    const char        *user_id,
-                                    const char        *password)
-{
-  g_return_if_fail (GNALK_IS_APPLICATION (self));
-
-  g_free (self->server_url);
-  g_free (self->user_id);
-  g_free (self->password);
-
-  self->server_url = g_strdup (server_url);
-  self->user_id = g_strdup (user_id);
-  self->password = g_strdup (password);
-
-  /* Update account ID in database */
-  if (self->database && server_url && user_id)
-    self->account_id = gnalk_database_get_or_create_account (self->database, server_url, user_id);
-
-  /* Configure app-level HTTP client for background sync */
-  if (self->http_client && server_url && user_id && password)
-    gnalk_http_client_set_credentials (self->http_client, server_url, user_id, password);
-
-  /* Configure sync coordinator with account info */
-  if (self->sync_coordinator && self->account_id > 0)
-    gnalk_sync_coordinator_set_account (self->sync_coordinator, self->account_id, user_id);
-}
-
-void
-gnalk_application_set_user_name (GnalkApplication *self,
-                                  const char        *display_name)
-{
-  g_return_if_fail (GNALK_IS_APPLICATION (self));
-
-  g_free (self->user_name);
-  self->user_name = g_strdup (display_name);
-}
+/* Legacy single-account credential functions removed.
+ * Use gnalk_account_get_* via gnalk_session_get_account() instead. */
 
 void
 gnalk_application_set_signaling_settings (GnalkApplication *self,
@@ -999,20 +885,25 @@ gnalk_application_get_http_client (GnalkApplication *self)
   return self->http_client;
 }
 
-GnalkSyncCoordinator *
-gnalk_application_get_sync_coordinator (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->sync_coordinator;
-}
-
 void
 gnalk_application_set_active_room (GnalkApplication *self,
                                    const char       *room_token)
 {
   g_return_if_fail (GNALK_IS_APPLICATION (self));
-  if (self->sync_coordinator)
-    gnalk_sync_coordinator_set_active_room (self->sync_coordinator, room_token);
+
+  /* Update active room on all session sync coordinators */
+  if (self->session_manager)
+    {
+      GList *sessions = gnalk_session_manager_get_all_sessions (self->session_manager);
+      for (GList *l = sessions; l != NULL; l = l->next)
+        {
+          GnalkSession *session = GNALK_SESSION (l->data);
+          GnalkSyncCoordinator *coordinator = gnalk_session_get_sync_coordinator (session);
+          if (coordinator)
+            gnalk_sync_coordinator_set_active_room (coordinator, room_token);
+        }
+      g_list_free (sessions);
+    }
 }
 
 void
@@ -1020,8 +911,20 @@ gnalk_application_set_window_focused (GnalkApplication *self,
                                       gboolean          focused)
 {
   g_return_if_fail (GNALK_IS_APPLICATION (self));
-  if (self->sync_coordinator)
-    gnalk_sync_coordinator_set_window_focused (self->sync_coordinator, focused);
+
+  /* Update window focus on all session sync coordinators */
+  if (self->session_manager)
+    {
+      GList *sessions = gnalk_session_manager_get_all_sessions (self->session_manager);
+      for (GList *l = sessions; l != NULL; l = l->next)
+        {
+          GnalkSession *session = GNALK_SESSION (l->data);
+          GnalkSyncCoordinator *coordinator = gnalk_session_get_sync_coordinator (session);
+          if (coordinator)
+            gnalk_sync_coordinator_set_window_focused (coordinator, focused);
+        }
+      g_list_free (sessions);
+    }
 }
 
 void

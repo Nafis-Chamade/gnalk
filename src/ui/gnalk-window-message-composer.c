@@ -40,9 +40,15 @@ add_pending_file_message (GnalkWindow         *self,
   if (!att || !att->file_name)
     return;
 
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  const char *user_id = gnalk_application_get_user_id (app);
-  const char *user_display_name = gnalk_application_get_user_name (app);
+  /* Get user info from active session's account (multi-account fix) */
+  const char *user_id = NULL;
+  const char *user_display_name = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      user_id = gnalk_account_get_user_id (account);
+      user_display_name = gnalk_account_get_display_name (account);
+    }
 
   /* Create pending file message for optimistic UI */
   GnalkMessageData *pending = gnalk_message_data_new_pending_file (
@@ -263,9 +269,15 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
       return;
     }
 
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  const char *user_id = gnalk_application_get_user_id (app);
-  const char *user_display_name = gnalk_application_get_user_name (app);
+  /* Get user info from active session's account (multi-account fix) */
+  const char *user_id = NULL;
+  const char *user_display_name = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      user_id = gnalk_account_get_user_id (account);
+      user_display_name = gnalk_account_get_display_name (account);
+    }
 
   /* Generate unique reference ID for tracking */
   g_autofree char *reference_id = gnalk_window_generate_reference_id (text, self->current_room_token);

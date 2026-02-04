@@ -38,6 +38,7 @@
 #include "gnalk-message-row.h"
 #include "gnalk-room-tab-manager.h"
 #include "gnalk-data-repository.h"
+#include "gnalk-sync-coordinator.h"
 #include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
@@ -145,7 +146,7 @@ struct _GnalkWindow
   gboolean had_connection_error;     /* Had a connection error (for banner/toast) */
   gboolean initial_auth_done;        /* First auth attempt completed */
   gboolean initial_conversations_loaded;  /* First conversation list load done */
-  gboolean sync_coordinator_connected;  /* Sync coordinator signal connected */
+  GnalkSyncCoordinator *connected_sync_coordinator;  /* Current session's coordinator, signals connected */
   gboolean was_active;               /* Previous window active state (to detect app switch vs popover) */
 
   gboolean is_typing;  /* Are we currently typing */
@@ -348,6 +349,16 @@ void gnalk_window_on_conv_favorite_toggled     (GnalkConversationRow *row, const
 
 /* Session disconnect helper for dispose */
 void gnalk_window_disconnect_active_session (GnalkWindow *self);
+
+/* ============ Sync coordinator signal handlers (gnalk-window.c) ============ */
+
+/* Used by gnalk-window-account-session.c when connecting to session's coordinator */
+void gnalk_window_on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator,
+                                                           const char           *room_token,
+                                                           guint                 count,
+                                                           gpointer              user_data);
+void gnalk_window_on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator,
+                                                           gpointer              user_data);
 
 /* ============ Session signal handlers (gnalk-window.c, called from account-session.c) ============ */
 

@@ -9,7 +9,6 @@
 #include "gnalk-push-client.h"
 #include "gnalk-notification-service.h"
 #include "gnalk-http-client.h"
-#include "gnalk-sync-coordinator.h"
 
 G_BEGIN_DECLS
 
@@ -32,18 +31,8 @@ GSettings              *gnalk_application_get_settings         (GnalkApplication
 gint64                gnalk_application_get_account_id      (GnalkApplication *self);
 gboolean              gnalk_application_is_online           (GnalkApplication *self);
 
-const char *gnalk_application_get_server_url  (GnalkApplication *self);
-const char *gnalk_application_get_user_id     (GnalkApplication *self);
-const char *gnalk_application_get_user_name   (GnalkApplication *self);
-const char *gnalk_application_get_password    (GnalkApplication *self);
-
-void gnalk_application_set_credentials (GnalkApplication *self,
-                                         const char        *server_url,
-                                         const char        *user_id,
-                                         const char        *password);
-
-void gnalk_application_set_user_name (GnalkApplication *self,
-                                       const char        *display_name);
+/* Legacy single-account credential functions removed.
+ * Use gnalk_account_get_* via gnalk_session_get_account() instead. */
 
 void gnalk_application_set_signaling_settings (GnalkApplication *self,
                                                  const char        *server,
@@ -93,7 +82,6 @@ gboolean gnalk_application_is_service_mode (GnalkApplication *self);
 GnalkPushClient          *gnalk_application_get_push_client          (GnalkApplication *self);
 GnalkNotificationService *gnalk_application_get_notification_service (GnalkApplication *self);
 GnalkHttpClient          *gnalk_application_get_http_client          (GnalkApplication *self);
-GnalkSyncCoordinator     *gnalk_application_get_sync_coordinator     (GnalkApplication *self);
 
 /* Window state for notification decisions */
 void gnalk_application_set_active_room   (GnalkApplication *self,

@@ -462,23 +462,8 @@ gnalk_window_load_messages_from_db (GnalkWindow *self,
                           room_token, self->current_room_token ? self->current_room_token : "(null)");
   g_message ("load_messages_from_db: starting for room %s", room_token);
 
-  /* Skip if messages are already loaded for this room - prevents reload flash */
-  guint existing_count = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
-  gboolean same_room = g_strcmp0 (self->current_room_token, room_token) == 0;
-  GNALK_TRACE_DATABASE ("load_messages_from_db: existing_count=%u, same_room=%d, store=%p",
-                          existing_count, same_room, (void*)self->messages_store);
-
-  if (existing_count > 0 && self->current_room_token && same_room)
-    {
-      GNALK_TRACE_DATABASE ("load_messages_from_db: room %s already has %u messages, skipping reload",
-                             room_token, existing_count);
-      g_message ("load_messages_from_db: room %s already has %u messages, skipping reload",
-                 room_token, existing_count);
-      return;
-    }
-
-  /* Clear old messages (only if switching rooms or empty) */
-  GNALK_TRACE_STORE ("load_messages_from_db: clearing messages store (switching room or empty)");
+  /* Clear old messages before reloading */
+  GNALK_TRACE_STORE ("load_messages_from_db: clearing messages store");
   gnalk_window_clear_messages_store (self);
 
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));

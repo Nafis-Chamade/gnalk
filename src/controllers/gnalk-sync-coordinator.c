@@ -770,3 +770,10 @@ gnalk_sync_coordinator_is_syncing (GnalkSyncCoordinator *self)
   g_return_val_if_fail (GNALK_IS_SYNC_COORDINATOR (self), FALSE);
   return self->is_syncing;
 }
+
+gint64
+gnalk_sync_coordinator_get_account_id (GnalkSyncCoordinator *self)
+{
+  g_return_val_if_fail (GNALK_IS_SYNC_COORDINATOR (self), 0);
+  return self->account_id;
+}

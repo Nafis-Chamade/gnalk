@@ -1,6 +1,7 @@
 #include "gnalk-session.h"
 #include "gnalk-application.h"
 #include "gnalk-push-client.h"
+#include "gnalk-sync-coordinator.h"
 
 struct _GnalkSession
 {
@@ -15,9 +16,14 @@ struct _GnalkSession
   GnalkNetworkMonitor *network_monitor;
 
   /* Owned components */
-  GnalkHttpClient  *http_client;
-  GnalkSignaling   *signaling;
-  GnalkSyncManager *sync_manager;
+  GnalkHttpClient      *http_client;
+  GnalkSignaling       *signaling;
+  GnalkSyncManager     *sync_manager;
+  GnalkSyncCoordinator *sync_coordinator;
+
+  /* Shared resources for sync coordinator (not owned) */
+  GnalkDataRepository      *data_repository;
+  GnalkNotificationService *notification_service;
 
   /* Connection state */
   GnalkSessionState state;
@@ -141,6 +147,7 @@ gnalk_session_finalize (GObject *object)
   g_clear_object (&self->http_client);
   g_clear_object (&self->signaling);
   g_clear_object (&self->sync_manager);
+  g_clear_object (&self->sync_coordinator);
   g_clear_object (&self->conversations);
   g_clear_object (&self->account);
   g_clear_object (&self->database);
@@ -331,19 +338,25 @@ on_signaling_incoming_call (GnalkSignaling *signaling G_GNUC_UNUSED,
 
 /* Constructor */
 GnalkSession *
-gnalk_session_new (GnalkAccount        *account,
-                     GnalkDatabase       *database,
-                     GnalkNetworkMonitor *network_monitor)
+gnalk_session_new (GnalkAccount             *account,
+                   GnalkDatabase            *database,
+                   GnalkNetworkMonitor      *network_monitor,
+                   GnalkDataRepository      *data_repository,
+                   GnalkNotificationService *notification_service)
 {
   g_return_val_if_fail (GNALK_IS_ACCOUNT (account), NULL);
   g_return_val_if_fail (GNALK_IS_DATABASE (database), NULL);
   g_return_val_if_fail (GNALK_IS_NETWORK_MONITOR (network_monitor), NULL);
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (data_repository), NULL);
+  g_return_val_if_fail (GNALK_IS_NOTIFICATION_SERVICE (notification_service), NULL);
 
   GnalkSession *self = g_object_new (GNALK_TYPE_SESSION, NULL);
 
   self->account = g_object_ref (account);
   self->database = g_object_ref (database);
   self->network_monitor = g_object_ref (network_monitor);
+  self->data_repository = data_repository;  /* Not owned */
+  self->notification_service = notification_service;  /* Not owned */
 
   /* Create HTTP client */
   self->http_client = gnalk_http_client_new ();
@@ -391,18 +404,22 @@ gnalk_session_new (GnalkAccount        *account,
 }
 
 GnalkSession *
-gnalk_session_new_guest (const char          *server_url,
-                           const char          *room_token,
-                           const char          *display_name,
-                           const char          *room_password,
-                           GnalkDatabase       *database,
-                           GnalkNetworkMonitor *network_monitor)
+gnalk_session_new_guest (const char               *server_url,
+                         const char               *room_token,
+                         const char               *display_name,
+                         const char               *room_password,
+                         GnalkDatabase            *database,
+                         GnalkNetworkMonitor      *network_monitor,
+                         GnalkDataRepository      *data_repository,
+                         GnalkNotificationService *notification_service)
 {
   g_return_val_if_fail (server_url != NULL, NULL);
   g_return_val_if_fail (room_token != NULL, NULL);
   g_return_val_if_fail (display_name != NULL, NULL);
   g_return_val_if_fail (GNALK_IS_DATABASE (database), NULL);
   g_return_val_if_fail (GNALK_IS_NETWORK_MONITOR (network_monitor), NULL);
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (data_repository), NULL);
+  g_return_val_if_fail (GNALK_IS_NOTIFICATION_SERVICE (notification_service), NULL);
 
   /* Create a guest account */
   GnalkAccount *account = gnalk_account_new_guest (server_url, room_token, display_name);
@@ -412,6 +429,8 @@ gnalk_session_new_guest (const char          *server_url,
   self->account = account;  /* Takes ownership */
   self->database = g_object_ref (database);
   self->network_monitor = g_object_ref (network_monitor);
+  self->data_repository = data_repository;  /* Not owned */
+  self->notification_service = notification_service;  /* Not owned */
   self->is_guest = TRUE;
   self->guest_display_name = g_strdup (display_name);
   self->room_password = g_strdup (room_password);
@@ -470,11 +489,37 @@ set_state (GnalkSession *self, GnalkSessionState new_state)
     {
       start_health_check (self);
       start_heartbeat (self);
+
+      /* Create sync coordinator if not exists (requires data_repository) */
+      if (!self->sync_coordinator && self->data_repository && self->notification_service)
+        {
+          self->sync_coordinator = gnalk_sync_coordinator_new (self->data_repository,
+                                                               self->notification_service);
+        }
+
+      /* Configure and start sync coordinator */
+      if (self->sync_coordinator)
+        {
+          gnalk_sync_coordinator_set_http_client (self->sync_coordinator, self->http_client);
+          gnalk_sync_coordinator_set_account (self->sync_coordinator,
+                                              gnalk_account_get_id (self->account),
+                                              gnalk_account_get_user_id (self->account));
+          gnalk_sync_coordinator_start_periodic_sync (self->sync_coordinator);
+
+          /* Trigger initial sync on connect/reconnect */
+          gnalk_sync_coordinator_trigger (self->sync_coordinator, GNALK_SYNC_TRIGGER_RECONNECT);
+          g_message ("Session %s: Started sync coordinator",
+                     gnalk_account_get_user_id (self->account));
+        }
     }
   else
     {
       stop_health_check (self);
       stop_heartbeat (self);
+
+      /* Stop sync coordinator when going offline */
+      if (self->sync_coordinator)
+        gnalk_sync_coordinator_stop_periodic_sync (self->sync_coordinator);
     }
 
   update_call_capability (self);
@@ -1095,12 +1140,6 @@ on_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
           {
             g_message ("Session %s: Connecting push client to %s", user_id, push_url);
             gnalk_push_client_connect (push_client, push_url, user_id, self->password);
-
-            /* Also set app credentials for background sync */
-            gnalk_application_set_credentials (app,
-                                                gnalk_account_get_server_url (self->account),
-                                                user_id,
-                                                self->password);
           }
       }
   }
@@ -1529,6 +1568,13 @@ gnalk_session_get_sync_manager (GnalkSession *self)
 {
   g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
   return self->sync_manager;
+}
+
+GnalkSyncCoordinator *
+gnalk_session_get_sync_coordinator (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
+  return self->sync_coordinator;
 }
 
 void

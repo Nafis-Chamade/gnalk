@@ -5,6 +5,8 @@
 #include "gnalk-account-manager.h"
 #include "gnalk-database.h"
 #include "gnalk-network-monitor.h"
+#include "gnalk-data-repository.h"
+#include "gnalk-notification-service.h"
 
 G_BEGIN_DECLS
 
@@ -35,9 +37,11 @@ G_DECLARE_FINAL_TYPE (GnalkSessionManager, gnalk_session_manager, GNALK, SESSION
  *     Emitted when any session's conversation list changes
  */
 
-GnalkSessionManager *gnalk_session_manager_new (GnalkAccountManager *account_manager,
-                                                    GnalkDatabase       *database,
-                                                    GnalkNetworkMonitor *network_monitor);
+GnalkSessionManager *gnalk_session_manager_new (GnalkAccountManager      *account_manager,
+                                                GnalkDatabase            *database,
+                                                GnalkNetworkMonitor      *network_monitor,
+                                                GnalkDataRepository      *data_repository,
+                                                GnalkNotificationService *notification_service);
 
 /**
  * gnalk_session_manager_get_session:
