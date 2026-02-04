@@ -160,8 +160,10 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  /* Track info for notification */
+  /* Track info for notification and conversation subtitle */
   gint64 newest_id = 0;
+  gint64 newest_timestamp = 0;
+  JsonObject *newest_msg_obj = NULL;
   guint saved_count = 0;
   gboolean has_mention = FALSE;
   GString *notification_body = g_string_new (NULL);
@@ -184,7 +186,11 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
       if (msg_id > data->last_known_id)
         {
           if (msg_id > newest_id)
-            newest_id = msg_id;
+            {
+              newest_id = msg_id;
+              newest_timestamp = gnalk_message_data_get_timestamp (msg_data);
+              newest_msg_obj = msg_obj;
+            }
 
           /* Save to DB - use captured account_id */
           gnalk_data_repository_save_message (self->repository, data->account_id,
@@ -220,6 +226,46 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
     {
       g_debug ("SyncCoordinator: saved %u new messages for %s",
                saved_count, data->room_token);
+
+      /* Update conversation's last message data for subtitle display */
+      if (newest_msg_obj)
+        {
+          const char *message_text = json_object_get_string_member_with_default (
+              newest_msg_obj, "message", "");
+          const char *actor_id = json_object_get_string_member_with_default (
+              newest_msg_obj, "actorId", "");
+          const char *actor_name = json_object_get_string_member_with_default (
+              newest_msg_obj, "actorDisplayName", "");
+          const char *system_message = json_object_get_string_member_with_default (
+              newest_msg_obj, "systemMessage", "");
+          const char *message_type = (system_message && *system_message) ? "system" : "comment";
+
+          /* Serialize message parameters if present */
+          g_autofree char *params_json = NULL;
+          if (json_object_has_member (newest_msg_obj, "messageParameters"))
+            {
+              JsonNode *params_node = json_object_get_member (newest_msg_obj, "messageParameters");
+              if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
+                {
+                  JsonGenerator *gen = json_generator_new ();
+                  json_generator_set_root (gen, params_node);
+                  params_json = json_generator_to_data (gen, NULL);
+                  g_object_unref (gen);
+                }
+            }
+
+          gnalk_data_repository_update_conversation_last_message (
+              self->repository,
+              data->account_id,
+              data->room_token,
+              newest_timestamp,
+              newest_id,
+              message_text,
+              actor_id,
+              actor_name,
+              message_type,
+              params_json);
+        }
 
       /* Emit signal so window can update */
       g_signal_emit (self, signals[SIGNAL_ROOM_MESSAGES_SYNCED], 0,
