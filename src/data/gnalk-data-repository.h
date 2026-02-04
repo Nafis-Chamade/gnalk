@@ -313,4 +313,35 @@ void gnalk_data_repository_set_last_known_message_id_async (GnalkDataRepository 
                                                                GnalkDataRepositoryCallback   callback,
                                                                gpointer                        user_data);
 
+/**
+ * gnalk_data_repository_set_has_more_history:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @has_more: Whether there is more history to load
+ *
+ * Sets the has_more_history flag for a conversation synchronously.
+ */
+void gnalk_data_repository_set_has_more_history (GnalkDataRepository *self,
+                                                  gint64               account_id,
+                                                  const char          *conversation_token,
+                                                  gboolean             has_more);
+
+/**
+ * gnalk_data_repository_update_conversation_subtitle:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @subtitle: The new subtitle
+ * @last_activity: The timestamp for last activity
+ *
+ * Updates the conversation subtitle and last_activity synchronously.
+ * Emits data-changed signal with scope "conversations".
+ */
+void gnalk_data_repository_update_conversation_subtitle (GnalkDataRepository *self,
+                                                          gint64               account_id,
+                                                          const char          *conversation_token,
+                                                          const char          *subtitle,
+                                                          gint64               last_activity);
+
 G_END_DECLS

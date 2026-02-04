@@ -756,3 +756,32 @@ gnalk_data_repository_set_last_known_message_id (GnalkDataRepository *self,
 
   gnalk_database_set_last_known_message_id (self->database, account_id, conversation_token, message_id);
 }
+
+void
+gnalk_data_repository_set_has_more_history (GnalkDataRepository *self,
+                                             gint64               account_id,
+                                             const char          *conversation_token,
+                                             gboolean             has_more)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (conversation_token != NULL);
+
+  gnalk_database_set_has_more_history (self->database, account_id, conversation_token, has_more);
+}
+
+void
+gnalk_data_repository_update_conversation_subtitle (GnalkDataRepository *self,
+                                                     gint64               account_id,
+                                                     const char          *conversation_token,
+                                                     const char          *subtitle,
+                                                     gint64               last_activity)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (conversation_token != NULL);
+
+  gnalk_database_update_conversation_subtitle (self->database, account_id, conversation_token,
+                                                subtitle, last_activity);
+  g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
+}

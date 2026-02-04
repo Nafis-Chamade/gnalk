@@ -49,6 +49,11 @@ int gnalk_database_delete_stale_conversations (GnalkDatabase *self,
                                                   GPtrArray *valid_tokens);
 GListStore *gnalk_database_load_conversations (GnalkDatabase *self,
                                                  gint64 account_id);
+void gnalk_database_update_conversation_subtitle (GnalkDatabase *self,
+                                                    gint64 account_id,
+                                                    const char *token,
+                                                    const char *subtitle,
+                                                    gint64 last_activity);
 
 /* Messages */
 void gnalk_database_save_message (GnalkDatabase *self,

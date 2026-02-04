@@ -37,6 +37,7 @@
 #include "gnalk-call-window.h"
 #include "gnalk-message-row.h"
 #include "gnalk-room-tab-manager.h"
+#include "gnalk-data-repository.h"
 #include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
@@ -144,7 +145,7 @@ struct _GnalkWindow
   gboolean had_connection_error;     /* Had a connection error (for banner/toast) */
   gboolean initial_auth_done;        /* First auth attempt completed */
   gboolean initial_conversations_loaded;  /* First conversation list load done */
-  gboolean bg_sync_connected;        /* Background sync signal connected */
+  gboolean sync_coordinator_connected;  /* Sync coordinator signal connected */
   gboolean was_active;               /* Previous window active state (to detect app switch vs popover) */
 
   gboolean is_typing;  /* Are we currently typing */
@@ -279,9 +280,6 @@ void gnalk_window_on_message_controller_poll_response   (GnalkMessageController 
 void gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController *controller,
                                                                   JsonArray *messages, gboolean has_more,
                                                                   GnalkWindow *self);
-void gnalk_window_on_message_controller_messages_synced (GnalkMessageController *controller,
-                                                         const char *room_token, guint count,
-                                                         GnalkWindow *self);
 
 /* ============ Conversation list functions (gnalk-window-conversation-list.c) ============ */
 
@@ -306,16 +304,17 @@ void gnalk_window_on_search_list_item_bind  (GtkListItemFactory *factory, GtkLis
 void gnalk_window_on_search_list_item_unbind(GtkListItemFactory *factory, GtkListItem *item, gpointer user_data);
 
 /* Controller signal handlers */
-void gnalk_window_on_conversation_controller_updated     (GnalkConversationController *controller, GnalkWindow *self);
 void gnalk_window_on_conversation_controller_created     (GnalkConversationController *controller,
-                                                           const char *room_token, GnalkWindow *self);
+                                                          const char *room_token, GnalkWindow *self);
 void gnalk_window_on_conversation_controller_left        (GnalkConversationController *controller,
-                                                           const char *room_token, GnalkWindow *self);
+                                                          const char *room_token, GnalkWindow *self);
 void gnalk_window_on_conversation_controller_deleted     (GnalkConversationController *controller,
-                                                           const char *room_token, GnalkWindow *self);
-void gnalk_window_on_conversation_controller_new_messages(GnalkConversationController *controller,
-                                                           const char *room_token, gint64 last_message_id,
-                                                           GnalkWindow *self);
+                                                          const char *room_token, GnalkWindow *self);
+
+/* DataRepository signal handlers */
+void gnalk_window_on_data_repository_changed (GnalkDataRepository *repository,
+                                               const char          *scope,
+                                               GnalkWindow         *self);
 
 /* ============ Room switch functions (gnalk-window-room-switch.c) ============ */
 

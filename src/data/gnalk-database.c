@@ -395,6 +395,32 @@ gnalk_database_delete_conversation (GnalkDatabase *self,
     }
 }
 
+void
+gnalk_database_update_conversation_subtitle (GnalkDatabase *self,
+                                               gint64          account_id,
+                                               const char     *token,
+                                               const char     *subtitle,
+                                               gint64          last_activity)
+{
+  g_return_if_fail (GNALK_IS_DATABASE (self));
+  g_return_if_fail (self->db != NULL);
+  g_return_if_fail (token != NULL);
+
+  sqlite3_stmt *stmt;
+  const char *sql = "UPDATE conversations SET subtitle = ?, last_activity = ? "
+                    "WHERE account_id = ? AND token = ?";
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_text (stmt, 1, subtitle ? subtitle : "", -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 2, last_activity);
+      sqlite3_bind_int64 (stmt, 3, account_id);
+      sqlite3_bind_text (stmt, 4, token, -1, SQLITE_STATIC);
+      sqlite3_step (stmt);
+      sqlite3_finalize (stmt);
+    }
+}
+
 int
 gnalk_database_delete_stale_conversations (GnalkDatabase *self,
                                              gint64          account_id,

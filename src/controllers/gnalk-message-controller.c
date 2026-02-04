@@ -34,7 +34,6 @@ enum {
   SIGNAL_MESSAGES_LOADED,
   SIGNAL_POLL_RESPONSE,
   SIGNAL_OLDER_MESSAGES_LOADED,
-  SIGNAL_MESSAGES_SYNCED,
   SIGNAL_MESSAGE_SENT,
   SIGNAL_MESSAGE_SEND_FAILED,
   SIGNAL_MESSAGE_EDITED,
@@ -162,15 +161,6 @@ gnalk_message_controller_class_init (GnalkMessageControllerClass *klass)
                   G_TYPE_NONE, 2,
                   JSON_TYPE_ARRAY,   /* messages */
                   G_TYPE_BOOLEAN);   /* has_more */
-
-  signals[SIGNAL_MESSAGES_SYNCED] =
-    g_signal_new ("messages-synced",
-                  G_TYPE_FROM_CLASS (klass),
-                  G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL,
-                  G_TYPE_NONE, 2,
-                  G_TYPE_STRING,     /* room_token */
-                  G_TYPE_UINT);      /* count */
 
   signals[SIGNAL_MESSAGE_SENT] =
     g_signal_new ("message-sent",
@@ -624,10 +614,8 @@ on_older_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
 
       /* Update has_more_history in DB */
       if (self->repository && self->account_id > 0)
-        {
-          GnalkDatabase *db = gnalk_data_repository_get_database (self->repository);
-          gnalk_database_set_has_more_history (db, self->account_id, self->room_token, has_more);
-        }
+        gnalk_data_repository_set_has_more_history (self->repository, self->account_id,
+                                                     self->room_token, has_more);
 
       g_signal_emit (self, signals[SIGNAL_OLDER_MESSAGES_LOADED], 0, messages, has_more);
     }
@@ -771,13 +759,13 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
                   subtitle = g_strdup (message_text);
                 }
 
-              GnalkDatabase *db = gnalk_data_repository_get_database (self->repository);
-              gnalk_database_update_conversation_subtitle (db,
-                                                           self->account_id,
-                                                           self->room_token,
-                                                           subtitle,
-                                                           timestamp);
-
+              gnalk_data_repository_update_conversation_subtitle (self->repository,
+                                                                    self->account_id,
+                                                                    self->room_token,
+                                                                    subtitle,
+                                                                    timestamp);
+              /* Note: DataRepository already emits data-changed, but we keep this
+               * signal for backwards compatibility with existing window connections */
               g_signal_emit (self, signals[SIGNAL_CONVERSATION_SUBTITLE_UPDATED], 0);
             }
         }
@@ -934,136 +922,6 @@ gnalk_message_controller_is_polling (GnalkMessageController *self)
 {
   g_return_val_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self), FALSE);
   return self->polling;
-}
-
-/* ============ Background Sync ============ */
-
-typedef struct {
-  GnalkMessageController *controller;
-  char                    *room_token;
-  gint64                   since_id;
-  guint                    generation;
-} SyncRoomData;
-
-static void
-sync_room_data_free (SyncRoomData *data)
-{
-  g_free (data->room_token);
-  g_slice_free (SyncRoomData, data);
-}
-
-static void
-on_sync_room_response (GnalkHttpClient *client G_GNUC_UNUSED,
-                       JsonNode         *response,
-                       GError           *error,
-                       gpointer          user_data)
-{
-  SyncRoomData *data = user_data;
-
-  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-    {
-      sync_room_data_free (data);
-      return;
-    }
-
-  GnalkMessageController *self = data->controller;
-
-  if (error)
-    {
-      g_debug ("Background sync failed for %s: %s", data->room_token, error->message);
-      sync_room_data_free (data);
-      return;
-    }
-
-  /* Check if controller state changed (e.g., database changed) */
-  if (data->generation != self->generation)
-    {
-      sync_room_data_free (data);
-      return;
-    }
-
-  JsonArray *messages = extract_messages_array (response);
-  if (!messages || json_array_get_length (messages) == 0)
-    {
-      g_debug ("Background sync: no new messages for %s", data->room_token);
-      sync_room_data_free (data);
-      return;
-    }
-
-  guint len = json_array_get_length (messages);
-
-  /* Save messages to database, filtering to only those newer than since_id */
-  if (self->repository && self->account_id > 0)
-    {
-      gint64 highest_id = 0;
-      guint saved_count = 0;
-
-      for (guint i = 0; i < len; i++)
-        {
-          JsonObject *msg_obj = json_array_get_object_element (messages, i);
-          if (!msg_obj)
-            continue;
-
-          GnalkMessageData *msg_data = gnalk_message_data_new_from_json (msg_obj, self->current_user);
-          if (!msg_data)
-            continue;
-
-          gint64 msg_id = gnalk_message_data_get_id (msg_data);
-
-          /* Only save messages newer than what we already have */
-          if (msg_id > data->since_id)
-            {
-              if (msg_id > highest_id)
-                highest_id = msg_id;
-
-              gnalk_data_repository_save_message (self->repository, self->account_id, data->room_token, msg_data);
-              saved_count++;
-            }
-
-          g_object_unref (msg_data);
-        }
-
-      if (saved_count > 0)
-        {
-          g_debug ("Background sync: saved %u new messages for %s", saved_count, data->room_token);
-
-          /* Update last known message ID so we don't re-fetch */
-          if (highest_id > 0)
-            gnalk_data_repository_set_last_known_message_id (self->repository, self->account_id, data->room_token, highest_id);
-
-          /* Emit signal to notify listeners */
-          g_signal_emit (self, signals[SIGNAL_MESSAGES_SYNCED], 0, data->room_token, saved_count);
-        }
-    }
-
-  sync_room_data_free (data);
-}
-
-void
-gnalk_message_controller_sync_room (GnalkMessageController *self,
-                                      const char              *room_token,
-                                      gint64                   since_id)
-{
-  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
-  g_return_if_fail (self->http_client != NULL);
-  g_return_if_fail (room_token != NULL);
-
-  SyncRoomData *data = g_slice_new0 (SyncRoomData);
-  data->controller = self;
-  data->room_token = g_strdup (room_token);
-  data->since_id = since_id;
-  data->generation = self->generation;
-
-  /* Fetch only NEW messages we don't have yet.
-   * lookIntoFuture=TRUE gets messages AFTER lastKnownMessageId.
-   * timeout=0 returns immediately without long-polling. */
-  gnalk_http_client_get_messages (self->http_client,
-                                    room_token,
-                                    since_id,
-                                    TRUE,   /* lookIntoFuture to get newer messages */
-                                    0,      /* timeout=0 for immediate response */
-                                    on_sync_room_response,
-                                    data);
 }
 
 /* ============ Send Message ============ */

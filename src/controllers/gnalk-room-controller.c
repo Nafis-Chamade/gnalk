@@ -302,9 +302,7 @@ gnalk_room_controller_open_room (GnalkRoomController *self,
   /* Update app state */
   gnalk_app_state_set_active_room (self->app_state, token, session);
 
-  /* Notify conversation controller to pause polling (room is now active) */
-  if (self->conversation_controller)
-    gnalk_conversation_controller_set_room_active (self->conversation_controller, TRUE);
+  /* Note: SyncCoordinator handles sync coordination via Application set_active_room */
 
   /* Notify participant controller to start loading and polling for this room */
   if (self->participant_controller)
@@ -337,9 +335,7 @@ gnalk_room_controller_close_room (GnalkRoomController *self)
   if (self->participant_controller)
     gnalk_participant_controller_set_active_room (self->participant_controller, NULL, 0);
 
-  /* Notify conversation controller to resume polling (no room active) */
-  if (self->conversation_controller)
-    gnalk_conversation_controller_set_room_active (self->conversation_controller, FALSE);
+  /* Note: SyncCoordinator handles sync coordination via Application set_active_room */
 
   /* Leave the room via session */
   if (self->current_session)

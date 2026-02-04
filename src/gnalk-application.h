@@ -9,7 +9,7 @@
 #include "gnalk-push-client.h"
 #include "gnalk-notification-service.h"
 #include "gnalk-http-client.h"
-#include "gnalk-background-sync.h"
+#include "gnalk-sync-coordinator.h"
 
 G_BEGIN_DECLS
 
@@ -93,7 +93,7 @@ gboolean gnalk_application_is_service_mode (GnalkApplication *self);
 GnalkPushClient          *gnalk_application_get_push_client          (GnalkApplication *self);
 GnalkNotificationService *gnalk_application_get_notification_service (GnalkApplication *self);
 GnalkHttpClient          *gnalk_application_get_http_client          (GnalkApplication *self);
-GnalkBackgroundSync      *gnalk_application_get_background_sync      (GnalkApplication *self);
+GnalkSyncCoordinator     *gnalk_application_get_sync_coordinator     (GnalkApplication *self);
 
 /* Window state for notification decisions */
 void gnalk_application_set_active_room   (GnalkApplication *self,

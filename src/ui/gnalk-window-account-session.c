@@ -164,16 +164,13 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
     g_debug ("switch_to_session: recreating conversation_controller with account_id=%ld", (long)account_id);
     self->conversation_controller = gnalk_conversation_controller_new (repo, self->http_client);
     gnalk_conversation_controller_set_account_id (self->conversation_controller, account_id);
-    g_signal_connect (self->conversation_controller, "conversations-updated",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_updated), self);
+    /* Note: conversations-updated and new-messages-detected removed - SyncCoordinator handles sync */
     g_signal_connect (self->conversation_controller, "conversation-created",
                       G_CALLBACK (gnalk_window_on_conversation_controller_created), self);
     g_signal_connect (self->conversation_controller, "conversation-left",
                       G_CALLBACK (gnalk_window_on_conversation_controller_left), self);
     g_signal_connect (self->conversation_controller, "conversation-deleted",
                       G_CALLBACK (gnalk_window_on_conversation_controller_deleted), self);
-    g_signal_connect (self->conversation_controller, "new-messages-detected",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_new_messages), self);
   }
 
   /* Recreate participant controller with new http_client and account */

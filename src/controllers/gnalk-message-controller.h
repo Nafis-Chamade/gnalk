@@ -30,7 +30,6 @@ G_DECLARE_FINAL_TYPE (GnalkMessageController, gnalk_message_controller, GNALK, M
  * - "messages-loaded" (JsonArray *messages, gboolean is_initial) - Messages received and saved to DB
  * - "poll-response" (JsonArray *messages) - New messages from long polling, saved to DB
  * - "older-messages-loaded" (JsonArray *messages, gboolean has_more) - History loaded and saved to DB
- * - "messages-synced" (const char *room_token, guint count) - Background sync completed for room
  * - "message-sent" (const char *reference_id, gint64 message_id, gint64 timestamp) - Message confirmed sent
  * - "message-send-failed" (const char *reference_id, const char *error) - Send failed
  * - "message-edited" (gint64 message_id) - Edit confirmed
@@ -67,13 +66,6 @@ void gnalk_message_controller_load_new_messages (GnalkMessageController *self,
                                                    gint64                   since_id);
 void gnalk_message_controller_load_older_messages (GnalkMessageController *self,
                                                      gint64                   before_id);
-
-/* Background sync - fetch new messages for a room without UI update.
- * Messages are saved to DB and "messages-synced" signal is emitted.
- * This is for syncing rooms the user is not actively viewing. */
-void gnalk_message_controller_sync_room (GnalkMessageController *self,
-                                           const char              *room_token,
-                                           gint64                   since_id);
 
 /* Long polling */
 void gnalk_message_controller_start_polling (GnalkMessageController *self,

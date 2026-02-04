@@ -15,7 +15,7 @@
 #include "gnalk-database.h"
 #include "gnalk-app-state.h"
 #include "gnalk-room-controller.h"
-#include "gnalk-background-sync.h"
+#include "gnalk-sync-coordinator.h"
 #include "gnalk-video-player-dialog.h"
 #include <glib/gi18n.h>
 
@@ -67,8 +67,9 @@ static void on_set_status_response (GnalkHttpClient *client, JsonNode *response,
 /* AppState signal handlers (new async startup architecture) */
 static void on_app_state_loading_changed (GnalkAppState *app_state, gboolean is_loading, GnalkWindow *self);
 
-/* Background sync signal handlers */
-static void on_app_background_sync_messages_synced (GnalkBackgroundSync *sync, const char *room_token, gpointer user_data);
+/* Sync coordinator signal handlers */
+static void on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator, const char *room_token, guint count, gpointer user_data);
+static void on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator, gpointer user_data);
 
 /* Session signal handlers - connected by gnalk-window-account-session.c, implemented here.
  * Declarations are in gnalk-window-private.h for use by account-session.c */
@@ -239,21 +240,24 @@ on_app_state_loading_changed (GnalkAppState *app_state G_GNUC_UNUSED,
   if (self->connecting_spinner)
     gtk_widget_set_visible (self->connecting_spinner, is_loading);
 
-  /* When async loading completes, connect to background sync for message notifications.
-   * We do this here because background_sync is created during async initialization,
+  /* When async loading completes, connect to sync coordinator for message notifications.
+   * We do this here because sync_coordinator is created during async initialization,
    * which happens AFTER the window is constructed. The window's initial connection
-   * attempt in constructed() will fail because background_sync doesn't exist yet. */
-  if (!is_loading && !self->bg_sync_connected)
+   * attempt in constructed() will fail because sync_coordinator doesn't exist yet. */
+  if (!is_loading && !self->sync_coordinator_connected)
     {
       GtkApplication *app = gtk_window_get_application (GTK_WINDOW (self));
-      GnalkBackgroundSync *bg_sync = gnalk_application_get_background_sync (GNALK_APPLICATION (app));
-      if (bg_sync)
+      GnalkSyncCoordinator *coordinator = gnalk_application_get_sync_coordinator (GNALK_APPLICATION (app));
+      if (coordinator)
         {
-          g_signal_connect_object (bg_sync, "messages-synced",
-                                   G_CALLBACK (on_app_background_sync_messages_synced), self,
+          g_signal_connect_object (coordinator, "room-messages-synced",
+                                   G_CALLBACK (on_sync_coordinator_room_messages_synced), self,
                                    G_CONNECT_DEFAULT);
-          self->bg_sync_connected = TRUE;
-          g_debug ("Window: Connected to background sync messages-synced signal");
+          g_signal_connect_object (coordinator, "conversations-synced",
+                                   G_CALLBACK (on_sync_coordinator_conversations_synced), self,
+                                   G_CONNECT_DEFAULT);
+          self->sync_coordinator_connected = TRUE;
+          g_debug ("Window: Connected to sync coordinator signals");
         }
     }
 }
@@ -380,12 +384,10 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         self->initial_auth_done = TRUE;
         self->autologin_pending = FALSE;
 
-        /* Start conversation controller polling - it will sync new messages to DB
-         * Skip for guests - they can only access their single room */
-        if (self->conversation_controller && !gnalk_session_is_guest (session))
-          gnalk_conversation_controller_start_polling (self->conversation_controller);
+        /* Note: SyncCoordinator handles periodic conversation sync at app level.
+         * No need to start polling here - it's managed centrally. */
 
-        /* Reload messages from DB for current room (controller will sync new ones) */
+        /* Reload messages from DB for current room (sync coordinator will sync new ones) */
         if (self->current_room_token)
           gnalk_window_load_messages_from_db (self, self->current_room_token);
 
@@ -3052,8 +3054,6 @@ gnalk_window_dispose (GObject *object)
         gnalk_message_controller_set_room (self->message_controller, NULL);
       if (self->participant_controller)
         gnalk_participant_controller_set_active_room (self->participant_controller, NULL, 0);
-      if (self->conversation_controller)
-        gnalk_conversation_controller_stop_polling (self->conversation_controller);
 
       if (self->signaling)
         gnalk_signaling_leave_room (self->signaling, self->current_room_token);
@@ -3061,7 +3061,7 @@ gnalk_window_dispose (GObject *object)
       if (self->http_client)
         gnalk_http_client_leave_room (self->http_client, self->current_room_token, NULL, NULL);
 
-      /* Clear active room in background sync so notifications work */
+      /* Clear active room in sync coordinator so notifications work */
       GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
       if (app)
         gnalk_application_set_active_room (app, NULL);
@@ -3086,6 +3086,17 @@ gnalk_window_dispose (GObject *object)
       g_signal_handlers_disconnect_by_data (self->session_manager, self);
       self->session_manager = NULL;
     }
+
+  /* Disconnect from DataRepository signals (it survives window close) */
+  {
+    GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+    if (app)
+      {
+        GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
+        if (repo)
+          g_signal_handlers_disconnect_by_data (repo, self);
+      }
+  }
 
   G_OBJECT_CLASS (gnalk_window_parent_class)->dispose (object);
 }
@@ -3209,23 +3220,24 @@ on_window_is_active_changed (GObject    *object,
   self->was_active = is_active;
 }
 
-/* Background sync service notification - refresh messages and conversations */
+/* Sync coordinator notification - refresh messages when room synced */
 static void
-on_app_background_sync_messages_synced (GnalkBackgroundSync *sync G_GNUC_UNUSED,
-                                         const char           *room_token,
-                                         gpointer              user_data)
+on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
+                                          const char           *room_token,
+                                          guint                 count,
+                                          gpointer              user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  g_message ("Background sync service: room %s synced, refreshing UI", room_token);
+  g_message ("SyncCoordinator: room %s synced (%u messages), refreshing UI", room_token, count);
 
-  /* Reload conversation list from cache (background sync already updated DB) */
+  /* Reload conversation list from cache (sync coordinator already updated DB) */
   gnalk_window_load_conversations_from_db (self);
 
   /* If we're viewing this room, reload messages from DB to show the new ones */
   if (self->current_room_token && g_strcmp0 (room_token, self->current_room_token) == 0)
     {
-      g_debug ("Background sync service: refreshing messages for current room %s", room_token);
+      g_debug ("SyncCoordinator: refreshing messages for current room %s", room_token);
       gnalk_window_load_messages_from_db (self, room_token);
     }
   else if (self->tab_manager && gnalk_room_tab_manager_has_tab (self->tab_manager, room_token))
@@ -3233,8 +3245,19 @@ on_app_background_sync_messages_synced (GnalkBackgroundSync *sync G_GNUC_UNUSED,
       /* Room has a tab but is not the active room - the tab's store will be
        * refreshed from DB when the user switches to it. We don't need to
        * do anything here since the tab system handles this on foreground. */
-      g_debug ("Background sync service: room %s has background tab, will refresh on switch", room_token);
+      g_debug ("SyncCoordinator: room %s has background tab, will refresh on switch", room_token);
     }
+}
+
+/* Sync coordinator notification - refresh conversations list when synced */
+static void
+on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
+                                          gpointer              user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  g_debug ("SyncCoordinator: conversations synced, refreshing UI");
+  gnalk_window_load_conversations_from_db (self);
 }
 
 static void
@@ -3375,18 +3398,21 @@ gnalk_window_init (GnalkWindow *self)
   /* Get push_client from application (shared for service mode support) */
   self->push_client = gnalk_application_get_push_client (GNALK_APPLICATION (app));
 
-  /* Connect to background sync for message refresh notifications.
+  /* Connect to sync coordinator for message refresh notifications.
    * Use g_signal_connect_object so the handler is automatically disconnected
-   * when the window is destroyed (background sync outlives the window).
-   * NOTE: bg_sync may be NULL here if async initialization hasn't completed yet.
+   * when the window is destroyed (sync coordinator outlives the window).
+   * NOTE: coordinator may be NULL here if async initialization hasn't completed yet.
    * In that case, the connection will be made in on_app_state_loading_changed. */
-  GnalkBackgroundSync *bg_sync = gnalk_application_get_background_sync (GNALK_APPLICATION (app));
-  if (bg_sync && !self->bg_sync_connected)
+  GnalkSyncCoordinator *coordinator = gnalk_application_get_sync_coordinator (GNALK_APPLICATION (app));
+  if (coordinator && !self->sync_coordinator_connected)
     {
-      g_signal_connect_object (bg_sync, "messages-synced",
-                               G_CALLBACK (on_app_background_sync_messages_synced), self,
+      g_signal_connect_object (coordinator, "room-messages-synced",
+                               G_CALLBACK (on_sync_coordinator_room_messages_synced), self,
                                G_CONNECT_DEFAULT);
-      self->bg_sync_connected = TRUE;
+      g_signal_connect_object (coordinator, "conversations-synced",
+                               G_CALLBACK (on_sync_coordinator_conversations_synced), self,
+                               G_CONNECT_DEFAULT);
+      self->sync_coordinator_connected = TRUE;
     }
 
   /* Track window focus for notification decisions */
@@ -3428,26 +3454,26 @@ gnalk_window_init (GnalkWindow *self)
                     G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
   g_signal_connect (self->message_controller, "older-messages-loaded",
                     G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
-  g_signal_connect (self->message_controller, "messages-synced",
-                    G_CALLBACK (gnalk_window_on_message_controller_messages_synced), self);
+  /* Note: messages-synced signal removed - SyncCoordinator handles background sync */
   g_signal_connect_swapped (self->message_controller, "conversation-subtitle-updated",
                             G_CALLBACK (gnalk_window_load_conversations_from_db), self);
 
-  /* Create conversation controller (will be recreated in switch_to_session with correct account) */
+  /* Create conversation controller for CRUD operations (will be recreated in switch_to_session) */
   {
     GnalkDataRepository *repo = gnalk_application_get_data_repository (GNALK_APPLICATION (app));
     self->conversation_controller = gnalk_conversation_controller_new (repo, self->http_client);
     gnalk_conversation_controller_set_account_id (self->conversation_controller, 0);
-    g_signal_connect (self->conversation_controller, "conversations-updated",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_updated), self);
+    /* Note: conversations-updated and new-messages-detected removed - SyncCoordinator handles sync */
     g_signal_connect (self->conversation_controller, "conversation-created",
                       G_CALLBACK (gnalk_window_on_conversation_controller_created), self);
     g_signal_connect (self->conversation_controller, "conversation-left",
                       G_CALLBACK (gnalk_window_on_conversation_controller_left), self);
     g_signal_connect (self->conversation_controller, "conversation-deleted",
                       G_CALLBACK (gnalk_window_on_conversation_controller_deleted), self);
-    g_signal_connect (self->conversation_controller, "new-messages-detected",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_new_messages), self);
+
+    /* Connect to DataRepository for background sync updates */
+    g_signal_connect (repo, "data-changed",
+                      G_CALLBACK (gnalk_window_on_data_repository_changed), self);
   }
 
   /* Create participant controller (will be recreated in switch_to_session with correct account) */

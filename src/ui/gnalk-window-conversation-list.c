@@ -248,10 +248,21 @@ load_conversations_from_db_finish (GObject      *source_object,
     {
       g_list_store_sort (self->conversations_store, gnalk_window_compare_conversations_by_activity, NULL);
       g_message ("Loaded %u conversations from database (changes: %s)", n_cached, has_changes ? "yes" : "no");
+
+      /* Force GTK to re-bind items since update_from_data modifies data in-place
+       * but doesn't emit property notifications. This ensures widgets refresh. */
+      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+      if (n_items > 0)
+        g_list_model_items_changed (G_LIST_MODEL (self->conversations_store), 0, n_items, n_items);
     }
   else
     {
-      g_message ("Conversation list unchanged (%u items)", n_cached);
+      g_message ("Conversation list unchanged (%u items), forcing refresh anyway", n_cached);
+      /* Force refresh even when no changes detected - the in-place update
+       * comparison might miss some changes, and forcing a refresh is cheap */
+      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+      if (n_items > 0)
+        g_list_model_items_changed (G_LIST_MODEL (self->conversations_store), 0, n_items, n_items);
     }
 
   /* Scroll to top only on initial load - preserves scroll position on refresh */
@@ -726,15 +737,6 @@ gnalk_window_on_search_list_item_unbind (GtkListItemFactory *factory,
 
 /* ============ Controller Signal Handlers ============ */
 
-/* Called when conversation controller detects server has different data */
-void
-gnalk_window_on_conversation_controller_updated (GnalkConversationController *controller G_GNUC_UNUSED,
-                                                  GnalkWindow                 *self)
-{
-  g_message ("Window: Conversation controller updated, reloading from DB");
-  gnalk_window_load_conversations_from_db (self);
-}
-
 /* Called when a new conversation is created */
 void
 gnalk_window_on_conversation_controller_created (GnalkConversationController *controller G_GNUC_UNUSED,
@@ -799,23 +801,18 @@ gnalk_window_on_conversation_controller_deleted (GnalkConversationController *co
   gnalk_window_load_conversations_from_db (self);
 }
 
-/* Called when new messages are detected in a room during conversation polling */
+/* Called when DataRepository emits data-changed (e.g., from SyncCoordinator) */
 void
-gnalk_window_on_conversation_controller_new_messages (GnalkConversationController *controller G_GNUC_UNUSED,
-                                                       const char                   *room_token,
-                                                       gint64                        last_message_id,
-                                                       GnalkWindow                 *self)
+gnalk_window_on_data_repository_changed (GnalkDataRepository *repository G_GNUC_UNUSED,
+                                          const char          *scope,
+                                          GnalkWindow         *self)
 {
-  g_message ("Window: New messages detected in %s (last_id=%ld)", room_token, (long) last_message_id);
+  g_debug ("Window: DataRepository data-changed (scope=%s)", scope ? scope : "(null)");
 
-  /* If this is the current room, sync messages */
-  if (self->current_room_token && g_strcmp0 (room_token, self->current_room_token) == 0)
+  /* Reload conversation list when conversations data changes */
+  if (g_strcmp0 (scope, "conversations") == 0)
     {
-      /* Use message controller to sync new messages */
-      if (self->message_controller && last_message_id > 0)
-        gnalk_message_controller_sync_room (self->message_controller, room_token, last_message_id);
+      g_message ("Window: Conversations changed via DataRepository, reloading from DB");
+      gnalk_window_load_conversations_from_db (self);
     }
-
-  /* Reload conversation list to update unread counts */
-  gnalk_window_load_conversations_from_db (self);
 }

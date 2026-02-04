@@ -43,6 +43,7 @@ controllers_sources = [
   'controllers/gnalk-room-controller.c',
   'controllers/gnalk-app-state.c',
   'controllers/gnalk-sync-manager.c',
+  'controllers/gnalk-sync-coordinator.c',
 ]
 
 utils_sources = [
@@ -103,7 +104,6 @@ core_sources = [
   'gnalk-session.c',
   'gnalk-session-manager.c',
   'gnalk-notification-service.c',
-  'gnalk-background-sync.c',
 ]
 
 gnalk_sources = core_sources + network_sources + call_sources + data_sources + controllers_sources + utils_sources + ui_sources

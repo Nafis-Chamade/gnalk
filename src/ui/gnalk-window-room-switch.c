@@ -470,9 +470,7 @@ gnalk_window_on_content_page_hiding (AdwNavigationPage *page,
       if (self->participant_controller)
         gnalk_participant_controller_set_active_room (self->participant_controller, NULL, 0);
 
-      /* Resume conversation polling now that we're leaving the room */
-      if (self->conversation_controller)
-        gnalk_conversation_controller_set_room_active (self->conversation_controller, FALSE);
+      /* Note: SyncCoordinator handles sync coordination via Application set_active_room */
 
       if (self->signaling)
         gnalk_signaling_leave_room (self->signaling, self->current_room_token);
@@ -547,9 +545,7 @@ gnalk_window_open_conversation_by_token (GnalkWindow *self, const char *token)
       g_message ("open_conversation_by_token: entering room %s (join_in_progress=%d)",
                  token, self->room_join_in_progress);
 
-      /* Notify controllers that a room is being opened */
-      if (self->conversation_controller)
-        gnalk_conversation_controller_set_room_active (self->conversation_controller, TRUE);
+      /* Note: SyncCoordinator handles sync coordination via Application set_active_room */
 
       /* Background the old room's tab (saves scroll anchor, trims messages) */
       background_current_room_tab (self);
