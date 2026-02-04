@@ -210,6 +210,19 @@ void gnalk_data_repository_save_conversation (GnalkDataRepository   *self,
                                               GnalkConversationData *conversation);
 
 /**
+ * gnalk_data_repository_save_conversations:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversations: Array of GnalkConversationData to save
+ *
+ * Saves multiple conversations synchronously and emits a single data-changed signal.
+ * Use this for batch operations to avoid multiple UI refreshes.
+ */
+void gnalk_data_repository_save_conversations (GnalkDataRepository *self,
+                                               gint64               account_id,
+                                               GPtrArray           *conversations);
+
+/**
  * gnalk_data_repository_delete_conversation:
  * @self: The data repository
  * @account_id: The account ID

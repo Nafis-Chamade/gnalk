@@ -21,12 +21,12 @@ src/
 ├── main.c, gnalk-application.[ch]     # App singleton, GApplication
 ├── gnalk-session.[ch]                 # Per-account: HttpClient, Signaling, state machine
 ├── gnalk-session-manager.[ch]         # Multi-account management
-├── gnalk-background-sync.[ch]         # Service mode message sync
 ├── gnalk-notification-service.[ch]    # Desktop notifications (libportal)
 │
 ├── controllers/                        # HTTP, polling, caching (NO UI)
-│   ├── gnalk-message-controller       # Message ops, long-polling
-│   ├── gnalk-conversation-controller  # Conversation list polling (20s)
+│   ├── gnalk-sync-coordinator         # Centralized sync: timer 20s, push, reconnect
+│   ├── gnalk-message-controller       # Message ops, long-polling active room
+│   ├── gnalk-conversation-controller  # Conversation CRUD (create, leave, delete)
 │   ├── gnalk-participant-controller   # Participant polling (60s)
 │   ├── gnalk-room-controller          # Room open/close orchestration
 │   ├── gnalk-app-state                # Centralized state

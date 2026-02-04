@@ -357,6 +357,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
 
   gboolean has_changes = FALSE;
   GPtrArray *valid_tokens = g_ptr_array_new_with_free_func (g_free);
+  GPtrArray *conversations_to_save = g_ptr_array_new_with_free_func (g_object_unref);
 
   for (guint i = 0; i < n_rooms; i++)
     {
@@ -366,12 +367,11 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
 
       g_ptr_array_add (valid_tokens, g_strdup (token));
 
-      /* Save/update conversation in database */
+      /* Collect conversation for batch save */
       GnalkConversationData *conv_data = gnalk_conversation_data_new_from_json (room, NULL);
       if (conv_data)
         {
-          gnalk_data_repository_save_conversation (self->repository, account_id, conv_data);
-          g_object_unref (conv_data);
+          g_ptr_array_add (conversations_to_save, conv_data);  /* Takes ownership */
           has_changes = TRUE;
         }
 
@@ -413,6 +413,14 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
             }
         }
     }
+
+  /* Batch save all conversations (emits single data-changed signal) */
+  if (conversations_to_save->len > 0)
+    {
+      g_debug ("SyncCoordinator: batch saving %u conversations", conversations_to_save->len);
+      gnalk_data_repository_save_conversations (self->repository, account_id, conversations_to_save);
+    }
+  g_ptr_array_unref (conversations_to_save);
 
   /* Delete conversations no longer on server */
   int deleted = gnalk_data_repository_delete_stale_conversations (self->repository,

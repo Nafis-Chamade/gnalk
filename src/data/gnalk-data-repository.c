@@ -689,6 +689,26 @@ gnalk_data_repository_save_conversation (GnalkDataRepository   *self,
 }
 
 void
+gnalk_data_repository_save_conversations (GnalkDataRepository *self,
+                                          gint64               account_id,
+                                          GPtrArray           *conversations)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (conversations != NULL);
+
+  for (guint i = 0; i < conversations->len; i++)
+    {
+      GnalkConversationData *conv = g_ptr_array_index (conversations, i);
+      if (GNALK_IS_CONVERSATION_DATA (conv))
+        gnalk_database_save_conversation (self->database, account_id, conv);
+    }
+
+  if (conversations->len > 0)
+    g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
+}
+
+void
 gnalk_data_repository_delete_conversation (GnalkDataRepository *self,
                                            gint64               account_id,
                                            const char          *token)
