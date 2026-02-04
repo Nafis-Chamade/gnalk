@@ -512,6 +512,10 @@ gnalk_database_update_conversation_last_message (GnalkDatabase *self,
   g_return_if_fail (self->db != NULL);
   g_return_if_fail (token != NULL);
 
+  g_message ("DB: update_conversation_last_message account=%ld token=%s msg_id=%ld text='%.30s'",
+             (long)account_id, token, (long)last_message_id,
+             last_message_text ? last_message_text : "(null)");
+
   sqlite3_stmt *stmt;
   const char *sql = "UPDATE conversations SET last_activity = ?, "
                     "last_message_id = ?, last_message_text = ?, "

@@ -125,8 +125,8 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
 
   if (error)
     {
-      g_debug ("SyncCoordinator: message sync failed for %s: %s",
-               data->room_token, error->message);
+      g_debug ("[%s] SyncCoordinator: message sync failed for %s: %s",
+               data->user_id, data->room_token, error->message);
       room_sync_data_free (data);
       return;
     }
@@ -155,7 +155,7 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
   guint len = json_array_get_length (messages_array);
   if (len == 0)
     {
-      g_debug ("SyncCoordinator: no new messages for %s", data->room_token);
+      g_debug ("[%s] SyncCoordinator: no new messages for %s", data->user_id, data->room_token);
       room_sync_data_free (data);
       return;
     }
@@ -224,8 +224,8 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
 
   if (saved_count > 0)
     {
-      g_debug ("SyncCoordinator: saved %u new messages for %s",
-               saved_count, data->room_token);
+      g_message ("[%s] SyncCoordinator: saved %u new messages for %s",
+                 data->user_id, saved_count, data->room_token);
 
       /* Update conversation's last message data for subtitle display */
       if (newest_msg_obj)
@@ -283,8 +283,8 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
             g_string_append_printf (notification_body, "\n... and %u more",
                                     notification_msg_count - 5);
 
-          g_message ("SyncCoordinator: showing notification for room %s: %u messages",
-                     data->room_token, notification_msg_count);
+          g_message ("[%s] SyncCoordinator: showing notification for room %s: %u messages",
+                     data->user_id, data->room_token, notification_msg_count);
 
           gnalk_notification_service_notify_message (self->notification_service,
                                                      data->room_token,
@@ -398,8 +398,8 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
   GnalkHttpClient *http_client = fetch_data->http_client;
 
   guint n_rooms = json_array_get_length (data);
-  g_debug ("SyncCoordinator: checking %u conversations for account %ld",
-           n_rooms, (long)account_id);
+  g_message ("[%s] SyncCoordinator: checking %u conversations",
+             fetch_data->user_id, n_rooms);
 
   gboolean has_changes = FALSE;
   GPtrArray *valid_tokens = g_ptr_array_new_with_free_func (g_free);
@@ -427,7 +427,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
           self->active_room_token &&
           g_strcmp0 (token, self->active_room_token) == 0)
         {
-          g_debug ("SyncCoordinator: skipping active room %s", token);
+          g_debug ("[%s] SyncCoordinator: skipping active room %s", fetch_data->user_id, token);
           continue;
         }
 
@@ -445,13 +445,13 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
           gint64 db_last_id = gnalk_data_repository_get_last_known_message_id (
               self->repository, account_id, token);
 
-          g_debug ("SyncCoordinator: room %s comparing server=%ld vs db=%ld",
-                   token, server_last_id, db_last_id);
+          g_debug ("[%s] SyncCoordinator: room %s comparing server=%ld vs db=%ld",
+                   fetch_data->user_id, token, server_last_id, db_last_id);
 
           if (server_last_id > db_last_id)
             {
-              g_debug ("SyncCoordinator: room %s has new messages (server: %ld, db: %ld)",
-                       token, server_last_id, db_last_id);
+              g_message ("[%s] SyncCoordinator: room %s has new messages (server: %ld, db: %ld)",
+                         fetch_data->user_id, token, server_last_id, db_last_id);
 
               /* Sync messages for this room */
               sync_room_messages (self, http_client, account_id,
@@ -463,7 +463,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
   /* Batch save all conversations (emits single data-changed signal) */
   if (conversations_to_save->len > 0)
     {
-      g_debug ("SyncCoordinator: batch saving %u conversations", conversations_to_save->len);
+      g_message ("[%s] SyncCoordinator: batch saving %u conversations", fetch_data->user_id, conversations_to_save->len);
       gnalk_data_repository_save_conversations (self->repository, account_id, conversations_to_save);
     }
   g_ptr_array_unref (conversations_to_save);
@@ -474,7 +474,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
                                                                   valid_tokens);
   if (deleted > 0)
     {
-      g_debug ("SyncCoordinator: deleted %d stale conversations", deleted);
+      g_message ("[%s] SyncCoordinator: deleted %d stale conversations", fetch_data->user_id, deleted);
       has_changes = TRUE;
     }
 

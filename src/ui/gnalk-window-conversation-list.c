@@ -281,7 +281,14 @@ load_conversations_from_db_finish (GObject      *source_object,
 void
 gnalk_window_load_conversations_from_db (GnalkWindow *self)
 {
-  g_message ("load_conversations_from_db called");
+  const char *user_id = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      if (account)
+        user_id = gnalk_account_get_user_id (account);
+    }
+  g_message ("[%s] load_conversations_from_db called", user_id ? user_id : "?");
 
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
   if (!app)
@@ -807,12 +814,21 @@ gnalk_window_on_data_repository_changed (GnalkDataRepository *repository G_GNUC_
                                           const char          *scope,
                                           GnalkWindow         *self)
 {
-  g_debug ("Window: DataRepository data-changed (scope=%s)", scope ? scope : "(null)");
+  const char *user_id = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      if (account)
+        user_id = gnalk_account_get_user_id (account);
+    }
+
+  g_debug ("[%s] Window: DataRepository data-changed (scope=%s)",
+           user_id ? user_id : "?", scope ? scope : "(null)");
 
   /* Reload conversation list when conversations data changes */
   if (g_strcmp0 (scope, "conversations") == 0)
     {
-      g_message ("Window: Conversations changed via DataRepository, reloading from DB");
+      g_message ("[%s] Window: Conversations changed, reloading from DB", user_id ? user_id : "?");
       gnalk_window_load_conversations_from_db (self);
     }
 }
