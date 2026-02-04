@@ -38,18 +38,21 @@ void gnalk_log_shutdown (void);
 
 /**
  * gnalk_log_http_request:
+ * @account: Account/user ID for context (may be NULL)
  * @method: HTTP method (GET, POST, etc.)
  * @url: Request URL
  * @body: Request body (may be NULL)
  *
  * Log an outgoing HTTP request.
  */
-void gnalk_log_http_request (const char *method,
+void gnalk_log_http_request (const char *account,
+                               const char *method,
                                const char *url,
                                const char *body);
 
 /**
  * gnalk_log_http_response:
+ * @account: Account/user ID for context (may be NULL)
  * @status_code: HTTP status code
  * @reason_phrase: Status reason phrase
  * @body: Response body (may be NULL)
@@ -57,26 +60,31 @@ void gnalk_log_http_request (const char *method,
  *
  * Log an incoming HTTP response.
  */
-void gnalk_log_http_response (guint       status_code,
+void gnalk_log_http_response (const char *account,
+                                guint       status_code,
                                 const char *reason_phrase,
                                 const char *body,
                                 const char *url);
 
 /**
  * gnalk_log_ws_send:
+ * @account: Account/user ID for context (may be NULL)
  * @message: WebSocket message being sent
  *
  * Log an outgoing WebSocket message.
  */
-void gnalk_log_ws_send (const char *message);
+void gnalk_log_ws_send (const char *account,
+                          const char *message);
 
 /**
  * gnalk_log_ws_recv:
+ * @account: Account/user ID for context (may be NULL)
  * @message: WebSocket message received
  *
  * Log an incoming WebSocket message.
  */
-void gnalk_log_ws_recv (const char *message);
+void gnalk_log_ws_recv (const char *account,
+                          const char *message);
 
 /**
  * gnalk_log_webrtc:

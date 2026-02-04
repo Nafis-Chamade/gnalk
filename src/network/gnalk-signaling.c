@@ -263,7 +263,7 @@ on_ws_message (SoupWebsocketConnection *ws G_GNUC_UNUSED,
   const char *data = g_bytes_get_data (message, &size);
 
   g_autofree char *msg_copy = g_strndup (data, size);
-  gnalk_log_ws_recv (msg_copy);
+  gnalk_log_ws_recv (self->user_id, msg_copy);
 
   g_autoptr(JsonParser) parser = json_parser_new ();
   g_autoptr(GError) error = NULL;
@@ -697,7 +697,7 @@ send_hello (GnalkSignaling *self)
   json_generator_set_root (gen, root);
   g_autofree char *json_str = json_generator_to_data (gen, NULL);
 
-  gnalk_log_ws_send (json_str);
+  gnalk_log_ws_send (self->user_id, json_str);
 
   soup_websocket_connection_send_text (self->ws_connection, json_str);
 }
@@ -893,7 +893,7 @@ gnalk_signaling_send_message (GnalkSignaling *self,
   json_generator_set_root (gen, wrapped);
   g_autofree char *json_str = json_generator_to_data (gen, NULL);
 
-  gnalk_log_ws_send (json_str);
+  gnalk_log_ws_send (self->user_id, json_str);
 
   soup_websocket_connection_send_text (self->ws_connection, json_str);
 }

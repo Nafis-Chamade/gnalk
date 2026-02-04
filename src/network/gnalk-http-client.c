@@ -241,7 +241,7 @@ create_message (GnalkHttpClient *self,
   else
     url = g_strdup_printf ("%s%s", self->server_url, endpoint);
 
-  gnalk_log_http_request (method, url, NULL);
+  gnalk_log_http_request (self->user_id, method, url, NULL);
 
   msg = soup_message_new (method, url);
   if (!msg)
@@ -256,14 +256,7 @@ create_message (GnalkHttpClient *self,
   soup_message_headers_append (headers, "Accept", "application/json");
 
   if (self->auth_header)
-    {
-      soup_message_headers_append (headers, "Authorization", self->auth_header);
-      g_message ("HTTP request to %s with auth for user %s (client=%p)", url, self->user_id, (void*)self);
-    }
-  else
-    {
-      g_warning ("HTTP request to %s WITHOUT auth! (client=%p)", url, (void*)self);
-    }
+    soup_message_headers_append (headers, "Authorization", self->auth_header);
 
   return msg;
 }
@@ -283,7 +276,7 @@ create_bytes_message (GnalkHttpClient *self,
   else
     url = g_strdup_printf ("%s%s", self->server_url, endpoint);
 
-  gnalk_log_http_request (method, url, NULL);
+  gnalk_log_http_request (self->user_id, method, url, NULL);
 
   msg = soup_message_new (method, url);
   if (!msg)
@@ -358,7 +351,7 @@ on_json_response (GObject      *source,
 
   if (error)
     {
-      gnalk_log_http_response (0, error->message, NULL, data->url);
+      gnalk_log_http_response (client->user_id, 0, error->message, NULL, data->url);
 
       /* Emit server-error signal for timeout and network errors */
       GnalkHttpErrorType error_type = gnalk_http_error_type_from_error (error, 0);
@@ -382,7 +375,7 @@ on_json_response (GObject      *source,
   gsize size;
   const char *body = g_bytes_get_data (bytes, &size);
 
-  gnalk_log_http_response (status, reason, body, data->url);
+  gnalk_log_http_response (client->user_id, status, reason, body, data->url);
 
   if (status == SOUP_STATUS_NOT_MODIFIED || size == 0)
     {
@@ -512,7 +505,7 @@ on_bytes_response (GObject      *source,
   gsize size = bytes ? g_bytes_get_size (bytes) : 0;
   g_autofree char *log_body = g_strdup_printf ("[binary %zu bytes, %s]",
                                                 size, content_type ? content_type : "unknown");
-  gnalk_log_http_response (status, reason, log_body, data->url);
+  gnalk_log_http_response (client->user_id, status, reason, log_body, data->url);
 
   if (!SOUP_STATUS_IS_SUCCESSFUL (status))
     {
@@ -1299,7 +1292,7 @@ gnalk_http_client_add_reaction (GnalkHttpClient   *self,
 
   /* Build JSON payload: {"reaction":"👍"} */
   g_autofree char *body = g_strdup_printf ("{\"reaction\":\"%s\"}", reaction);
-  gnalk_log_http_request ("POST", endpoint, body);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -1331,7 +1324,7 @@ gnalk_http_client_set_user_status (GnalkHttpClient   *self,
   SoupMessage *msg = create_message (self, "PUT", endpoint);
 
   g_autofree char *body = g_strdup_printf ("{\"statusType\":\"%s\"}", status_type);
-  gnalk_log_http_request ("PUT", endpoint, body);
+  gnalk_log_http_request (self->user_id, "PUT", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -1362,7 +1355,7 @@ gnalk_http_client_send_heartbeat (GnalkHttpClient   *self,
 
   /* Heartbeat requires status parameter */
   const char *body = "{\"status\":\"online\"}";
-  gnalk_log_http_request ("PUT", endpoint, body);
+  gnalk_log_http_request (self->user_id, "PUT", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -1444,7 +1437,7 @@ gnalk_http_client_create_conversation (GnalkHttpClient   *self,
   json_generator_set_root (gen, root);
   g_autofree char *body = json_generator_to_data (gen, NULL);
 
-  gnalk_log_http_request ("POST", endpoint, body);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -1476,7 +1469,7 @@ gnalk_http_client_leave_conversation (GnalkHttpClient   *self,
 
   SoupMessage *msg = create_message (self, "DELETE", endpoint);
 
-  gnalk_log_http_request ("DELETE", endpoint, NULL);
+  gnalk_log_http_request (self->user_id, "DELETE", endpoint, NULL);
 
   HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
@@ -1504,7 +1497,7 @@ gnalk_http_client_delete_conversation (GnalkHttpClient   *self,
 
   SoupMessage *msg = create_message (self, "DELETE", endpoint);
 
-  gnalk_log_http_request ("DELETE", endpoint, NULL);
+  gnalk_log_http_request (self->user_id, "DELETE", endpoint, NULL);
 
   HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
@@ -1534,7 +1527,7 @@ gnalk_http_client_set_conversation_favorite (GnalkHttpClient   *self,
   const char *method = favorite ? "POST" : "DELETE";
   SoupMessage *msg = create_message (self, method, endpoint);
 
-  gnalk_log_http_request (method, endpoint, NULL);
+  gnalk_log_http_request (self->user_id, method, endpoint, NULL);
 
   HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
@@ -1564,7 +1557,7 @@ gnalk_http_client_search_users (GnalkHttpClient   *self,
 
   SoupMessage *msg = create_message (self, "GET", endpoint);
 
-  gnalk_log_http_request ("GET", endpoint, NULL);
+  gnalk_log_http_request (self->user_id, "GET", endpoint, NULL);
 
   HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
@@ -1605,7 +1598,7 @@ gnalk_http_client_set_room_description (GnalkHttpClient   *self,
   json_generator_set_root (gen, root);
   g_autofree char *body = json_generator_to_data (gen, NULL);
 
-  gnalk_log_http_request ("PUT", endpoint, body);
+  gnalk_log_http_request (self->user_id, "PUT", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -1653,7 +1646,7 @@ gnalk_http_client_add_participant (GnalkHttpClient   *self,
   json_generator_set_root (gen, root);
   g_autofree char *body = json_generator_to_data (gen, NULL);
 
-  gnalk_log_http_request ("POST", endpoint, body);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -1731,7 +1724,7 @@ gnalk_http_client_join_room_as_guest (GnalkHttpClient   *self,
   json_generator_set_root (gen2, root2);
   g_autofree char *body2 = json_generator_to_data (gen2, NULL);
 
-  gnalk_log_http_request ("POST", endpoint, body2);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body2);
 
   GBytes *body_bytes2 = g_bytes_new (body2, strlen (body2));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes2);
@@ -1778,7 +1771,7 @@ gnalk_http_client_set_guest_name (GnalkHttpClient   *self,
   json_generator_set_root (gen3, root3);
   g_autofree char *body3 = json_generator_to_data (gen3, NULL);
 
-  gnalk_log_http_request ("POST", endpoint, body3);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body3);
 
   GBytes *body_bytes3 = g_bytes_new (body3, strlen (body3));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes3);
@@ -1854,7 +1847,7 @@ on_head_response (GObject      *source,
 
   if (error)
     {
-      gnalk_log_http_response (0, error->message, NULL, data->url);
+      gnalk_log_http_response (client->user_id, 0, error->message, NULL, data->url);
       if (data->callback)
         data->callback (client, FALSE, error, data->user_data);
       g_object_unref (client);
@@ -1865,7 +1858,7 @@ on_head_response (GObject      *source,
   status = soup_message_get_status (msg);
   const char *reason = soup_message_get_reason_phrase (msg);
 
-  gnalk_log_http_response (status, reason, NULL, data->url);
+  gnalk_log_http_response (client->user_id, status, reason, NULL, data->url);
 
   /* File exists if we get 200, doesn't exist if 404 */
   gboolean exists = SOUP_STATUS_IS_SUCCESSFUL (status);
@@ -1944,7 +1937,7 @@ on_upload_response (GObject      *source,
 
   if (error)
     {
-      gnalk_log_http_response (0, error->message, NULL, data->url);
+      gnalk_log_http_response (client->user_id, 0, error->message, NULL, data->url);
       if (data->callback)
         data->callback (client, FALSE, error, data->user_data);
       g_object_unref (client);
@@ -1955,7 +1948,7 @@ on_upload_response (GObject      *source,
   status = soup_message_get_status (msg);
   const char *reason = soup_message_get_reason_phrase (msg);
 
-  gnalk_log_http_response (status, reason, NULL, data->url);
+  gnalk_log_http_response (client->user_id, status, reason, NULL, data->url);
 
   /* 201 Created or 204 No Content means success */
   gboolean success = (status == SOUP_STATUS_CREATED || status == SOUP_STATUS_NO_CONTENT ||
@@ -2014,7 +2007,7 @@ gnalk_http_client_upload_file (GnalkHttpClient      *self,
 
   gsize size = g_bytes_get_size (file_bytes);
   g_autofree char *log_body = g_strdup_printf ("[binary %zu bytes]", size);
-  gnalk_log_http_request ("PUT", endpoint, log_body);
+  gnalk_log_http_request (self->user_id, "PUT", endpoint, log_body);
 
   /* Set request body */
   soup_message_set_request_body_from_bytes (msg, content_type, file_bytes);
@@ -2093,7 +2086,7 @@ gnalk_http_client_share_to_conversation (GnalkHttpClient   *self,
                                escaped_path, room_token, escaped_meta);
     }
 
-  gnalk_log_http_request ("POST", endpoint, body);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/x-www-form-urlencoded", body_bytes);
@@ -2140,7 +2133,7 @@ gnalk_http_client_set_room_name (GnalkHttpClient   *self,
   json_generator_set_root (gen, root);
   g_autofree char *body = json_generator_to_data (gen, NULL);
 
-  gnalk_log_http_request ("PUT", endpoint, body);
+  gnalk_log_http_request (self->user_id, "PUT", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -2202,7 +2195,7 @@ gnalk_http_client_upload_room_avatar (GnalkHttpClient      *self,
 
   gsize size = g_bytes_get_size (avatar_bytes);
   g_autofree char *log_body = g_strdup_printf ("[multipart avatar %zu bytes]", size);
-  gnalk_log_http_request ("POST", url, log_body);
+  gnalk_log_http_request (self->user_id, "POST", url, log_body);
 
   HttpBoolCallbackData *data = g_new0 (HttpBoolCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
@@ -2243,7 +2236,7 @@ gnalk_http_client_set_notification_level (GnalkHttpClient   *self,
   json_generator_set_root (gen, root);
   g_autofree char *body = json_generator_to_data (gen, NULL);
 
-  gnalk_log_http_request ("POST", endpoint, body);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -2288,7 +2281,7 @@ gnalk_http_client_set_call_notifications (GnalkHttpClient   *self,
   json_generator_set_root (gen, root);
   g_autofree char *body = json_generator_to_data (gen, NULL);
 
-  gnalk_log_http_request ("POST", endpoint, body);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -2324,7 +2317,7 @@ gnalk_http_client_get_shared_items (GnalkHttpClient   *self,
 
   SoupMessage *msg = create_message (self, "GET", endpoint);
 
-  gnalk_log_http_request ("GET", endpoint, NULL);
+  gnalk_log_http_request (self->user_id, "GET", endpoint, NULL);
 
   HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
@@ -2354,7 +2347,7 @@ gnalk_http_client_remove_attendee (GnalkHttpClient   *self,
 
   SoupMessage *msg = create_message (self, "DELETE", endpoint);
 
-  gnalk_log_http_request ("DELETE", endpoint, NULL);
+  gnalk_log_http_request (self->user_id, "DELETE", endpoint, NULL);
 
   HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
@@ -2395,7 +2388,7 @@ gnalk_http_client_promote_moderator (GnalkHttpClient   *self,
   json_generator_set_root (gen, root);
   g_autofree char *body = json_generator_to_data (gen, NULL);
 
-  gnalk_log_http_request ("POST", endpoint, body);
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body);
 
   GBytes *body_bytes = g_bytes_new (body, strlen (body));
   soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
@@ -2429,7 +2422,7 @@ gnalk_http_client_demote_moderator (GnalkHttpClient   *self,
 
   SoupMessage *msg = create_message (self, "DELETE", endpoint);
 
-  gnalk_log_http_request ("DELETE", endpoint, NULL);
+  gnalk_log_http_request (self->user_id, "DELETE", endpoint, NULL);
 
   HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);

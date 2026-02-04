@@ -180,7 +180,8 @@ gnalk_log_shutdown (void)
 }
 
 void
-gnalk_log_http_request (const char *method,
+gnalk_log_http_request (const char *account,
+                          const char *method,
                           const char *url,
                           const char *body)
 {
@@ -191,11 +192,11 @@ gnalk_log_http_request (const char *method,
   else
     print_timestamp ();
 
-  fprintf (out, ">>> HTTP Request\n");
-  fprintf (out, "    Method: %s\n", method);
-  fprintf (out, "    URL: %s\n", url);
+  if (account && *account)
+    fprintf (out, "[%s] ", account);
+  fprintf (out, ">>> HTTP %s %s", method, url);
   if (body && *body)
-    fprintf (out, "    Body: %s\n", body);
+    fprintf (out, "\n    Body: %s", body);
   fprintf (out, "\n");
 
   if (http_log_file)
@@ -203,7 +204,8 @@ gnalk_log_http_request (const char *method,
 }
 
 void
-gnalk_log_http_response (guint       status_code,
+gnalk_log_http_response (const char *account,
+                           guint       status_code,
                            const char *reason_phrase,
                            const char *body,
                            const char *url)
@@ -215,12 +217,13 @@ gnalk_log_http_response (guint       status_code,
   else
     print_timestamp ();
 
-  fprintf (out, "<<< HTTP Response\n");
+  if (account && *account)
+    fprintf (out, "[%s] ", account);
+  fprintf (out, "<<< HTTP %u %s", status_code, reason_phrase ? reason_phrase : "");
   if (url && *url)
-    fprintf (out, "    URL: %s\n", url);
-  fprintf (out, "    Status: %u %s\n", status_code, reason_phrase ? reason_phrase : "");
+    fprintf (out, " %s", url);
   if (body && *body)
-    fprintf (out, "    Body: %s\n", body);
+    fprintf (out, "\n    Body: %s", body);
   fprintf (out, "\n");
 
   if (http_log_file)
@@ -228,7 +231,8 @@ gnalk_log_http_response (guint       status_code,
 }
 
 void
-gnalk_log_ws_send (const char *message)
+gnalk_log_ws_send (const char *account,
+                     const char *message)
 {
   FILE *out = ws_log_file ? ws_log_file : stdout;
 
@@ -237,14 +241,17 @@ gnalk_log_ws_send (const char *message)
   else
     print_timestamp ();
 
-  fprintf (out, ">>> WS Sending: %s\n", message ? message : "(null)");
+  if (account && *account)
+    fprintf (out, "[%s] ", account);
+  fprintf (out, ">>> %s\n", message ? message : "(null)");
 
   if (ws_log_file)
     fflush (ws_log_file);
 }
 
 void
-gnalk_log_ws_recv (const char *message)
+gnalk_log_ws_recv (const char *account,
+                     const char *message)
 {
   FILE *out = ws_log_file ? ws_log_file : stdout;
 
@@ -253,7 +260,9 @@ gnalk_log_ws_recv (const char *message)
   else
     print_timestamp ();
 
-  fprintf (out, "<<< WS Received: %s\n", message ? message : "(null)");
+  if (account && *account)
+    fprintf (out, "[%s] ", account);
+  fprintf (out, "<<< %s\n", message ? message : "(null)");
 
   if (ws_log_file)
     fflush (ws_log_file);

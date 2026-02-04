@@ -79,7 +79,7 @@ send_text_message (GnalkPushClient *self, const char *message)
       soup_websocket_connection_get_state (self->ws_connection) != SOUP_WEBSOCKET_STATE_OPEN)
     return;
 
-  gnalk_log_ws_send (message);
+  gnalk_log_ws_send (self->user_id, message);
   soup_websocket_connection_send_text (self->ws_connection, message);
 }
 
@@ -98,7 +98,7 @@ on_ws_message (SoupWebsocketConnection *ws,
   const char *data = g_bytes_get_data (message, &size);
   g_autofree char *msg = g_strndup (data, size);
 
-  gnalk_log_ws_recv (msg);
+  gnalk_log_ws_recv (self->user_id, msg);
 
   /* Handle authentication flow */
   if (self->state == PUSH_STATE_SENT_PASSWORD)
