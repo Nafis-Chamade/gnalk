@@ -776,7 +776,8 @@ gnalk_preferences_dialog_init (GnalkPreferencesDialog *self)
   /* Set up background style combo row */
   const char *background_style_labels[] = {
     "Flat", "Grid", "Hexagons", "Isometric", "Rhombus", "ZigZag",
-    "Houndstooth", "Herringbone", "Stars", "Triangles", "Waves", "Scales", "Cross", NULL
+    "Houndstooth", "Herringbone", "Stars", "Triangles", "Waves", "Scales", "Cross",
+    "Mosaic", NULL
   };
   self->background_style_names = gtk_string_list_new (background_style_labels);
   adw_combo_row_set_model (ADW_COMBO_ROW (self->background_style_row),
@@ -784,7 +785,7 @@ gnalk_preferences_dialog_init (GnalkPreferencesDialog *self)
 
   /* Set initial background style selection from settings */
   gint current_bg = g_settings_get_int (self->settings, "conversation-background");
-  if (current_bg >= 0 && current_bg <= 12)
+  if (current_bg >= 0 && current_bg <= 13)
     adw_combo_row_set_selected (ADW_COMBO_ROW (self->background_style_row), (guint) current_bg);
 
   g_signal_connect (self->background_style_row, "notify::selected",

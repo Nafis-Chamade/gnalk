@@ -1,4 +1,5 @@
 #include "gnalk-message-view.h"
+#include "gnalk-background-generator.h"
 #include "gnalk-log.h"
 #include <gio/gio.h>
 
@@ -15,6 +16,9 @@ struct _GnalkMessageView
 
   GSettings *settings;
   gulong bg_style_handler_id;
+
+  /* Mosaic background */
+  GtkCssProvider *mosaic_provider;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageView, gnalk_message_view, GTK_TYPE_BOX)
@@ -130,6 +134,7 @@ static const char *bg_style_classes[] = {
   "bg-waves",     /* 10 */
   "bg-scales",    /* 11 */
   "bg-cross",     /* 12 */
+  "bg-mosaic",    /* 13 */
 };
 
 static void
@@ -163,6 +168,14 @@ gnalk_message_view_dispose (GObject *object)
     {
       g_signal_handler_disconnect (self->settings, self->bg_style_handler_id);
       self->bg_style_handler_id = 0;
+    }
+
+  if (self->mosaic_provider)
+    {
+      gtk_style_context_remove_provider_for_display (
+        gtk_widget_get_display (GTK_WIDGET (self)),
+        GTK_STYLE_PROVIDER (self->mosaic_provider));
+      g_clear_object (&self->mosaic_provider);
     }
 
   g_clear_object (&self->settings);
@@ -490,4 +503,42 @@ gnalk_message_view_get_first_visible_position (GnalkMessageView *self)
     estimated_pos = n_items - 1;
 
   return estimated_pos;
+}
+
+void
+gnalk_message_view_set_mosaic_avatars (GnalkMessageView *self,
+                                        GPtrArray        *textures)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  /* Remove old mosaic provider if any */
+  if (self->mosaic_provider)
+    {
+      gtk_style_context_remove_provider_for_display (
+        gtk_widget_get_display (GTK_WIDGET (self)),
+        GTK_STYLE_PROVIDER (self->mosaic_provider));
+      g_clear_object (&self->mosaic_provider);
+    }
+
+  if (!textures || textures->len == 0)
+    return;
+
+  /* Generate the mosaic tile: 128x128 with 32px avatars, 10% opacity */
+  GdkTexture *mosaic = gnalk_background_generator_create_avatar_mosaic (
+    textures, 128, 32, 0.10);
+
+  if (!mosaic)
+    return;
+
+  /* Create and apply CSS provider */
+  self->mosaic_provider = gnalk_background_generator_create_css_provider (mosaic);
+  g_object_unref (mosaic);
+
+  if (self->mosaic_provider)
+    {
+      gtk_style_context_add_provider_for_display (
+        gtk_widget_get_display (GTK_WIDGET (self)),
+        GTK_STYLE_PROVIDER (self->mosaic_provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
 }

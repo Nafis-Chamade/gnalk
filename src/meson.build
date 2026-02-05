@@ -53,6 +53,7 @@ utils_sources = [
   'utils/gnalk-avatar-cache.c',
   'utils/gnalk-markdown.c',
   'utils/gnalk-goa.c',
+  'utils/gnalk-background-generator.c',
 ]
 
 ui_sources = [
