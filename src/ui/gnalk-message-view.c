@@ -507,7 +507,8 @@ gnalk_message_view_get_first_visible_position (GnalkMessageView *self)
 
 void
 gnalk_message_view_set_mosaic_avatars (GnalkMessageView *self,
-                                        GPtrArray        *textures)
+                                        GPtrArray        *textures,
+                                        GdkTexture       *room_avatar)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
 
@@ -523,9 +524,20 @@ gnalk_message_view_set_mosaic_avatars (GnalkMessageView *self,
   if (!textures || textures->len == 0)
     return;
 
-  /* Generate the mosaic tile: 128x128 with 32px avatars, 10% opacity */
+  /* Build combined textures array with room avatar if present */
+  GPtrArray *all_textures = g_ptr_array_new_with_free_func (g_object_unref);
+
+  if (room_avatar)
+    g_ptr_array_add (all_textures, g_object_ref (room_avatar));
+
+  for (guint i = 0; i < textures->len; i++)
+    g_ptr_array_add (all_textures, g_object_ref (g_ptr_array_index (textures, i)));
+
+  /* Generate the mosaic tile: 128x128 with 32px avatars, 25% opacity */
   GdkTexture *mosaic = gnalk_background_generator_create_avatar_mosaic (
-    textures, 128, 32, 0.10);
+    all_textures, 128, 32, 0.25);
+
+  g_ptr_array_unref (all_textures);
 
   if (!mosaic)
     return;

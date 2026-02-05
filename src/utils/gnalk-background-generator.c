@@ -57,9 +57,8 @@ surface_to_light_grayscale (cairo_surface_t *surface, double opacity)
           /* Convert to grayscale using luminance formula */
           guchar gray = (guchar)(0.299 * r + 0.587 * g + 0.114 * b);
 
-          /* Lighten: blend with white (make it very light) */
-          /* Result = gray * 0.3 + white * 0.7 = gray * 0.3 + 255 * 0.7 */
-          guchar light_gray = (guchar)(gray * 0.25 + 255 * 0.75);
+          /* Lighten: blend with white (50% gray, 50% white) */
+          guchar light_gray = (guchar)(gray * 0.5 + 255 * 0.5);
 
           /* Apply opacity to alpha */
           guchar new_alpha = (guchar)(a * opacity);
@@ -101,13 +100,11 @@ gnalk_background_generator_create_avatar_mosaic (GPtrArray *textures,
   if (cols < 1) cols = 1;
   if (rows < 1) rows = 1;
 
-  /* Spacing to center avatars in their cells */
+  /* Cell dimensions */
   double cell_width = (double)tile_size / cols;
   double cell_height = (double)tile_size / rows;
-  double offset_x = (cell_width - avatar_size) / 2.0;
-  double offset_y = (cell_height - avatar_size) / 2.0;
 
-  /* Draw avatars in a grid pattern */
+  /* Draw avatars in a grid pattern with random variations */
   int texture_index = 0;
   for (int row = 0; row < rows; row++)
     {
@@ -122,26 +119,34 @@ gnalk_background_generator_create_avatar_mosaic (GPtrArray *textures,
           /* Convert to light grayscale */
           surface_to_light_grayscale (avatar_surface, opacity);
 
-          /* Calculate position */
-          double x = col * cell_width + offset_x;
-          double y = row * cell_height + offset_y;
+          /* Pseudo-random variations based on position (deterministic for tiling) */
+          guint seed = (row * 7 + col * 13 + texture_index * 17) % 100;
+          double size_factor = 0.8 + (seed % 41) / 100.0;  /* 0.8 to 1.2 */
+          double rotation = ((seed % 31) - 15) * G_PI / 180.0;  /* -15° to +15° */
+
+          /* Calculate position (center of cell) */
+          double center_x = col * cell_width + cell_width / 2.0;
+          double center_y = row * cell_height + cell_height / 2.0;
 
           /* Scale and draw */
           int avatar_width = cairo_image_surface_get_width (avatar_surface);
           int avatar_height = cairo_image_surface_get_height (avatar_surface);
-          double scale_x = (double)avatar_size / avatar_width;
-          double scale_y = (double)avatar_size / avatar_height;
+          double base_scale = (double)avatar_size / avatar_width;
+          double final_scale = base_scale * size_factor;
 
           cairo_save (cr);
-          cairo_translate (cr, x, y);
-          cairo_scale (cr, scale_x, scale_y);
 
-          /* Clip to circle for round avatars */
-          cairo_arc (cr, avatar_width / 2.0, avatar_height / 2.0,
-                     avatar_width / 2.0, 0, 2 * G_PI);
+          /* Move to center, rotate, then draw centered */
+          cairo_translate (cr, center_x, center_y);
+          cairo_rotate (cr, rotation);
+          cairo_scale (cr, final_scale, final_scale);
+
+          /* Clip to circle for round avatars (centered at origin) */
+          cairo_arc (cr, 0, 0, avatar_width / 2.0, 0, 2 * G_PI);
           cairo_clip (cr);
 
-          cairo_set_source_surface (cr, avatar_surface, 0, 0);
+          /* Draw avatar centered */
+          cairo_set_source_surface (cr, avatar_surface, -avatar_width / 2.0, -avatar_height / 2.0);
           cairo_paint (cr);
           cairo_restore (cr);
 

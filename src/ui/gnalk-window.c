@@ -1503,6 +1503,9 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
   else
     gnalk_participants_list_hide (self->participants_list);
 
+  /* Update mosaic background with participant avatars */
+  gnalk_window_update_mosaic_background (self, participants);
+
   json_array_unref (participants);
 }
 

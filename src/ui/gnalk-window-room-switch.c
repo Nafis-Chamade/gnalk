@@ -8,6 +8,7 @@
 #include "gnalk-application.h"
 #include "gnalk-database.h"
 #include "gnalk-conversation-data.h"
+#include "gnalk-background-generator.h"
 #include "gnalk-log.h"
 #include <glib/gi18n.h>
 
@@ -303,6 +304,133 @@ start_room_join_sequence (GnalkWindow *self, const char *token)
   gnalk_http_client_join_room (self->http_client, token, on_room_join_response, self);
 }
 
+/* ============ Mosaic Background ============ */
+
+/* Context for collecting avatars asynchronously */
+typedef struct {
+  GnalkWindow *window;
+  GPtrArray   *textures;      /* Participant avatars */
+  GdkTexture  *room_avatar;   /* Room avatar (nullable) */
+  guint        pending;
+  guint        total;
+} MosaicContext;
+
+static void
+mosaic_context_finish (MosaicContext *ctx)
+{
+  if ((ctx->textures->len > 0 || ctx->room_avatar) &&
+      ctx->window && ctx->window->message_view)
+    gnalk_message_view_set_mosaic_avatars (ctx->window->message_view,
+                                            ctx->textures,
+                                            ctx->room_avatar);
+
+  g_ptr_array_unref (ctx->textures);
+  g_clear_object (&ctx->room_avatar);
+  g_free (ctx);
+}
+
+static void
+on_mosaic_avatar_loaded (GnalkAvatarCache *cache G_GNUC_UNUSED,
+                          GdkTexture       *texture,
+                          gpointer          user_data)
+{
+  MosaicContext *ctx = user_data;
+
+  if (texture)
+    g_ptr_array_add (ctx->textures, g_object_ref (texture));
+
+  ctx->pending--;
+
+  if (ctx->pending == 0)
+    mosaic_context_finish (ctx);
+}
+
+static void
+on_mosaic_room_avatar_loaded (GnalkAvatarCache *cache G_GNUC_UNUSED,
+                               GdkTexture       *texture,
+                               gpointer          user_data)
+{
+  MosaicContext *ctx = user_data;
+
+  if (texture)
+    ctx->room_avatar = g_object_ref (texture);
+
+  ctx->pending--;
+
+  if (ctx->pending == 0)
+    mosaic_context_finish (ctx);
+}
+
+/**
+ * gnalk_window_update_mosaic_background:
+ * @self: The window
+ * @participants: JsonArray of participants
+ *
+ * Updates the mosaic background with participant avatars.
+ * Fetches avatars asynchronously and updates the message view when done.
+ */
+void
+gnalk_window_update_mosaic_background (GnalkWindow *self, JsonArray *participants)
+{
+  if (!participants || !self->avatar_cache)
+    return;
+
+  /* Check if mosaic background is enabled */
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GSettings *settings = gnalk_application_get_settings (app);
+  gint bg_style = g_settings_get_int (settings, "conversation-background");
+
+  /* 13 = Mosaic */
+  if (bg_style != 13)
+    return;
+
+  guint n = json_array_get_length (participants);
+  if (n == 0)
+    return;
+
+  /* First pass: count valid participants (to avoid use-after-free when
+   * callbacks fire synchronously for cached avatars) */
+  guint valid_count = 0;
+  for (guint i = 0; i < n; i++)
+    {
+      JsonObject *p = json_array_get_object_element (participants, i);
+      const char *actor_id = json_object_get_string_member_with_default (p, "actorId", "");
+      if (actor_id && *actor_id)
+        valid_count++;
+    }
+
+  if (valid_count == 0)
+    return;
+
+  /* Create context for async avatar collection */
+  MosaicContext *ctx = g_new0 (MosaicContext, 1);
+  ctx->window = self;
+  ctx->textures = g_ptr_array_new_with_free_func (g_object_unref);
+  ctx->room_avatar = NULL;
+  ctx->pending = valid_count + 1;  /* +1 for room avatar */
+  ctx->total = valid_count + 1;
+
+  /* Fetch room avatar */
+  if (self->current_room_token)
+    gnalk_avatar_cache_get_room_avatar (self->avatar_cache, self->current_room_token,
+                                         on_mosaic_room_avatar_loaded, ctx);
+  else
+    ctx->pending--;  /* No room token, skip room avatar */
+
+  /* Second pass: request participant avatars (callbacks may fire synchronously).
+   * Note: Do NOT access ctx after this loop - if all callbacks fire synchronously,
+   * the last one will free ctx via mosaic_context_finish. */
+  for (guint i = 0; i < n; i++)
+    {
+      JsonObject *p = json_array_get_object_element (participants, i);
+      const char *actor_id = json_object_get_string_member_with_default (p, "actorId", "");
+
+      if (actor_id && *actor_id)
+        gnalk_avatar_cache_get_user_avatar (self->avatar_cache, actor_id, 64,
+                                             on_mosaic_avatar_loaded, ctx);
+    }
+}
+
 /* ============ Load Participants ============ */
 
 /* Load and display participants for a room (cache-first pattern) */
@@ -395,6 +523,9 @@ gnalk_window_load_participants (GnalkWindow *self, const char *token)
             }
           else
             gnalk_participants_list_hide (self->participants_list);
+
+          /* Update mosaic background with participant avatars */
+          gnalk_window_update_mosaic_background (self, cached);
 
           json_array_unref (cached);
         }

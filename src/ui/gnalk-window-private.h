@@ -394,4 +394,7 @@ void gnalk_window_on_message_controller_upload_failed (GnalkMessageController *c
 /* Participant controller signals */
 void gnalk_window_on_participant_controller_changed   (GnalkParticipantController *controller, const char *room_token, GnalkWindow *self);
 
+/* Mosaic background update (uses participant avatars) */
+void gnalk_window_update_mosaic_background (GnalkWindow *self, JsonArray *participants);
+
 G_END_DECLS

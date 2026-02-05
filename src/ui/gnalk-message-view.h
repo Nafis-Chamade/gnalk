@@ -64,12 +64,14 @@ guint gnalk_message_view_get_first_visible_position (GnalkMessageView *self);
  * gnalk_message_view_set_mosaic_avatars:
  * @self: The message view
  * @textures: (element-type GdkTexture) (nullable): Array of participant avatar textures
+ * @room_avatar: (nullable): Room avatar texture to include in the mosaic
  *
  * Sets the participant avatars for the mosaic background pattern.
  * When the "Mosaic" background style is selected, these avatars will be
  * displayed as a light grayscale tiled pattern behind the messages.
  */
 void gnalk_message_view_set_mosaic_avatars (GnalkMessageView *self,
-                                             GPtrArray        *textures);
+                                             GPtrArray        *textures,
+                                             GdkTexture       *room_avatar);
 
 G_END_DECLS
