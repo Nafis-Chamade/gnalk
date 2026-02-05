@@ -3433,9 +3433,6 @@ gnalk_window_init (GnalkWindow *self)
                     G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
   g_signal_connect (self->message_controller, "older-messages-loaded",
                     G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
-  /* Note: messages-synced signal removed - SyncCoordinator handles background sync */
-  g_signal_connect_swapped (self->message_controller, "conversation-subtitle-updated",
-                            G_CALLBACK (gnalk_window_load_conversations_from_db), self);
 
   /* Create conversation controller for CRUD operations (will be recreated in switch_to_session) */
   {

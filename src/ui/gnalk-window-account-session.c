@@ -165,8 +165,6 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
                     G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
   g_signal_connect (self->message_controller, "older-messages-loaded",
                     G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
-  g_signal_connect_swapped (self->message_controller, "conversation-subtitle-updated",
-                            G_CALLBACK (gnalk_window_load_conversations_from_db), self);
 
   /* Close the current conversation when switching accounts.
    * The new account may not have access to the same room. */

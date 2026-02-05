@@ -46,7 +46,6 @@ enum {
   SIGNAL_UPLOAD_COMPLETED,
   SIGNAL_UPLOAD_FAILED,
   SIGNAL_READ_STATUS_UPDATED,
-  SIGNAL_CONVERSATION_SUBTITLE_UPDATED,
   N_SIGNALS
 };
 
@@ -266,13 +265,6 @@ gnalk_message_controller_class_init (GnalkMessageControllerClass *klass)
                   0, NULL, NULL, NULL,
                   G_TYPE_NONE, 1,
                   G_TYPE_INT64);     /* last_common_read_message */
-
-  signals[SIGNAL_CONVERSATION_SUBTITLE_UPDATED] =
-    g_signal_new ("conversation-subtitle-updated",
-                  G_TYPE_FROM_CLASS (klass),
-                  G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL,
-                  G_TYPE_NONE, 0);
 }
 
 static void
@@ -771,9 +763,6 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                                                         actor_name,
                                                                         message_type,
                                                                         params_json);
-              /* Note: DataRepository already emits data-changed, but we keep this
-               * signal for backwards compatibility with existing window connections */
-              g_signal_emit (self, signals[SIGNAL_CONVERSATION_SUBTITLE_UPDATED], 0);
             }
         }
     }
@@ -1014,7 +1003,6 @@ on_send_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                                                         actor_name,
                                                                         message_type,
                                                                         params_json);
-              g_signal_emit (self, signals[SIGNAL_CONVERSATION_SUBTITLE_UPDATED], 0);
             }
         }
     }
