@@ -64,6 +64,8 @@ struct _GnalkPreferencesDialog
   /* Appearance section */
   GtkWidget *color_scheme_row;
   GtkStringList *color_scheme_names;
+  GtkWidget *background_style_row;
+  GtkStringList *background_style_names;
 
   /* Video section */
   GtkWidget *video_source_row;
@@ -617,6 +619,15 @@ on_color_scheme_changed (AdwComboRow             *row,
 }
 
 static void
+on_background_style_changed (AdwComboRow             *row,
+                              GParamSpec              *pspec G_GNUC_UNUSED,
+                              GnalkPreferencesDialog *self)
+{
+  guint selected = adw_combo_row_get_selected (row);
+  g_settings_set_int (self->settings, "conversation-background", (gint) selected);
+}
+
+static void
 on_video_source_changed (AdwComboRow             *row,
                          GParamSpec              *pspec,
                          GnalkPreferencesDialog *self)
@@ -708,6 +719,7 @@ gnalk_preferences_dialog_finalize (GObject *object)
 
   g_clear_object (&self->settings);
   g_clear_object (&self->color_scheme_names);
+  g_clear_object (&self->background_style_names);
   g_clear_object (&self->video_devices_store);
   g_clear_object (&self->video_device_names);
   g_clear_object (&self->video_quality_names);
@@ -731,6 +743,7 @@ gnalk_preferences_dialog_class_init (GnalkPreferencesDialogClass *klass)
 
   gtk_widget_class_bind_template_child (widget_class, GnalkPreferencesDialog, close_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkPreferencesDialog, color_scheme_row);
+  gtk_widget_class_bind_template_child (widget_class, GnalkPreferencesDialog, background_style_row);
   gtk_widget_class_bind_template_child (widget_class, GnalkPreferencesDialog, video_source_row);
   gtk_widget_class_bind_template_child (widget_class, GnalkPreferencesDialog, video_quality_row);
   gtk_widget_class_bind_template_child (widget_class, GnalkPreferencesDialog, video_preview_overlay);
@@ -759,6 +772,23 @@ gnalk_preferences_dialog_init (GnalkPreferencesDialog *self)
 
   g_signal_connect (self->color_scheme_row, "notify::selected",
                     G_CALLBACK (on_color_scheme_changed), self);
+
+  /* Set up background style combo row */
+  const char *background_style_labels[] = {
+    "Flat", "Grid", "Hexagons", "Isometric", "Rhombus", "ZigZag",
+    "Houndstooth", "Herringbone", "Stars", "Triangles", "Waves", "Scales", "Cross", NULL
+  };
+  self->background_style_names = gtk_string_list_new (background_style_labels);
+  adw_combo_row_set_model (ADW_COMBO_ROW (self->background_style_row),
+                           G_LIST_MODEL (self->background_style_names));
+
+  /* Set initial background style selection from settings */
+  gint current_bg = g_settings_get_int (self->settings, "conversation-background");
+  if (current_bg >= 0 && current_bg <= 12)
+    adw_combo_row_set_selected (ADW_COMBO_ROW (self->background_style_row), (guint) current_bg);
+
+  g_signal_connect (self->background_style_row, "notify::selected",
+                    G_CALLBACK (on_background_style_changed), self);
 
   /* Create camera preview widget and add to overlay */
   self->camera_preview = gnalk_camera_preview_new ();

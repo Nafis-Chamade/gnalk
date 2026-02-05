@@ -43,6 +43,12 @@
                             <property name="subtitle" translatable="yes">Choose light or dark appearance</property>
                           </object>
                         </child>
+                        <child>
+                          <object class="AdwComboRow" id="background_style_row">
+                            <property name="title" translatable="yes">Conversation background</property>
+                            <property name="subtitle" translatable="yes">Pattern behind messages</property>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <!-- Video Section -->

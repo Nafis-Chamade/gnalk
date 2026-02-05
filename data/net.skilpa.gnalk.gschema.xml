@@ -71,6 +71,11 @@
       <summary>Color scheme</summary>
       <description>Application color scheme: 0=Auto (follow system), 1=Light, 2=Dark</description>
     </key>
+    <key name="conversation-background" type="i">
+      <default>0</default>
+      <summary>Conversation background style</summary>
+      <description>Background pattern for the message list: 0=Flat, 1=Grid, 2=Hexagons, 3=Isometric, 4=Rhombus, 5=ZigZag, 6=Houndstooth, 7=Herringbone, 8=Stars, 9=Triangles, 10=Waves, 11=Scales, 12=Cross</description>
+    </key>
     <key name="show-participants" type="b">
       <default>true</default>
       <summary>Show participants list</summary>

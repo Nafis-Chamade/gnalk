@@ -1,5 +1,6 @@
 #include "gnalk-message-view.h"
 #include "gnalk-log.h"
+#include <gio/gio.h>
 
 struct _GnalkMessageView
 {
@@ -11,6 +12,9 @@ struct _GnalkMessageView
   GtkWidget *scroll_to_bottom_button;
 
   gboolean loading_older;
+
+  GSettings *settings;
+  gulong bg_style_handler_id;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageView, gnalk_message_view, GTK_TYPE_BOX)
@@ -112,10 +116,67 @@ on_edge_reached (GtkScrolledWindow *scrolled_window,
     }
 }
 
+static const char *bg_style_classes[] = {
+  NULL,           /* 0: Flat */
+  "bg-grid",      /* 1 */
+  "bg-hexagons",  /* 2 */
+  "bg-isometric", /* 3 */
+  "bg-rhombus",   /* 4 */
+  "bg-zigzag",    /* 5 */
+  "bg-houndstooth", /* 6 */
+  "bg-herringbone", /* 7 */
+  "bg-stars",     /* 8 */
+  "bg-triangles", /* 9 */
+  "bg-waves",     /* 10 */
+  "bg-scales",    /* 11 */
+  "bg-cross",     /* 12 */
+};
+
+static void
+update_background_style (GnalkMessageView *self)
+{
+  gint style = g_settings_get_int (self->settings, "conversation-background");
+
+  /* Remove all background style classes */
+  for (gsize i = 1; i < G_N_ELEMENTS (bg_style_classes); i++)
+    gtk_widget_remove_css_class (self->list_view, bg_style_classes[i]);
+
+  /* Add the selected style class */
+  if (style > 0 && style < (gint) G_N_ELEMENTS (bg_style_classes))
+    gtk_widget_add_css_class (self->list_view, bg_style_classes[style]);
+}
+
+static void
+on_background_style_setting_changed (GSettings        *settings G_GNUC_UNUSED,
+                                      const gchar      *key G_GNUC_UNUSED,
+                                      GnalkMessageView *self)
+{
+  update_background_style (self);
+}
+
+static void
+gnalk_message_view_dispose (GObject *object)
+{
+  GnalkMessageView *self = GNALK_MESSAGE_VIEW (object);
+
+  if (self->settings && self->bg_style_handler_id)
+    {
+      g_signal_handler_disconnect (self->settings, self->bg_style_handler_id);
+      self->bg_style_handler_id = 0;
+    }
+
+  g_clear_object (&self->settings);
+
+  G_OBJECT_CLASS (gnalk_message_view_parent_class)->dispose (object);
+}
+
 static void
 gnalk_message_view_class_init (GnalkMessageViewClass *klass)
 {
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+
+  object_class->dispose = gnalk_message_view_dispose;
 
   gtk_widget_class_set_template_from_resource (widget_class,
                                                 "/net/skilpa/gnalk/gnalk-message-view.ui");
@@ -169,6 +230,12 @@ gnalk_message_view_init (GnalkMessageView *self)
   /* Connect edge-reached for lazy loading */
   g_signal_connect (self->scrolled_window, "edge-reached",
                     G_CALLBACK (on_edge_reached), self);
+
+  /* Set up background style from settings */
+  self->settings = g_settings_new ("net.skilpa.gnalk");
+  self->bg_style_handler_id = g_signal_connect (self->settings, "changed::conversation-background",
+                                                 G_CALLBACK (on_background_style_setting_changed), self);
+  update_background_style (self);
 }
 
 GnalkMessageView *

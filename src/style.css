@@ -88,9 +88,129 @@
   padding: 0;
 }
 
-/* Message list - transparent background to match surroundings */
+/* Message list background styles */
 .message-list {
   background: transparent;
+}
+
+/* Grid pattern */
+.message-list.bg-grid {
+  background-image:
+    linear-gradient(alpha(@window_fg_color, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, alpha(@window_fg_color, 0.04) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Hexagons pattern - honeycomb */
+.message-list.bg-hexagons {
+  background-image:
+    linear-gradient(30deg, alpha(@window_fg_color, 0.04) 12%, transparent 12.5%, transparent 87%, alpha(@window_fg_color, 0.04) 87.5%, alpha(@window_fg_color, 0.04)),
+    linear-gradient(150deg, alpha(@window_fg_color, 0.04) 12%, transparent 12.5%, transparent 87%, alpha(@window_fg_color, 0.04) 87.5%, alpha(@window_fg_color, 0.04)),
+    linear-gradient(30deg, alpha(@window_fg_color, 0.04) 12%, transparent 12.5%, transparent 87%, alpha(@window_fg_color, 0.04) 87.5%, alpha(@window_fg_color, 0.04)),
+    linear-gradient(150deg, alpha(@window_fg_color, 0.04) 12%, transparent 12.5%, transparent 87%, alpha(@window_fg_color, 0.04) 87.5%, alpha(@window_fg_color, 0.04)),
+    linear-gradient(60deg, alpha(@window_fg_color, 0.03) 25%, transparent 25.5%, transparent 75%, alpha(@window_fg_color, 0.03) 75%, alpha(@window_fg_color, 0.03)),
+    linear-gradient(60deg, alpha(@window_fg_color, 0.03) 25%, transparent 25.5%, transparent 75%, alpha(@window_fg_color, 0.03) 75%, alpha(@window_fg_color, 0.03));
+  background-size: 40px 70px;
+  background-position: 0 0, 0 0, 20px 35px, 20px 35px, 0 0, 20px 35px;
+}
+
+/* Isometric pattern - 3D cubes */
+.message-list.bg-isometric {
+  background-image:
+    linear-gradient(30deg, alpha(@window_fg_color, 0.05) 12%, transparent 12.5%, transparent 87%, alpha(@window_fg_color, 0.05) 87.5%),
+    linear-gradient(150deg, alpha(@window_fg_color, 0.05) 12%, transparent 12.5%, transparent 87%, alpha(@window_fg_color, 0.05) 87.5%),
+    linear-gradient(30deg, alpha(@window_fg_color, 0.05) 12%, transparent 12.5%, transparent 87%, alpha(@window_fg_color, 0.05) 87.5%),
+    linear-gradient(150deg, alpha(@window_fg_color, 0.05) 12%, transparent 12.5%, transparent 87%, alpha(@window_fg_color, 0.05) 87.5%),
+    linear-gradient(60deg, alpha(@window_fg_color, 0.06) 25%, transparent 25.5%, transparent 75%, alpha(@window_fg_color, 0.06) 75%),
+    linear-gradient(60deg, alpha(@window_fg_color, 0.06) 25%, transparent 25.5%, transparent 75%, alpha(@window_fg_color, 0.06) 75%);
+  background-size: 28px 49px;
+  background-position: 0 0, 0 0, 14px 24px, 14px 24px, 0 0, 14px 24px;
+}
+
+/* Rhombus pattern - diamonds */
+.message-list.bg-rhombus {
+  background-image:
+    linear-gradient(135deg, alpha(@window_fg_color, 0.06) 25%, transparent 25%),
+    linear-gradient(225deg, alpha(@window_fg_color, 0.06) 25%, transparent 25%),
+    linear-gradient(45deg, alpha(@window_fg_color, 0.06) 25%, transparent 25%),
+    linear-gradient(315deg, alpha(@window_fg_color, 0.06) 25%, transparent 25%);
+  background-size: 24px 24px;
+  background-position: 12px 0, 12px 0, 0 0, 0 0;
+}
+
+/* ZigZag pattern */
+.message-list.bg-zigzag {
+  background-image:
+    conic-gradient(from 225deg at 50% 50%, alpha(@window_fg_color, 0.05) 25%, transparent 25%),
+    conic-gradient(from 45deg at 50% 50%, alpha(@window_fg_color, 0.05) 25%, transparent 25%);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 0;
+}
+
+/* Houndstooth pattern */
+.message-list.bg-houndstooth {
+  background-image:
+    linear-gradient(135deg, alpha(@window_fg_color, 0.06) 25%, transparent 25%, transparent 75%, alpha(@window_fg_color, 0.06) 75%),
+    linear-gradient(45deg, alpha(@window_fg_color, 0.06) 17%, transparent 17%, transparent 25%, alpha(@window_fg_color, 0.06) 25%, alpha(@window_fg_color, 0.06) 36%, transparent 36%, transparent 64%, alpha(@window_fg_color, 0.06) 64%, alpha(@window_fg_color, 0.06) 75%, transparent 75%, transparent 83%, alpha(@window_fg_color, 0.06) 83%);
+  background-size: 24px 24px;
+}
+
+/* Herringbone pattern */
+.message-list.bg-herringbone {
+  background-image:
+    linear-gradient(45deg, alpha(@window_fg_color, 0.05) 12%, transparent 12%, transparent 88%, alpha(@window_fg_color, 0.05) 88%),
+    linear-gradient(-45deg, alpha(@window_fg_color, 0.05) 12%, transparent 12%, transparent 88%, alpha(@window_fg_color, 0.05) 88%),
+    linear-gradient(45deg, alpha(@window_fg_color, 0.05) 12%, transparent 12%, transparent 88%, alpha(@window_fg_color, 0.05) 88%),
+    linear-gradient(-45deg, alpha(@window_fg_color, 0.05) 12%, transparent 12%, transparent 88%, alpha(@window_fg_color, 0.05) 88%);
+  background-size: 16px 32px;
+  background-position: 0 0, 0 16px, 8px 8px, 8px 24px;
+}
+
+/* Stars pattern */
+.message-list.bg-stars {
+  background-image:
+    conic-gradient(from 162deg at 50% 68%, alpha(@window_fg_color, 0.06) 36deg, transparent 36deg),
+    conic-gradient(from 18deg at 19% 59%, alpha(@window_fg_color, 0.06) 36deg, transparent 36deg),
+    conic-gradient(from 306deg at 81% 59%, alpha(@window_fg_color, 0.06) 36deg, transparent 36deg);
+  background-size: 32px 32px;
+  background-position: 0 11px;
+}
+
+/* Triangles pattern */
+.message-list.bg-triangles {
+  background-image:
+    linear-gradient(120deg, alpha(@window_fg_color, 0.05) 33.33%, transparent 33.33%),
+    linear-gradient(240deg, alpha(@window_fg_color, 0.05) 33.33%, transparent 33.33%),
+    linear-gradient(0deg, alpha(@window_fg_color, 0.05) 33.33%, transparent 33.33%);
+  background-size: 24px 42px;
+}
+
+/* Waves pattern */
+.message-list.bg-waves {
+  background-image:
+    radial-gradient(ellipse 60% 40% at 50% 100%, alpha(@window_fg_color, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 40% at 50% 0%, alpha(@window_fg_color, 0.05) 0%, transparent 50%);
+  background-size: 30px 20px;
+  background-position: 0 0, 15px 10px;
+}
+
+/* Scales pattern - fish scales */
+.message-list.bg-scales {
+  background-image:
+    radial-gradient(ellipse 100% 100% at 50% 130%, transparent 50%, alpha(@window_fg_color, 0.05) 51%, alpha(@window_fg_color, 0.05) 54%, transparent 55%);
+  background-size: 24px 20px;
+  background-position: 0 0, 12px 10px;
+}
+
+/* Cross pattern */
+.message-list.bg-cross {
+  background-image:
+    linear-gradient(alpha(@window_fg_color, 0.05) 2px, transparent 2px),
+    linear-gradient(90deg, alpha(@window_fg_color, 0.05) 2px, transparent 2px),
+    linear-gradient(alpha(@window_fg_color, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, alpha(@window_fg_color, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px, 50px 50px, 10px 10px, 10px 10px;
+  background-position: -2px -2px, -2px -2px, -1px -1px, -1px -1px;
 }
 
 /* Message styling */
