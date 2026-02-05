@@ -76,36 +76,28 @@ surface_to_light_grayscale (cairo_surface_t *surface, double opacity)
   cairo_surface_mark_dirty (surface);
 }
 
-GdkTexture *
-gnalk_background_generator_create_avatar_mosaic (GPtrArray *textures,
-                                                  int        tile_size,
-                                                  int        avatar_size,
-                                                  double     opacity)
+/* Draw a single sub-tile at the given offset */
+static void
+draw_subtile (cairo_t   *cr,
+              GPtrArray *textures,
+              int        subtile_size,
+              int        avatar_size,
+              double     opacity,
+              int        offset_x,
+              int        offset_y,
+              guint      subtile_seed)
 {
-  if (!textures || textures->len == 0)
-    return NULL;
-
-  /* Create the tile surface */
-  cairo_surface_t *tile = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
-                                                       tile_size, tile_size);
-  cairo_t *cr = cairo_create (tile);
-
-  /* Clear with transparent */
-  cairo_set_source_rgba (cr, 0, 0, 0, 0);
-  cairo_paint (cr);
-
-  /* Calculate grid layout */
-  int cols = tile_size / avatar_size;
-  int rows = tile_size / avatar_size;
+  int cols = subtile_size / avatar_size;
+  int rows = subtile_size / avatar_size;
   if (cols < 1) cols = 1;
   if (rows < 1) rows = 1;
 
-  /* Cell dimensions */
-  double cell_width = (double)tile_size / cols;
-  double cell_height = (double)tile_size / rows;
+  double cell_width = (double)subtile_size / cols;
+  double cell_height = (double)subtile_size / rows;
 
-  /* Draw avatars in a grid pattern with random variations */
-  int texture_index = 0;
+  /* Starting texture index varies per sub-tile for different avatar order */
+  int texture_index = subtile_seed % textures->len;
+
   for (int row = 0; row < rows; row++)
     {
       for (int col = 0; col < cols; col++)
@@ -113,44 +105,70 @@ gnalk_background_generator_create_avatar_mosaic (GPtrArray *textures,
           GdkTexture *avatar_texture = g_ptr_array_index (textures, texture_index % textures->len);
           texture_index++;
 
-          /* Convert avatar to cairo surface */
           cairo_surface_t *avatar_surface = texture_to_cairo_surface (avatar_texture);
-
-          /* Convert to light grayscale */
           surface_to_light_grayscale (avatar_surface, opacity);
 
-          /* Pseudo-random variations based on position (deterministic for tiling) */
-          guint seed = (row * 7 + col * 13 + texture_index * 17) % 100;
+          /* Pseudo-random variations - seed includes subtile_seed for variety */
+          guint seed = (row * 7 + col * 13 + texture_index * 17 + subtile_seed * 31) % 100;
           double size_factor = 0.8 + (seed % 41) / 100.0;  /* 0.8 to 1.2 */
           double rotation = ((seed % 31) - 15) * G_PI / 180.0;  /* -15° to +15° */
 
-          /* Calculate position (center of cell) */
-          double center_x = col * cell_width + cell_width / 2.0;
-          double center_y = row * cell_height + cell_height / 2.0;
+          double center_x = offset_x + col * cell_width + cell_width / 2.0;
+          double center_y = offset_y + row * cell_height + cell_height / 2.0;
 
-          /* Scale and draw */
           int avatar_width = cairo_image_surface_get_width (avatar_surface);
           int avatar_height = cairo_image_surface_get_height (avatar_surface);
           double base_scale = (double)avatar_size / avatar_width;
           double final_scale = base_scale * size_factor;
 
           cairo_save (cr);
-
-          /* Move to center, rotate, then draw centered */
           cairo_translate (cr, center_x, center_y);
           cairo_rotate (cr, rotation);
           cairo_scale (cr, final_scale, final_scale);
 
-          /* Clip to circle for round avatars (centered at origin) */
           cairo_arc (cr, 0, 0, avatar_width / 2.0, 0, 2 * G_PI);
           cairo_clip (cr);
 
-          /* Draw avatar centered */
           cairo_set_source_surface (cr, avatar_surface, -avatar_width / 2.0, -avatar_height / 2.0);
           cairo_paint (cr);
           cairo_restore (cr);
 
           cairo_surface_destroy (avatar_surface);
+        }
+    }
+}
+
+GdkTexture *
+gnalk_background_generator_create_avatar_mosaic (GPtrArray *textures,
+                                                  int        subtile_size,
+                                                  int        avatar_size,
+                                                  double     opacity)
+{
+  if (!textures || textures->len == 0)
+    return NULL;
+
+  /* Create a 3x3 grid of sub-tiles for more variety before repeating */
+  const int grid = 3;
+  int total_size = subtile_size * grid;
+
+  cairo_surface_t *tile = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
+                                                       total_size, total_size);
+  cairo_t *cr = cairo_create (tile);
+
+  /* Clear with transparent */
+  cairo_set_source_rgba (cr, 0, 0, 0, 0);
+  cairo_paint (cr);
+
+  /* Draw 3x3 sub-tiles, each with different seed for variety */
+  guint seeds[9] = { 0, 17, 31, 47, 61, 79, 89, 97, 107 };
+
+  for (int sy = 0; sy < grid; sy++)
+    {
+      for (int sx = 0; sx < grid; sx++)
+        {
+          int idx = sy * grid + sx;
+          draw_subtile (cr, textures, subtile_size, avatar_size, opacity,
+                        sx * subtile_size, sy * subtile_size, seeds[idx]);
         }
     }
 
@@ -161,9 +179,8 @@ gnalk_background_generator_create_avatar_mosaic (GPtrArray *textures,
   guchar *data = cairo_image_surface_get_data (tile);
   int stride = cairo_image_surface_get_stride (tile);
 
-  /* Cairo uses BGRA, GDK expects BGRA for GDK_MEMORY_B8G8R8A8_PREMULTIPLIED */
-  GBytes *bytes = g_bytes_new (data, stride * tile_size);
-  GdkTexture *result = gdk_memory_texture_new (tile_size, tile_size,
+  GBytes *bytes = g_bytes_new (data, stride * total_size);
+  GdkTexture *result = gdk_memory_texture_new (total_size, total_size,
                                                 GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
                                                 bytes, stride);
   g_bytes_unref (bytes);
