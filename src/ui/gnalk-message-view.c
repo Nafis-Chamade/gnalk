@@ -533,9 +533,9 @@ gnalk_message_view_set_mosaic_avatars (GnalkMessageView *self,
   for (guint i = 0; i < textures->len; i++)
     g_ptr_array_add (all_textures, g_object_ref (g_ptr_array_index (textures, i)));
 
-  /* Generate the mosaic tile: 128x128 with 32px avatars, 25% opacity */
+  /* Generate mosaic with bin-packed avatars of varying sizes (no tiling) */
   GdkTexture *mosaic = gnalk_background_generator_create_avatar_mosaic (
-    all_textures, 128, 32, 0.25);
+    all_textures, 1920, 1080, 0.17);
 
   g_ptr_array_unref (all_textures);
 

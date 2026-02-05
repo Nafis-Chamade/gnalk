@@ -76,115 +76,172 @@ surface_to_light_grayscale (cairo_surface_t *surface, double opacity)
   cairo_surface_mark_dirty (surface);
 }
 
-/* Draw a single sub-tile at the given offset */
-static void
-draw_subtile (cairo_t   *cr,
-              GPtrArray *textures,
-              int        subtile_size,
-              int        avatar_size,
-              double     opacity,
-              int        offset_x,
-              int        offset_y,
-              guint      subtile_seed)
+/* Simple pseudo-random number generator (deterministic for reproducibility) */
+static guint32
+xorshift32 (guint32 *state)
 {
-  int cols = subtile_size / avatar_size;
-  int rows = subtile_size / avatar_size;
-  if (cols < 1) cols = 1;
-  if (rows < 1) rows = 1;
+  guint32 x = *state;
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  *state = x;
+  return x;
+}
 
-  double cell_width = (double)subtile_size / cols;
-  double cell_height = (double)subtile_size / rows;
+/* Draw a single avatar at the given position */
+static void
+draw_avatar (cairo_t         *cr,
+             cairo_surface_t *avatar_surface,
+             double           center_x,
+             double           center_y,
+             double           size,
+             double           rotation)
+{
+  int avatar_width = cairo_image_surface_get_width (avatar_surface);
+  int avatar_height = cairo_image_surface_get_height (avatar_surface);
+  double scale = size / avatar_width;
 
-  /* Starting texture index varies per sub-tile for different avatar order */
-  int texture_index = subtile_seed % textures->len;
+  cairo_save (cr);
+  cairo_translate (cr, center_x, center_y);
+  cairo_rotate (cr, rotation);
+  cairo_scale (cr, scale, scale);
 
-  for (int row = 0; row < rows; row++)
-    {
-      for (int col = 0; col < cols; col++)
-        {
-          GdkTexture *avatar_texture = g_ptr_array_index (textures, texture_index % textures->len);
-          texture_index++;
+  /* Clip to circle */
+  cairo_arc (cr, 0, 0, avatar_width / 2.0, 0, 2 * G_PI);
+  cairo_clip (cr);
 
-          cairo_surface_t *avatar_surface = texture_to_cairo_surface (avatar_texture);
-          surface_to_light_grayscale (avatar_surface, opacity);
+  cairo_set_source_surface (cr, avatar_surface, -avatar_width / 2.0, -avatar_height / 2.0);
+  cairo_paint (cr);
+  cairo_restore (cr);
+}
 
-          /* Pseudo-random variations - seed includes subtile_seed for variety */
-          guint seed = (row * 7 + col * 13 + texture_index * 17 + subtile_seed * 31) % 100;
-          double size_factor = 0.8 + (seed % 41) / 100.0;  /* 0.8 to 1.2 */
-          double rotation = ((seed % 31) - 15) * G_PI / 180.0;  /* -15° to +15° */
+/* Check if a block of cells is free in the occupancy grid */
+static gboolean
+cells_free (gboolean *grid, int grid_cols, int grid_rows, int col, int row, int block_size)
+{
+  if (col + block_size > grid_cols || row + block_size > grid_rows)
+    return FALSE;
 
-          double center_x = offset_x + col * cell_width + cell_width / 2.0;
-          double center_y = offset_y + row * cell_height + cell_height / 2.0;
+  for (int dy = 0; dy < block_size; dy++)
+    for (int dx = 0; dx < block_size; dx++)
+      if (grid[(row + dy) * grid_cols + (col + dx)])
+        return FALSE;
 
-          int avatar_width = cairo_image_surface_get_width (avatar_surface);
-          int avatar_height = cairo_image_surface_get_height (avatar_surface);
-          double base_scale = (double)avatar_size / avatar_width;
-          double final_scale = base_scale * size_factor;
+  return TRUE;
+}
 
-          cairo_save (cr);
-          cairo_translate (cr, center_x, center_y);
-          cairo_rotate (cr, rotation);
-          cairo_scale (cr, final_scale, final_scale);
-
-          cairo_arc (cr, 0, 0, avatar_width / 2.0, 0, 2 * G_PI);
-          cairo_clip (cr);
-
-          cairo_set_source_surface (cr, avatar_surface, -avatar_width / 2.0, -avatar_height / 2.0);
-          cairo_paint (cr);
-          cairo_restore (cr);
-
-          cairo_surface_destroy (avatar_surface);
-        }
-    }
+/* Mark a block of cells as occupied */
+static void
+mark_cells (gboolean *grid, int grid_cols, int col, int row, int block_size)
+{
+  for (int dy = 0; dy < block_size; dy++)
+    for (int dx = 0; dx < block_size; dx++)
+      grid[(row + dy) * grid_cols + (col + dx)] = TRUE;
 }
 
 GdkTexture *
 gnalk_background_generator_create_avatar_mosaic (GPtrArray *textures,
-                                                  int        subtile_size,
-                                                  int        avatar_size,
+                                                  int        canvas_width,
+                                                  int        canvas_height,
                                                   double     opacity)
 {
   if (!textures || textures->len == 0)
     return NULL;
 
-  /* Create a 3x3 grid of sub-tiles for more variety before repeating */
-  const int grid = 3;
-  int total_size = subtile_size * grid;
+  const int cell_size = 40;  /* Base cell size in pixels */
+  int grid_cols = canvas_width / cell_size;
+  int grid_rows = canvas_height / cell_size;
 
-  cairo_surface_t *tile = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
-                                                       total_size, total_size);
-  cairo_t *cr = cairo_create (tile);
+  if (grid_cols < 1) grid_cols = 1;
+  if (grid_rows < 1) grid_rows = 1;
+
+  /* Occupancy grid */
+  gboolean *grid = g_new0 (gboolean, grid_cols * grid_rows);
+
+  /* Create the canvas */
+  cairo_surface_t *surface = cairo_image_surface_create (CAIRO_FORMAT_ARGB32,
+                                                          canvas_width, canvas_height);
+  cairo_t *cr = cairo_create (surface);
 
   /* Clear with transparent */
   cairo_set_source_rgba (cr, 0, 0, 0, 0);
   cairo_paint (cr);
 
-  /* Draw 3x3 sub-tiles, each with different seed for variety */
-  guint seeds[9] = { 0, 17, 31, 47, 61, 79, 89, 97, 107 };
-
-  for (int sy = 0; sy < grid; sy++)
+  /* Pre-convert all textures to grayscale surfaces */
+  GPtrArray *surfaces = g_ptr_array_new ();
+  for (guint i = 0; i < textures->len; i++)
     {
-      for (int sx = 0; sx < grid; sx++)
+      cairo_surface_t *s = texture_to_cairo_surface (g_ptr_array_index (textures, i));
+      surface_to_light_grayscale (s, opacity);
+      g_ptr_array_add (surfaces, s);
+    }
+
+  guint32 rng_state = 42;  /* Seed for reproducible randomness */
+  int texture_idx = 0;
+
+  /* Available block sizes: 3x3, 2x2, 1x1 (in cells) */
+  int block_sizes[] = { 3, 2, 1 };
+  int num_sizes = 3;
+
+  /* First pass: randomly place larger blocks */
+  for (int row = 0; row < grid_rows; row++)
+    {
+      for (int col = 0; col < grid_cols; col++)
         {
-          int idx = sy * grid + sx;
-          draw_subtile (cr, textures, subtile_size, avatar_size, opacity,
-                        sx * subtile_size, sy * subtile_size, seeds[idx]);
+          if (grid[row * grid_cols + col])
+            continue;  /* Already occupied */
+
+          /* Try to place a random-sized block */
+          int size_idx = xorshift32 (&rng_state) % (num_sizes + 2);  /* Bias toward smaller */
+          if (size_idx >= num_sizes)
+            size_idx = num_sizes - 1;  /* Clamp to 1x1 */
+
+          int block_size = block_sizes[size_idx];
+
+          /* Find largest block that fits */
+          while (block_size > 1 && !cells_free (grid, grid_cols, grid_rows, col, row, block_size))
+            block_size--;
+
+          if (!cells_free (grid, grid_cols, grid_rows, col, row, block_size))
+            continue;  /* Can't place anything here */
+
+          /* Mark cells as occupied */
+          mark_cells (grid, grid_cols, col, row, block_size);
+
+          /* Draw avatar */
+          cairo_surface_t *avatar_surface = g_ptr_array_index (surfaces, texture_idx % surfaces->len);
+          texture_idx++;
+
+          double avatar_size = block_size * cell_size * 0.9;  /* 90% of cell block */
+          double center_x = (col + block_size / 2.0) * cell_size;
+          double center_y = (row + block_size / 2.0) * cell_size;
+
+          /* Random rotation ±45° with finer granularity */
+          double rotation = ((int)(xorshift32 (&rng_state) % 901) - 450) / 10.0 * G_PI / 180.0;
+
+          draw_avatar (cr, avatar_surface, center_x, center_y, avatar_size, rotation);
         }
     }
 
+  /* Free surfaces */
+  for (guint i = 0; i < surfaces->len; i++)
+    cairo_surface_destroy (g_ptr_array_index (surfaces, i));
+  g_ptr_array_unref (surfaces);
+  g_free (grid);
+
   cairo_destroy (cr);
 
-  /* Convert Cairo surface to GdkTexture using GBytes */
-  cairo_surface_flush (tile);
-  guchar *data = cairo_image_surface_get_data (tile);
-  int stride = cairo_image_surface_get_stride (tile);
+  /* Convert to GdkTexture */
+  cairo_surface_flush (surface);
+  guchar *data = cairo_image_surface_get_data (surface);
+  int stride = cairo_image_surface_get_stride (surface);
 
-  GBytes *bytes = g_bytes_new (data, stride * total_size);
-  GdkTexture *result = gdk_memory_texture_new (total_size, total_size,
+  GBytes *bytes = g_bytes_new (data, stride * canvas_height);
+  GdkTexture *result = gdk_memory_texture_new (canvas_width, canvas_height,
                                                 GDK_MEMORY_B8G8R8A8_PREMULTIPLIED,
                                                 bytes, stride);
   g_bytes_unref (bytes);
-  cairo_surface_destroy (tile);
+  cairo_surface_destroy (surface);
 
   return result;
 }
@@ -198,23 +255,29 @@ gnalk_background_generator_create_css_provider (GdkTexture *texture)
   int width = gdk_texture_get_width (texture);
   int height = gdk_texture_get_height (texture);
 
-  /* Save texture to a temporary PNG file */
+  /* Save texture to a temporary PNG file with timestamp to avoid caching */
   g_autofree char *cache_dir = g_build_filename (g_get_user_cache_dir (), "gnalk", NULL);
   g_mkdir_with_parents (cache_dir, 0755);
 
-  g_autofree char *png_path = g_build_filename (cache_dir, "mosaic-bg.png", NULL);
+  gint64 timestamp = g_get_monotonic_time ();
+  g_autofree char *filename = g_strdup_printf ("mosaic-bg-%" G_GINT64_FORMAT ".png", timestamp);
+  g_autofree char *png_path = g_build_filename (cache_dir, filename, NULL);
 
   /* Save texture as PNG */
   gdk_texture_save_to_png (texture, png_path);
 
-  /* Create CSS that uses the PNG */
+  (void) width;
+  (void) height;
+
+  /* Create CSS that uses the PNG - cover the whole area without repeating */
   g_autofree char *css = g_strdup_printf (
     ".message-list.bg-mosaic {\n"
     "  background-image: url('file://%s');\n"
-    "  background-repeat: repeat;\n"
-    "  background-size: %dpx %dpx;\n"
+    "  background-repeat: no-repeat;\n"
+    "  background-size: cover;\n"
+    "  background-position: center;\n"
     "}\n",
-    png_path, width, height);
+    png_path);
 
   GtkCssProvider *provider = gtk_css_provider_new ();
   gtk_css_provider_load_from_string (provider, css);
