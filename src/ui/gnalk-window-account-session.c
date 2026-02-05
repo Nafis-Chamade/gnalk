@@ -168,15 +168,23 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   g_signal_connect_swapped (self->message_controller, "conversation-subtitle-updated",
                             G_CALLBACK (gnalk_window_load_conversations_from_db), self);
 
-  /* Restore room_token if we had an active room.
-   * Must reload messages because is_own flags differ per account. */
+  /* Restore room_token if we had an active room. */
   if (self->current_room_token)
     {
       gnalk_message_controller_set_room (self->message_controller, self->current_room_token);
 
-      /* Clear and reload messages for the new account */
-      gnalk_window_clear_messages_store (self);
-      gnalk_window_load_messages_from_db (self, self->current_room_token);
+      /* If messages are already displayed, just update is_own flags for new account.
+       * No need to reload from DB - messages are the same, only ownership differs. */
+      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
+      if (n_items > 0)
+        {
+          gnalk_window_update_messages_is_own (self);
+        }
+      else
+        {
+          /* No messages displayed yet - load from cache */
+          gnalk_window_load_messages_from_db (self, self->current_room_token);
+        }
     }
 
   g_clear_object (&self->avatar_cache);

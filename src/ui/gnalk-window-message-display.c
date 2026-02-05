@@ -66,6 +66,34 @@ gnalk_window_clear_messages_store (GnalkWindow *self)
   GNALK_TRACE_STORE ("clear_messages_store: cleared, store now has 0 items");
 }
 
+/* Update is_own flags for all messages based on current session's user.
+ * Used when switching accounts to avoid full reload. */
+void
+gnalk_window_update_messages_is_own (GnalkWindow *self)
+{
+  const char *current_user = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      if (account)
+        current_user = gnalk_account_get_user_id (account);
+    }
+
+  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
+  for (guint i = 0; i < n_items; i++)
+    {
+      GnalkMessageData *data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
+      if (data)
+        {
+          const char *author_id = gnalk_message_data_get_author_id (data);
+          gboolean is_own = current_user && g_strcmp0 (author_id, current_user) == 0;
+          gnalk_message_data_set_is_own (data, is_own);
+          g_object_unref (data);
+        }
+    }
+  g_debug ("Updated is_own flags for %u messages (current_user=%s)", n_items, current_user ? current_user : "(null)");
+}
+
 /* ============ Save messages to database ============ */
 
 typedef struct {

@@ -267,6 +267,7 @@ void gnalk_window_on_message_input_send_requested          (GnalkMessageInput *i
 
 gint gnalk_window_compare_messages_by_id (gconstpointer a, gconstpointer b, gpointer user_data);
 void gnalk_window_clear_messages_store       (GnalkWindow *self);
+void gnalk_window_update_messages_is_own     (GnalkWindow *self);
 void gnalk_window_load_messages_from_db      (GnalkWindow *self, const char *room_token);
 void gnalk_window_load_older_messages        (GnalkWindow *self);
 void gnalk_window_save_messages_to_db        (GnalkWindow *self);

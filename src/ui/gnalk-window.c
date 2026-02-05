@@ -355,9 +355,8 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         /* Note: SyncCoordinator handles periodic conversation sync at app level.
          * No need to start polling here - it's managed centrally. */
 
-        /* Reload messages from DB for current room (sync coordinator will sync new ones) */
-        if (self->current_room_token)
-          gnalk_window_load_messages_from_db (self, self->current_room_token);
+        /* Note: Don't reload messages here - they're already loaded from cache at startup.
+         * Long-polling will fetch any new messages incrementally. */
 
         /* Refresh participants now that we're online (may have been empty from offline start) */
         if (self->current_room_token && self->participant_controller)
@@ -3227,11 +3226,12 @@ gnalk_window_on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coo
   /* Reload conversation list to show updated last message/unread count */
   gnalk_window_load_conversations_from_db (self);
 
-  /* If we're viewing this room, reload messages from DB to show the new ones */
+  /* For the active room, long-polling handles message updates - no need to reload.
+   * Only background rooms need their tabs refreshed when switched to. */
   if (self->current_room_token && g_strcmp0 (room_token, self->current_room_token) == 0)
     {
-      g_debug ("SyncCoordinator: refreshing messages for current room %s", room_token);
-      gnalk_window_load_messages_from_db (self, room_token);
+      g_debug ("SyncCoordinator: active room %s synced, polling handles updates", room_token);
+      /* Don't reload - polling already handles incremental updates */
     }
   else if (self->tab_manager && gnalk_room_tab_manager_has_tab (self->tab_manager, room_token))
     {
