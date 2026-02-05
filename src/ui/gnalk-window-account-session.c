@@ -179,6 +179,10 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), FALSE);
     }
 
+  /* Clear all room tabs to avoid showing messages from the wrong account */
+  if (self->tab_manager)
+    gnalk_room_tab_manager_clear_all (self->tab_manager);
+
   g_clear_object (&self->avatar_cache);
   gint64 account_id = gnalk_session_get_account_id (session);
   self->avatar_cache = gnalk_avatar_cache_new (self->http_client, account_id);

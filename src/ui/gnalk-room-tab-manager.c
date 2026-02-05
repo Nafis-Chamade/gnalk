@@ -626,3 +626,13 @@ gnalk_room_tab_manager_set_height_multiplier (GnalkRoomTabManager *self,
 
   self->height_multiplier = multiplier;
 }
+
+void
+gnalk_room_tab_manager_clear_all (GnalkRoomTabManager *self)
+{
+  g_return_if_fail (GNALK_IS_ROOM_TAB_MANAGER (self));
+
+  guint count = g_hash_table_size (self->tabs);
+  g_debug ("Clearing all %u tabs from tab manager", count);
+  g_hash_table_remove_all (self->tabs);
+}

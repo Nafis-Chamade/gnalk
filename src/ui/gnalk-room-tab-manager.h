@@ -183,4 +183,13 @@ void gnalk_room_tab_manager_set_max_tabs (GnalkRoomTabManager *self,
 void gnalk_room_tab_manager_set_height_multiplier (GnalkRoomTabManager *self,
                                                      gdouble               multiplier);
 
+/**
+ * gnalk_room_tab_manager_clear_all:
+ * @self: The tab manager
+ *
+ * Removes all tabs. Call this when switching accounts to avoid
+ * displaying messages from the wrong account's perspective.
+ */
+void gnalk_room_tab_manager_clear_all (GnalkRoomTabManager *self);
+
 G_END_DECLS
