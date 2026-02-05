@@ -1004,13 +1004,8 @@ on_send_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                                                         message_type,
                                                                         params_json);
 
-              /* Mark the sent message as read so it doesn't appear as unread */
-              gnalk_http_client_mark_chat_read (self->http_client,
-                                                  self->room_token,
-                                                  msg_id,
-                                                  NULL, NULL);
-
-              /* Also update local DB immediately so conversation list shows 0 unread */
+              /* Update local DB read status - server already updates it when sending,
+               * but we need to update locally so conversation list shows 0 unread */
               gnalk_data_repository_update_conversation_read_status (self->repository,
                                                                        self->account_id,
                                                                        self->room_token,
