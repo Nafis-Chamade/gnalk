@@ -10,6 +10,7 @@
 #include "gnalk-keyring.h"
 #include "gnalk-data-repository.h"
 #include "gnalk-app-state.h"
+#include "gnalk-room-controller.h"
 
 #include <glib/gi18n.h>
 
@@ -648,19 +649,6 @@ gnalk_application_set_signaling_settings (GnalkApplication *self,
   self->signaling_ticket = g_strdup (ticket);
 }
 
-const char *
-gnalk_application_get_signaling_server (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->signaling_server;
-}
-
-const char *
-gnalk_application_get_signaling_ticket (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->signaling_ticket;
-}
 
 void
 gnalk_application_set_ice_servers (GnalkApplication *self,
@@ -819,13 +807,6 @@ gnalk_application_get_app_state (GnalkApplication *self)
   return self->app_state;
 }
 
-GnalkRoomController *
-gnalk_application_get_room_controller (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->room_controller;
-}
-
 GnalkNetworkMonitor *
 gnalk_application_get_network_monitor (GnalkApplication *self)
 {
@@ -840,42 +821,11 @@ gnalk_application_get_settings (GnalkApplication *self)
   return self->settings;
 }
 
-gint64
-gnalk_application_get_account_id (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), -1);
-  return self->account_id;
-}
-
-gboolean
-gnalk_application_is_online (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), FALSE);
-  if (self->network_monitor)
-    return gnalk_network_monitor_is_online (self->network_monitor);
-  return TRUE;  /* Assume online if no monitor */
-}
-
-/* Service mode support */
-gboolean
-gnalk_application_is_service_mode (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), FALSE);
-  return self->is_service_mode;
-}
-
 GnalkPushClient *
 gnalk_application_get_push_client (GnalkApplication *self)
 {
   g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
   return self->push_client;
-}
-
-GnalkNotificationService *
-gnalk_application_get_notification_service (GnalkApplication *self)
-{
-  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
-  return self->notification_service;
 }
 
 GnalkHttpClient *
@@ -925,20 +875,6 @@ gnalk_application_set_window_focused (GnalkApplication *self,
         }
       g_list_free (sessions);
     }
-}
-
-void
-gnalk_application_open_room (GnalkApplication *self,
-                               const char        *room_token)
-{
-  g_return_if_fail (GNALK_IS_APPLICATION (self));
-  g_return_if_fail (room_token != NULL);
-
-  g_free (self->pending_open_room);
-  self->pending_open_room = g_strdup (room_token);
-
-  /* Ensure window exists and is presented */
-  gnalk_application_ensure_window (self);
 }
 
 char *
