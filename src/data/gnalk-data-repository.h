@@ -367,4 +367,19 @@ void gnalk_data_repository_update_conversation_last_message (GnalkDataRepository
                                                                const char          *last_message_type,
                                                                const char          *last_message_params_json);
 
+/**
+ * gnalk_data_repository_update_conversation_read_status:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @last_read_message: ID of the last read message
+ *
+ * Updates the conversation's read status (last_read_message and sets unread_messages to 0).
+ * Emits data-changed signal with scope "conversations".
+ */
+void gnalk_data_repository_update_conversation_read_status (GnalkDataRepository *self,
+                                                               gint64               account_id,
+                                                               const char          *conversation_token,
+                                                               gint64               last_read_message);
+
 G_END_DECLS

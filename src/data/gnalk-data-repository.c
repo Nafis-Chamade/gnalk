@@ -813,3 +813,18 @@ gnalk_data_repository_update_conversation_last_message (GnalkDataRepository *sel
                                                      last_message_params_json);
   g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
 }
+
+void
+gnalk_data_repository_update_conversation_read_status (GnalkDataRepository *self,
+                                                         gint64               account_id,
+                                                         const char          *conversation_token,
+                                                         gint64               last_read_message)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (conversation_token != NULL);
+
+  gnalk_database_update_conversation_read_status (self->database, account_id, conversation_token,
+                                                    last_read_message);
+  g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
+}

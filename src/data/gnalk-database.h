@@ -59,6 +59,10 @@ void gnalk_database_update_conversation_last_message (GnalkDatabase *self,
                                                          const char *last_message_actor_name,
                                                          const char *last_message_type,
                                                          const char *last_message_params_json);
+void gnalk_database_update_conversation_read_status (GnalkDatabase *self,
+                                                        gint64 account_id,
+                                                        const char *token,
+                                                        gint64 last_read_message);
 
 /* Messages */
 void gnalk_database_save_message (GnalkDatabase *self,
