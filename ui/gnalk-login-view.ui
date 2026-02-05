@@ -18,22 +18,52 @@
           <object class="GtkBox">
             <property name="orientation">vertical</property>
             <property name="spacing">24</property>
+            <!-- Header with icon and description -->
             <child>
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
                 <property name="spacing">6</property>
                 <property name="halign">center</property>
                 <child>
-                  <object class="GtkImage">
+                  <object class="GtkImage" id="header_icon">
                     <property name="icon-name">network-server-symbolic</property>
                     <property name="pixel-size">64</property>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkLabel">
+                  <object class="GtkLabel" id="header_label">
                     <property name="label" translatable="yes">Sign in to your Nextcloud Talk server</property>
                     <style>
                       <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <!-- Mode selector (segmented buttons) -->
+            <child>
+              <object class="GtkBox" id="mode_selector_box">
+                <property name="orientation">horizontal</property>
+                <property name="halign">center</property>
+                <property name="spacing">0</property>
+                <style>
+                  <class name="linked"/>
+                </style>
+                <child>
+                  <object class="GtkToggleButton" id="account_mode_button">
+                    <property name="label" translatable="yes">Account</property>
+                    <property name="active">true</property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkToggleButton" id="guest_mode_button">
+                    <property name="label" translatable="yes">Guest</property>
+                    <property name="active">false</property>
+                    <style>
+                      <class name="flat"/>
                     </style>
                   </object>
                 </child>
@@ -103,13 +133,27 @@
               </object>
             </child>
             <child>
-              <object class="GtkButton" id="connect_button">
-                <property name="label" translatable="yes">Connect</property>
+              <object class="GtkBox" id="button_box">
+                <property name="orientation">horizontal</property>
                 <property name="halign">center</property>
-                <style>
-                  <class name="suggested-action"/>
-                  <class name="pill"/>
-                </style>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkButton" id="cancel_button">
+                    <property name="label" translatable="yes">Cancel</property>
+                    <style>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="connect_button">
+                    <property name="label" translatable="yes">Connect</property>
+                    <style>
+                      <class name="suggested-action"/>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
               </object>
             </child>
             <child>
@@ -126,17 +170,6 @@
                 <property name="visible">false</property>
                 <style>
                   <class name="error"/>
-                </style>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="guest_link">
-                <property name="label" translatable="yes">Or join a public room as guest</property>
-                <property name="halign">center</property>
-                <property name="margin-top">12</property>
-                <style>
-                  <class name="flat"/>
-                  <class name="link"/>
                 </style>
               </object>
             </child>

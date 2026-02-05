@@ -227,6 +227,29 @@ gnalk_window_on_login_view_connect_clicked (GnalkLoginView *view,
     gnalk_window_start_login (self);
 }
 
+void
+gnalk_window_on_login_view_cancel_clicked (GnalkLoginView *view,
+                                            GnalkWindow    *self)
+{
+  (void) view;
+
+  /* Check if we have any active sessions */
+  guint session_count = 0;
+  if (self->session_manager)
+    session_count = gnalk_session_manager_get_session_count (self->session_manager);
+
+  if (session_count > 0)
+    {
+      /* Return to main view with existing sessions */
+      gnalk_window_show_offline_main_view (self);
+    }
+  else
+    {
+      /* No sessions - close the application */
+      gtk_window_close (GTK_WINDOW (self));
+    }
+}
+
 /* ============ Login Functions ============ */
 
 void

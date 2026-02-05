@@ -3554,8 +3554,9 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect (wide_breakpoint, "unapply", G_CALLBACK (on_wide_breakpoint_unapplied), self);
   adw_application_window_add_breakpoint (ADW_APPLICATION_WINDOW (self), wide_breakpoint);
 
-  /* Connect login view signal */
+  /* Connect login view signals */
   g_signal_connect (self->login_view, "connect-clicked", G_CALLBACK (gnalk_window_on_login_view_connect_clicked), self);
+  g_signal_connect (self->login_view, "cancel-clicked", G_CALLBACK (gnalk_window_on_login_view_cancel_clicked), self);
 
   /* Connect new conversation button from sidebar */
   g_signal_connect (self->conversation_sidebar, "new-conversation-requested", G_CALLBACK (on_new_conversation_clicked), self);

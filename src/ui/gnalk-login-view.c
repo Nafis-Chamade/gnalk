@@ -7,6 +7,11 @@ struct _GnalkLoginView
 {
   GtkBox parent_instance;
 
+  GtkWidget *header_icon;
+  GtkWidget *header_label;
+  GtkWidget *mode_selector_box;
+  GtkWidget *account_mode_button;
+  GtkWidget *guest_mode_button;
   GtkWidget *goa_accounts_group;
   GtkWidget *manual_login_link;
   GtkWidget *user_mode_group;
@@ -17,10 +22,11 @@ struct _GnalkLoginView
   GtkWidget *room_url_entry;
   GtkWidget *display_name_entry;
   GtkWidget *guest_password_entry;
+  GtkWidget *button_box;
+  GtkWidget *cancel_button;
   GtkWidget *connect_button;
   GtkWidget *spinner;
   GtkWidget *status_label;
-  GtkWidget *guest_link;
 
   gboolean is_guest_mode;
   gboolean has_goa_accounts;
@@ -32,6 +38,7 @@ G_DEFINE_FINAL_TYPE (GnalkLoginView, gnalk_login_view, GTK_TYPE_BOX)
 enum
 {
   SIGNAL_CONNECT_CLICKED,
+  SIGNAL_CANCEL_CLICKED,
   SIGNAL_MODE_TOGGLED,
   SIGNAL_GOA_ACCOUNT_SELECTED,
   N_SIGNALS
@@ -40,11 +47,60 @@ enum
 static guint signals[N_SIGNALS];
 
 static void
+update_mode_ui (GnalkLoginView *self)
+{
+  /* Update header */
+  if (self->is_guest_mode)
+    {
+      gtk_image_set_from_icon_name (GTK_IMAGE (self->header_icon), "system-users-symbolic");
+      gtk_label_set_text (GTK_LABEL (self->header_label), _("Join a public room as guest"));
+    }
+  else
+    {
+      gtk_image_set_from_icon_name (GTK_IMAGE (self->header_icon), "network-server-symbolic");
+      gtk_label_set_text (GTK_LABEL (self->header_label), _("Sign in to your Nextcloud Talk server"));
+    }
+
+  /* Update form visibility */
+  gtk_widget_set_visible (self->user_mode_group, !self->is_guest_mode && !self->has_goa_accounts);
+  gtk_widget_set_visible (self->guest_mode_group, self->is_guest_mode);
+  gtk_widget_set_visible (self->goa_accounts_group, !self->is_guest_mode && self->has_goa_accounts);
+  gtk_widget_set_visible (self->manual_login_link, !self->is_guest_mode && self->has_goa_accounts && !self->manual_mode_forced);
+
+  /* Show user mode if GOA accounts exist but manual mode is forced */
+  if (!self->is_guest_mode && self->has_goa_accounts && self->manual_mode_forced)
+    gtk_widget_set_visible (self->user_mode_group, TRUE);
+
+  /* Update button label */
+  gtk_button_set_label (GTK_BUTTON (self->connect_button),
+                        self->is_guest_mode ? _("Join") : _("Connect"));
+
+  /* Update toggle button states (without triggering signals) */
+  g_signal_handlers_block_by_func (self->account_mode_button, G_CALLBACK (gtk_toggle_button_set_active), self);
+  g_signal_handlers_block_by_func (self->guest_mode_button, G_CALLBACK (gtk_toggle_button_set_active), self);
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->account_mode_button), !self->is_guest_mode);
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->guest_mode_button), self->is_guest_mode);
+  g_signal_handlers_unblock_by_func (self->account_mode_button, G_CALLBACK (gtk_toggle_button_set_active), self);
+  g_signal_handlers_unblock_by_func (self->guest_mode_button, G_CALLBACK (gtk_toggle_button_set_active), self);
+
+  /* Clear any error when switching modes */
+  gtk_widget_set_visible (self->status_label, FALSE);
+}
+
+static void
 on_connect_button_clicked (GtkButton       *button,
                             GnalkLoginView *self)
 {
   (void) button;
   g_signal_emit (self, signals[SIGNAL_CONNECT_CLICKED], 0);
+}
+
+static void
+on_cancel_button_clicked (GtkButton       *button,
+                           GnalkLoginView *self)
+{
+  (void) button;
+  g_signal_emit (self, signals[SIGNAL_CANCEL_CLICKED], 0);
 }
 
 static void
@@ -56,24 +112,33 @@ on_entry_activated (GtkEntry        *entry,
 }
 
 static void
-on_guest_link_clicked (GtkButton       *button,
-                        GnalkLoginView *self)
+on_account_mode_toggled (GtkToggleButton *button,
+                          GnalkLoginView  *self)
 {
-  (void) button;
+  if (!gtk_toggle_button_get_active (button))
+    return;
 
-  self->is_guest_mode = !self->is_guest_mode;
+  if (self->is_guest_mode)
+    {
+      self->is_guest_mode = FALSE;
+      update_mode_ui (self);
+      g_signal_emit (self, signals[SIGNAL_MODE_TOGGLED], 0);
+    }
+}
 
-  gtk_widget_set_visible (self->user_mode_group, !self->is_guest_mode);
-  gtk_widget_set_visible (self->guest_mode_group, self->is_guest_mode);
+static void
+on_guest_mode_toggled (GtkToggleButton *button,
+                        GnalkLoginView  *self)
+{
+  if (!gtk_toggle_button_get_active (button))
+    return;
 
-  gtk_button_set_label (GTK_BUTTON (self->connect_button),
-                        self->is_guest_mode ? _("Join") : _("Connect"));
-  gtk_button_set_label (GTK_BUTTON (self->guest_link),
-                        self->is_guest_mode ? _("Or sign in with account") : _("Or join a public room as guest"));
-
-  gtk_widget_set_visible (self->status_label, FALSE);
-
-  g_signal_emit (self, signals[SIGNAL_MODE_TOGGLED], 0);
+  if (!self->is_guest_mode)
+    {
+      self->is_guest_mode = TRUE;
+      update_mode_ui (self);
+      g_signal_emit (self, signals[SIGNAL_MODE_TOGGLED], 0);
+    }
 }
 
 static void
@@ -83,13 +148,7 @@ on_manual_login_link_clicked (GtkButton       *button,
   (void) button;
 
   self->manual_mode_forced = TRUE;
-
-  /* Hide GOA section, show manual login */
-  gtk_widget_set_visible (self->goa_accounts_group, FALSE);
-  gtk_widget_set_visible (self->manual_login_link, FALSE);
-  gtk_widget_set_visible (self->user_mode_group, TRUE);
-  gtk_widget_set_visible (self->connect_button, TRUE);
-  gtk_widget_set_visible (self->guest_link, TRUE);
+  update_mode_ui (self);
 }
 
 static void
@@ -116,6 +175,11 @@ gnalk_login_view_class_init (GnalkLoginViewClass *klass)
 
   gtk_widget_class_set_template_from_resource (widget_class,
                                                 "/net/skilpa/gnalk/gnalk-login-view.ui");
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, header_icon);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, header_label);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, mode_selector_box);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, account_mode_button);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, guest_mode_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, goa_accounts_group);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, manual_login_link);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, user_mode_group);
@@ -126,13 +190,23 @@ gnalk_login_view_class_init (GnalkLoginViewClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, room_url_entry);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, display_name_entry);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, guest_password_entry);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, button_box);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, cancel_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, connect_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, spinner);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, status_label);
-  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, guest_link);
 
   signals[SIGNAL_CONNECT_CLICKED] =
     g_signal_new ("connect-clicked",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 0);
+
+  signals[SIGNAL_CANCEL_CLICKED] =
+    g_signal_new ("cancel-clicked",
                   G_TYPE_FROM_CLASS (klass),
                   G_SIGNAL_RUN_LAST,
                   0,
@@ -171,8 +245,12 @@ gnalk_login_view_init (GnalkLoginView *self)
 
   g_signal_connect (self->connect_button, "clicked",
                     G_CALLBACK (on_connect_button_clicked), self);
-  g_signal_connect (self->guest_link, "clicked",
-                    G_CALLBACK (on_guest_link_clicked), self);
+  g_signal_connect (self->cancel_button, "clicked",
+                    G_CALLBACK (on_cancel_button_clicked), self);
+  g_signal_connect (self->account_mode_button, "toggled",
+                    G_CALLBACK (on_account_mode_toggled), self);
+  g_signal_connect (self->guest_mode_button, "toggled",
+                    G_CALLBACK (on_guest_mode_toggled), self);
   g_signal_connect (self->manual_login_link, "clicked",
                     G_CALLBACK (on_manual_login_link_clicked), self);
   g_signal_connect (self->server_entry, "activate",
@@ -213,14 +291,7 @@ gnalk_login_view_set_guest_mode (GnalkLoginView *self,
     return;
 
   self->is_guest_mode = guest_mode;
-
-  gtk_widget_set_visible (self->user_mode_group, !guest_mode);
-  gtk_widget_set_visible (self->guest_mode_group, guest_mode);
-
-  gtk_button_set_label (GTK_BUTTON (self->connect_button),
-                        guest_mode ? _("Join") : _("Connect"));
-  gtk_button_set_label (GTK_BUTTON (self->guest_link),
-                        guest_mode ? _("Or sign in with account") : _("Or join a public room as guest"));
+  update_mode_ui (self);
 }
 
 const char *
@@ -317,8 +388,9 @@ gnalk_login_view_set_connecting (GnalkLoginView *self,
   gtk_spinner_set_spinning (GTK_SPINNER (self->spinner), connecting);
   gtk_widget_set_visible (self->status_label, FALSE);
 
+  gtk_widget_set_sensitive (self->mode_selector_box, !connecting);
+  gtk_widget_set_sensitive (self->cancel_button, !connecting);
   gtk_widget_set_sensitive (self->connect_button, !connecting);
-  gtk_widget_set_sensitive (self->guest_link, !connecting);
   gtk_widget_set_sensitive (self->server_entry, !connecting);
   gtk_widget_set_sensitive (self->user_entry, !connecting);
   gtk_widget_set_sensitive (self->password_entry, !connecting);
@@ -339,8 +411,9 @@ gnalk_login_view_show_error (GnalkLoginView *self,
   gtk_label_set_text (GTK_LABEL (self->status_label), message);
   gtk_widget_set_visible (self->status_label, TRUE);
 
+  gtk_widget_set_sensitive (self->mode_selector_box, TRUE);
+  gtk_widget_set_sensitive (self->cancel_button, TRUE);
   gtk_widget_set_sensitive (self->connect_button, TRUE);
-  gtk_widget_set_sensitive (self->guest_link, TRUE);
   gtk_widget_set_sensitive (self->server_entry, TRUE);
   gtk_widget_set_sensitive (self->user_entry, TRUE);
   gtk_widget_set_sensitive (self->password_entry, TRUE);
@@ -381,11 +454,7 @@ gnalk_login_view_set_goa_accounts (GnalkLoginView *self,
   if (!accounts)
     {
       self->has_goa_accounts = FALSE;
-      gtk_widget_set_visible (self->goa_accounts_group, FALSE);
-      gtk_widget_set_visible (self->manual_login_link, FALSE);
-      gtk_widget_set_visible (self->user_mode_group, TRUE);
-      gtk_widget_set_visible (self->connect_button, TRUE);
-      gtk_widget_set_visible (self->guest_link, TRUE);
+      update_mode_ui (self);
       return;
     }
 
@@ -429,16 +498,7 @@ gnalk_login_view_set_goa_accounts (GnalkLoginView *self,
                                   GTK_WIDGET (row));
     }
 
-  /* Show GOA section, optionally hide manual login unless forced */
-  gtk_widget_set_visible (self->goa_accounts_group, TRUE);
-
-  if (!self->manual_mode_forced)
-    {
-      gtk_widget_set_visible (self->manual_login_link, TRUE);
-      gtk_widget_set_visible (self->user_mode_group, FALSE);
-      gtk_widget_set_visible (self->connect_button, FALSE);
-      gtk_widget_set_visible (self->guest_link, FALSE);
-    }
+  update_mode_ui (self);
 }
 
 void

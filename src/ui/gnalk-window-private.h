@@ -220,6 +220,7 @@ void gnalk_window_show_offline_main_view (GnalkWindow *self);
 void gnalk_window_login_set_connecting   (GnalkWindow *self, gboolean connecting);
 void gnalk_window_login_show_error       (GnalkWindow *self, const char *message);
 void gnalk_window_on_login_view_connect_clicked (GnalkLoginView *view, GnalkWindow *self);
+void gnalk_window_on_login_view_cancel_clicked  (GnalkLoginView *view, GnalkWindow *self);
 void gnalk_window_on_add_account_requested      (GnalkAccountSwitcher *switcher, GnalkWindow *self);
 void gnalk_window_on_sign_out_requested         (GnalkAccountSwitcher *switcher, gint64 account_id, GnalkWindow *self);
 
