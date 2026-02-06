@@ -142,6 +142,23 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       }
   }
 
+  /* Update processor dependencies for new session */
+  {
+    GnalkAccount *account = gnalk_session_get_account (session);
+    const char *user_id = gnalk_account_get_user_id (account);
+    gnalk_message_processor_set_current_user (self->message_processor, user_id);
+    gnalk_message_processor_set_message_controller (self->message_processor, self->message_controller);
+
+    GnalkApplication *app2 = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+    if (app2)
+      {
+        GnalkDatabase *db = gnalk_application_get_database (app2);
+        gint64 aid = gnalk_session_get_account_id (session);
+        gnalk_message_processor_set_database (self->message_processor, db);
+        gnalk_message_processor_set_account_id (self->message_processor, aid);
+      }
+  }
+
   /* Reconnect message controller signals */
   g_signal_connect (self->message_controller, "message-sent",
                     G_CALLBACK (gnalk_window_on_message_controller_sent), self);
@@ -175,6 +192,7 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   if (self->current_room)
     {
       self->current_room = NULL;
+      gnalk_message_processor_set_room_state (self->message_processor, NULL);
       gnalk_window_clear_messages_store (self);
       self->has_active_room = FALSE;
       g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);

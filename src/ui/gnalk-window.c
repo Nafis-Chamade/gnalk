@@ -3098,6 +3098,7 @@ gnalk_window_finalize (GObject *object)
     }
 
   g_clear_object (&self->room_controller);
+  g_clear_object (&self->message_processor);
 
   if (self->conv_reload_debounce_id > 0)
     {
@@ -3473,6 +3474,28 @@ gnalk_window_init (GnalkWindow *self)
     g_signal_connect (self->room_controller, "scroll-requested",
                       G_CALLBACK (gnalk_window_on_room_controller_scroll_requested), self);
   }
+
+  /* Create message processor for data operations */
+  self->message_processor = gnalk_message_processor_new ();
+  gnalk_message_processor_set_conversations_store (self->message_processor, self->conversations_store);
+  gnalk_message_processor_set_message_controller (self->message_processor, self->message_controller);
+  g_signal_connect (self->message_processor, "batch-insert-begin",
+                    G_CALLBACK (gnalk_window_on_processor_batch_insert_begin), self);
+  g_signal_connect (self->message_processor, "batch-insert-end",
+                    G_CALLBACK (gnalk_window_on_processor_batch_insert_end), self);
+  g_signal_connect (self->message_processor, "scroll-to-bottom",
+                    G_CALLBACK (gnalk_window_on_processor_scroll_to_bottom), self);
+  g_signal_connect (self->message_processor, "scroll-to-item",
+                    G_CALLBACK (gnalk_window_on_processor_scroll_to_item), self);
+  g_signal_connect (self->message_processor, "call-state-left",
+                    G_CALLBACK (gnalk_window_on_processor_call_state_left), self);
+  g_signal_connect (self->message_processor, "call-ended",
+                    G_CALLBACK (gnalk_window_on_processor_call_ended), self);
+  g_signal_connect (self->message_processor, "loading-older-changed",
+                    G_CALLBACK (gnalk_window_on_processor_loading_older_changed), self);
+  g_signal_connect (self->message_processor, "state-synced",
+                    G_CALLBACK (gnalk_window_on_processor_state_synced), self);
+
   self->bound_unread_rows = g_hash_table_new (g_direct_hash, g_direct_equal);
   self->bound_conversation_rows = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   self->bound_message_rows = g_hash_table_new (g_direct_hash, g_direct_equal);

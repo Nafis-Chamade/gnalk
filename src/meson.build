@@ -41,6 +41,7 @@ controllers_sources = [
   'controllers/gnalk-conversation-controller.c',
   'controllers/gnalk-participant-controller.c',
   'controllers/gnalk-room-controller.c',
+  'controllers/gnalk-message-processor.c',
   'controllers/gnalk-app-state.c',
   'controllers/gnalk-sync-manager.c',
   'controllers/gnalk-sync-coordinator.c',

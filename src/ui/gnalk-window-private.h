@@ -41,6 +41,7 @@
 #include "gnalk-data-repository.h"
 #include "gnalk-sync-coordinator.h"
 #include "gnalk-room-controller.h"
+#include "gnalk-message-processor.h"
 #include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
@@ -111,6 +112,7 @@ struct _GnalkWindow
   GnalkConversationController *conversation_controller;
   GnalkParticipantController  *participant_controller;
   GnalkRoomController         *room_controller;
+  GnalkMessageProcessor       *message_processor;
 
   /* Multi-account session management */
   GnalkSessionManager   *session_manager;  /* Reference from Application, not owned */
@@ -267,6 +269,16 @@ void gnalk_window_on_message_controller_poll_response   (GnalkMessageController 
 void gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController *controller,
                                                                   JsonArray *messages, gboolean has_more,
                                                                   GnalkWindow *self);
+
+/* Processor signal handlers */
+void gnalk_window_on_processor_batch_insert_begin     (GnalkMessageProcessor *proc, GnalkWindow *self);
+void gnalk_window_on_processor_batch_insert_end       (GnalkMessageProcessor *proc, GnalkWindow *self);
+void gnalk_window_on_processor_scroll_to_bottom       (GnalkMessageProcessor *proc, GnalkWindow *self);
+void gnalk_window_on_processor_scroll_to_item         (GnalkMessageProcessor *proc, guint position, GnalkWindow *self);
+void gnalk_window_on_processor_call_state_left        (GnalkMessageProcessor *proc, const char *actor_id, GnalkWindow *self);
+void gnalk_window_on_processor_call_ended             (GnalkMessageProcessor *proc, GnalkWindow *self);
+void gnalk_window_on_processor_loading_older_changed  (GnalkMessageProcessor *proc, gboolean loading, GnalkWindow *self);
+void gnalk_window_on_processor_state_synced           (GnalkMessageProcessor *proc, guint reason, GnalkWindow *self);
 
 /* ============ Conversation list functions (gnalk-window-conversation-list.c) ============ */
 

@@ -373,6 +373,9 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
   self->current_room = gnalk_room_controller_get_current_room (ctrl);
   self->has_active_room = TRUE;
 
+  /* Update processor's room state pointer */
+  gnalk_message_processor_set_room_state (self->message_processor, self->current_room);
+
   /* Update conversation row highlights */
   gnalk_window_update_conversation_active_states (self, old_token, token);
 
@@ -510,6 +513,7 @@ gnalk_window_on_content_page_hiding (AdwNavigationPage *page,
   /* Sync Window state from controller */
   self->current_room = NULL;
   self->has_active_room = FALSE;
+  gnalk_message_processor_set_room_state (self->message_processor, NULL);
   g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
 
   /* Clear active room in application so notifications work */
