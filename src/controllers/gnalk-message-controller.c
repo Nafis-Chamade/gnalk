@@ -27,6 +27,12 @@ struct _GnalkMessageController
 
   /* Track loading state */
   gboolean loading_older;
+
+  /* Session-ready gate: defer polling until POST /participants/active
+   * has completed (cookies established). Prevents PHP session race. */
+  gboolean session_ready;
+  gboolean polling_deferred;
+  gint64   deferred_last_known_id;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageController, gnalk_message_controller, G_TYPE_OBJECT)
@@ -303,6 +309,7 @@ gnalk_message_controller_set_room (GnalkMessageController *self,
   g_free (self->room_token);
   self->room_token = g_strdup (room_token);
   self->last_known_message_id = 0;
+  self->polling_deferred = FALSE;
 
   /* Increment generation to discard stale responses */
   self->generation++;
@@ -755,6 +762,15 @@ gnalk_message_controller_start_polling (GnalkMessageController *self,
   g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
   g_return_if_fail (self->http_client != NULL);
   g_return_if_fail (self->room_token != NULL);
+
+  /* Defer polling until session cookies are established */
+  if (!self->session_ready)
+    {
+      self->polling_deferred = TRUE;
+      self->deferred_last_known_id = last_known_id;
+      g_debug ("MC: deferring polling until session ready");
+      return;
+    }
 
   /* Don't restart polling if already running */
   if (self->polling)
@@ -1423,4 +1439,18 @@ gnalk_message_controller_upload_voice_message (GnalkMessageController *self,
   g_signal_emit (self, signals[SIGNAL_UPLOAD_STARTED], 0, reference_id);
 
   start_file_upload_check_exists (data);
+}
+
+void
+gnalk_message_controller_set_session_ready (GnalkMessageController *self,
+                                            gboolean                ready)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+
+  self->session_ready = ready;
+  if (ready && self->polling_deferred)
+    {
+      self->polling_deferred = FALSE;
+      gnalk_message_controller_start_polling (self, self->deferred_last_known_id);
+    }
 }

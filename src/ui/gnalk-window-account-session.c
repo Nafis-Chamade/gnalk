@@ -180,6 +180,12 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   /* Connect to session's controllers */
   connect_controller_signals (self, session);
 
+  /* Reset session_ready - new session's POST /participants/active hasn't happened yet */
+  if (self->message_controller)
+    gnalk_message_controller_set_session_ready (self->message_controller, FALSE);
+  if (self->participant_controller)
+    gnalk_participant_controller_set_session_ready (self->participant_controller, FALSE);
+
   /* Update processor dependencies for new session */
   {
     GnalkAccount *account = gnalk_session_get_account (session);

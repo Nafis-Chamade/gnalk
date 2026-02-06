@@ -343,6 +343,12 @@ gnalk_window_on_session_room_joined (GnalkSession *session G_GNUC_UNUSED,
   if (app)
     gnalk_application_set_active_room (app, room_token);
 
+  /* Session cookies are now established - allow HTTP polling */
+  if (self->message_controller)
+    gnalk_message_controller_set_session_ready (self->message_controller, TRUE);
+  if (self->participant_controller)
+    gnalk_participant_controller_set_session_ready (self->participant_controller, TRUE);
+
   /* Set room on message controller */
   gnalk_message_controller_set_room (self->message_controller, room_token);
 

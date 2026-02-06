@@ -137,6 +137,17 @@ void gnalk_participant_controller_update_call_state (GnalkParticipantController 
                                                         gint64                        in_call);
 
 /**
+ * gnalk_participant_controller_set_session_ready:
+ * @self: The controller
+ * @ready: TRUE when POST /participants/active has completed (cookies established)
+ *
+ * Gates HTTP fetches until the session is ready. If a fetch was deferred,
+ * it is triggered immediately when set to TRUE.
+ */
+void gnalk_participant_controller_set_session_ready (GnalkParticipantController *self,
+                                                     gboolean                    ready);
+
+/**
  * gnalk_participant_controller_clear_all_call_states:
  * @self: The controller
  *

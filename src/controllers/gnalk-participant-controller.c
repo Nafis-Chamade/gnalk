@@ -16,6 +16,11 @@ struct _GnalkParticipantController
 
   /* Generation counter for stale response detection */
   guint generation;
+
+  /* Session-ready gate: defer fetch until POST /participants/active
+   * has completed (cookies established). Prevents PHP session race. */
+  gboolean session_ready;
+  gboolean fetch_deferred;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkParticipantController, gnalk_participant_controller, G_TYPE_OBJECT)
@@ -287,6 +292,12 @@ do_fetch (GnalkParticipantController *self)
   if (!gnalk_http_client_is_ready (self->http_client))
     return;
 
+  if (!self->session_ready)
+    {
+      self->fetch_deferred = TRUE;
+      return;
+    }
+
   FetchCallbackData *cb_data = g_slice_new0 (FetchCallbackData);
   cb_data->controller = self;
   cb_data->room_token = g_strdup (self->active_room_token);
@@ -362,6 +373,7 @@ gnalk_participant_controller_set_active_room (GnalkParticipantController *self,
   g_free (self->active_room_token);
   self->active_room_token = g_strdup (room_token);
   self->active_room_type = room_type;
+  self->fetch_deferred = FALSE;
 
   if (!room_token)
     {
@@ -553,4 +565,18 @@ gnalk_participant_controller_clear_all_call_states (GnalkParticipantController *
 
   g_signal_emit (self, signals[SIGNAL_ALL_CALL_STATES_CLEARED], 0,
                  self->active_room_token);
+}
+
+void
+gnalk_participant_controller_set_session_ready (GnalkParticipantController *self,
+                                                gboolean                    ready)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANT_CONTROLLER (self));
+
+  self->session_ready = ready;
+  if (ready && self->fetch_deferred)
+    {
+      self->fetch_deferred = FALSE;
+      do_fetch (self);
+    }
 }

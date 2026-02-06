@@ -108,6 +108,10 @@ void gnalk_message_controller_upload_voice_message (GnalkMessageController *self
                                                       GBytes                  *file_bytes,
                                                       const char              *reference_id);
 
+/* Session-ready gate: defer polling until cookies are established */
+void gnalk_message_controller_set_session_ready (GnalkMessageController *self,
+                                                 gboolean                ready);
+
 /* Cancel pending operations */
 void gnalk_message_controller_cancel (GnalkMessageController *self);
 
