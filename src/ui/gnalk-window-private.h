@@ -42,6 +42,7 @@
 #include "gnalk-sync-coordinator.h"
 #include "gnalk-room-controller.h"
 #include "gnalk-message-processor.h"
+#include "gnalk-conversation-info-dialog.h"
 #include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
@@ -400,5 +401,21 @@ void gnalk_window_on_participant_controller_changed   (GnalkParticipantControlle
 
 /* Mosaic background update (uses participant avatars) */
 void gnalk_window_update_mosaic_background (GnalkWindow *self, JsonArray *participants);
+
+/* ============ File handling functions (gnalk-window-file-handling.c) ============ */
+
+void gnalk_window_on_attach_clicked             (GtkButton *button, GnalkWindow *self);
+void gnalk_window_on_voice_message_recorded     (GnalkMessageInput *input, GBytes *audio_data,
+                                                   gdouble duration, GnalkWindow *self);
+void gnalk_window_on_camera_clicked             (GnalkMessageInput *input, GnalkWindow *self);
+void gnalk_window_on_attachment_closed          (GnalkConversationActions *actions, GnalkWindow *self);
+void gnalk_window_on_file_clicked               (GnalkMessageRow *row, const char *file_id,
+                                                   const char *file_mimetype, const char *file_link,
+                                                   const char *file_name, const char *file_path,
+                                                   gpointer user_data);
+void gnalk_window_on_info_dialog_media_clicked  (GnalkConversationInfoDialog *dialog,
+                                                   const char *file_id, const char *file_mimetype,
+                                                   const char *file_path, const char *file_name,
+                                                   GnalkWindow *self);
 
 G_END_DECLS
