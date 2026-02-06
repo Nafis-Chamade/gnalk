@@ -13,6 +13,7 @@
 #include "gnalk-preferences-dialog.h"
 #include "gnalk-account-manager.h"
 #include "gnalk-database.h"
+#include "gnalk-data-repository.h"
 #include "gnalk-app-state.h"
 #include "gnalk-sync-coordinator.h"
 #include <glib/gi18n.h>
@@ -49,8 +50,6 @@ G_DEFINE_FINAL_TYPE (GnalkWindow, gnalk_window, ADW_TYPE_APPLICATION_WINDOW)
 
 /* Property specs - exported for use in gnalk-window-login.c */
 GParamSpec *gnalk_window_properties[GNALK_WINDOW_N_PROPS];
-
-static void on_set_status_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 
 /* AppState signal handlers (new async startup architecture) */
 static void on_app_state_loading_changed (GnalkAppState *app_state, gboolean is_loading, GnalkWindow *self);
@@ -302,10 +301,10 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
       /* Reset participant status in DB (we can't know real status when offline) */
       {
         GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-        GnalkDatabase *db = gnalk_application_get_database (app);
+        GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
         gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
-        if (db && account_id > 0)
-          gnalk_database_reset_participants_status (db, account_id);
+        if (repo && account_id > 0)
+          gnalk_data_repository_reset_participants_status (repo, account_id);
       }
       break;
 
@@ -321,14 +320,6 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
       gnalk_window_show_login_view (self);
       break;
     }
-}
-
-void
-gnalk_window_on_session_conversations_updated (GnalkSession *session G_GNUC_UNUSED,
-                                                GnalkWindow  *self G_GNUC_UNUSED)
-{
-  /* No-op: DataRepository::data-changed handles conversation list reloads.
-   * Kept as handler stub since Session still emits the signal. */
 }
 
 void
@@ -1069,26 +1060,13 @@ gnalk_window_on_session_call_state_changed (GnalkSession *session G_GNUC_UNUSED,
  */
 
 static void
-on_set_status_response (GnalkHttpClient *client,
-                        JsonNode         *response,
-                        GError           *error,
-                        gpointer          user_data)
-{
-  (void) client;
-  (void) response;
-  (void) user_data;
-  if (error)
-    g_warning ("Failed to set status: %s", error->message);
-}
-
-static void
 on_user_status_changed (GnalkUserStatusMenu *menu,
                         const char           *status,
                         GnalkWindow         *self)
 {
   (void) menu;
-  /* Send to server */
-  gnalk_http_client_set_user_status (self->http_client, status, on_set_status_response, self);
+  if (self->active_session)
+    gnalk_session_set_user_status (self->active_session, status);
 }
 
 /* Incoming call handling */
@@ -1285,10 +1263,10 @@ gnalk_window_on_message_controller_sent (GnalkMessageController *controller G_GN
           GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
           if (app)
             {
-              GnalkDatabase *db = gnalk_application_get_database (app);
+              GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
               gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
-              if (db && account_id > 0 && self->current_room)
-                gnalk_database_save_message (db, account_id, self->current_room->room_token, msg_data);
+              if (repo && account_id > 0 && self->current_room)
+                gnalk_data_repository_save_message (repo, account_id, self->current_room->room_token, msg_data);
             }
 
           /* Force UI update by remove/insert at same position (preserve order while pending) */

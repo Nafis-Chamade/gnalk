@@ -315,20 +315,6 @@ gnalk_message_controller_get_room (GnalkMessageController *self)
   return self->room_token;
 }
 
-guint
-gnalk_message_controller_get_generation (GnalkMessageController *self)
-{
-  g_return_val_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self), 0);
-  return self->generation;
-}
-
-void
-gnalk_message_controller_increment_generation (GnalkMessageController *self)
-{
-  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
-  self->generation++;
-}
-
 void
 gnalk_message_controller_cancel (GnalkMessageController *self)
 {

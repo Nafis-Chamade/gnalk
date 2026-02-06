@@ -8,7 +8,6 @@
  * - "room-closed" (old_token): Room closed (content page hiding)
  * - "messages-store-changed" (store): Active message store changed
  * - "scroll-requested" (position): Controller wants UI to scroll to position
- * - "join-complete" (token, session_id): Session join confirmed
  */
 
 #pragma once
@@ -79,12 +78,6 @@ void gnalk_room_controller_open_room           (GnalkRoomController *self,
                                                   const char          *token);
 void gnalk_room_controller_open_room_debounced (GnalkRoomController *self,
                                                   const char          *token);
-void gnalk_room_controller_background_current  (GnalkRoomController *self,
-                                                  gint64               anchor_id,
-                                                  gdouble              anchor_offset,
-                                                  gboolean             at_bottom,
-                                                  int                  viewport_height,
-                                                  int                  viewport_width);
 void gnalk_room_controller_close_current       (GnalkRoomController *self);
 void gnalk_room_controller_restore_last_room   (GnalkRoomController *self,
                                                   gboolean             is_collapsed);

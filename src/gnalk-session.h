@@ -145,6 +145,10 @@ void gnalk_session_send_file (GnalkSession *self,
                                 gint64         reply_to,
                                 const char    *reference_id);
 
+/* User status */
+void gnalk_session_set_user_status (GnalkSession *self,
+                                    const char   *status);
+
 /* Internal component access (for call window, etc.) */
 GnalkHttpClient             *gnalk_session_get_http_client             (GnalkSession *self);
 GnalkSignaling              *gnalk_session_get_signaling               (GnalkSession *self);

@@ -99,4 +99,32 @@ void gnalk_conversation_controller_set_favorite (GnalkConversationController *se
                                                  const char                  *room_token,
                                                  gboolean                     favorite);
 
+/**
+ * GnalkSearchContactsCallback:
+ * @controller: The conversation controller
+ * @response: The JSON response (nullable)
+ * @error: Error if operation failed (nullable)
+ * @user_data: User data
+ *
+ * Callback for search_contacts results.
+ */
+typedef void (*GnalkSearchContactsCallback) (GnalkConversationController *controller,
+                                             JsonNode                    *response,
+                                             GError                      *error,
+                                             gpointer                     user_data);
+
+/**
+ * gnalk_conversation_controller_search_contacts:
+ * @self: The controller
+ * @search_term: The search term
+ * @callback: Callback for results
+ * @user_data: User data for callback
+ *
+ * Searches for contacts on the server.
+ */
+void gnalk_conversation_controller_search_contacts (GnalkConversationController  *self,
+                                                    const char                   *search_term,
+                                                    GnalkSearchContactsCallback   callback,
+                                                    gpointer                      user_data);
+
 G_END_DECLS

@@ -399,3 +399,97 @@ gnalk_participant_controller_is_polling (GnalkParticipantController *self)
   g_return_val_if_fail (GNALK_IS_PARTICIPANT_CONTROLLER (self), FALSE);
   return self->poll_timer_id > 0;
 }
+
+/* ============ Moderator Actions ============ */
+
+typedef struct {
+  GnalkParticipantController *controller;
+  char                        *room_token;
+} ModeratorActionCallbackData;
+
+static void
+moderator_action_callback_data_free (ModeratorActionCallbackData *data)
+{
+  g_free (data->room_token);
+  g_slice_free (ModeratorActionCallbackData, data);
+}
+
+static void
+on_moderator_action_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                              JsonNode         *response G_GNUC_UNUSED,
+                              GError           *error,
+                              gpointer          user_data)
+{
+  ModeratorActionCallbackData *cb_data = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      moderator_action_callback_data_free (cb_data);
+      return;
+    }
+
+  GnalkParticipantController *self = cb_data->controller;
+
+  if (error)
+    {
+      g_warning ("ParticipantController: Moderator action failed: %s", error->message);
+      g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
+      moderator_action_callback_data_free (cb_data);
+      return;
+    }
+
+  /* Refresh participants to reflect the change */
+  do_fetch (self);
+  moderator_action_callback_data_free (cb_data);
+}
+
+void
+gnalk_participant_controller_promote_moderator (GnalkParticipantController *self,
+                                                const char                 *room_token,
+                                                gint64                      attendee_id)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANT_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (room_token != NULL);
+
+  ModeratorActionCallbackData *cb_data = g_slice_new0 (ModeratorActionCallbackData);
+  cb_data->controller = self;
+  cb_data->room_token = g_strdup (room_token);
+
+  gnalk_http_client_promote_moderator (self->http_client, room_token,
+                                       attendee_id, on_moderator_action_response, cb_data);
+}
+
+void
+gnalk_participant_controller_demote_moderator (GnalkParticipantController *self,
+                                               const char                 *room_token,
+                                               gint64                      attendee_id)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANT_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (room_token != NULL);
+
+  ModeratorActionCallbackData *cb_data = g_slice_new0 (ModeratorActionCallbackData);
+  cb_data->controller = self;
+  cb_data->room_token = g_strdup (room_token);
+
+  gnalk_http_client_demote_moderator (self->http_client, room_token,
+                                      attendee_id, on_moderator_action_response, cb_data);
+}
+
+void
+gnalk_participant_controller_remove_attendee (GnalkParticipantController *self,
+                                              const char                 *room_token,
+                                              gint64                      attendee_id)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANT_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (room_token != NULL);
+
+  ModeratorActionCallbackData *cb_data = g_slice_new0 (ModeratorActionCallbackData);
+  cb_data->controller = self;
+  cb_data->room_token = g_strdup (room_token);
+
+  gnalk_http_client_remove_attendee (self->http_client, room_token,
+                                     attendee_id, on_moderator_action_response, cb_data);
+}

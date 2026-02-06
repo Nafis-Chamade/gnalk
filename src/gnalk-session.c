@@ -1324,7 +1324,7 @@ gnalk_session_can_call (GnalkSession *self)
   gboolean online = (self->state == GNALK_SESSION_STATE_ONLINE);
   gboolean sig_connected = gnalk_signaling_is_connected (self->signaling);
   gboolean result = online && self->signaling_room_confirmed && sig_connected;
-  g_message ("session_can_call: online=%d room_confirmed=%d sig_connected=%d => %d",
+  g_debug ("session_can_call: online=%d room_confirmed=%d sig_connected=%d => %d",
              online, self->signaling_room_confirmed, sig_connected, result);
   return result;
 }
@@ -1494,7 +1494,7 @@ on_room_join_response (GnalkHttpClient *client G_GNUC_UNUSED,
 
                   /* Join room on signaling if connected */
                   gboolean sig_connected = gnalk_signaling_is_connected (self->signaling);
-                  g_message ("Session %s: room join response, signaling connected=%d",
+                  g_debug ("Session %s: room join response, signaling connected=%d",
                              gnalk_account_get_user_id (self->account), sig_connected);
                   if (sig_connected)
                     {
@@ -1535,7 +1535,7 @@ gnalk_session_join_room (GnalkSession *self,
           self->state == GNALK_SESSION_STATE_ONLINE &&
           gnalk_signaling_is_connected (self->signaling))
         {
-          g_message ("Session %s: Re-joining signaling for room %s",
+          g_debug ("Session %s: Re-joining signaling for room %s",
                      gnalk_account_get_user_id (self->account), room_token);
           gnalk_signaling_join_room (self->signaling, room_token, self->current_session_id);
         }
@@ -1637,6 +1637,30 @@ gnalk_session_get_total_unread (GnalkSession *self)
 {
   g_return_val_if_fail (GNALK_IS_SESSION (self), 0);
   return self->total_unread;
+}
+
+static void
+on_set_user_status_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                             JsonNode         *response G_GNUC_UNUSED,
+                             GError           *error,
+                             gpointer          user_data G_GNUC_UNUSED)
+{
+  if (error)
+    g_warning ("Failed to set user status: %s", error->message);
+}
+
+void
+gnalk_session_set_user_status (GnalkSession *self,
+                               const char   *status)
+{
+  g_return_if_fail (GNALK_IS_SESSION (self));
+  g_return_if_fail (status != NULL);
+
+  if (self->state != GNALK_SESSION_STATE_ONLINE)
+    return;
+
+  gnalk_http_client_set_user_status (self->http_client, status,
+                                     on_set_user_status_response, NULL);
 }
 
 void

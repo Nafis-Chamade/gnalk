@@ -48,7 +48,6 @@ enum {
   SIGNAL_ROOM_CLOSED,
   SIGNAL_MESSAGES_STORE_CHANGED,
   SIGNAL_SCROLL_REQUESTED,
-  SIGNAL_JOIN_COMPLETE,
   N_SIGNALS
 };
 
@@ -315,21 +314,6 @@ gnalk_room_controller_class_init (GnalkRoomControllerClass *klass)
                   G_TYPE_NONE, 1,
                   G_TYPE_UINT);
 
-  /**
-   * GnalkRoomController::join-complete:
-   * @self: The controller
-   * @token: The room token
-   * @session_id: The session ID from the join
-   *
-   * Emitted when a room join sequence completes.
-   */
-  signals[SIGNAL_JOIN_COMPLETE] =
-    g_signal_new ("join-complete",
-                  G_TYPE_FROM_CLASS (klass),
-                  G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL,
-                  G_TYPE_NONE, 2,
-                  G_TYPE_STRING, G_TYPE_STRING);
 }
 
 /* ============ Constructor and dependency setters ============ */
@@ -519,23 +503,6 @@ gnalk_room_controller_open_room_debounced (GnalkRoomController *self,
 
   self->debounce_timer_id = g_timeout_add (ROOM_SWITCH_DEBOUNCE_MS,
                                              on_debounce_timeout, self);
-}
-
-void
-gnalk_room_controller_background_current (GnalkRoomController *self,
-                                            gint64               anchor_id,
-                                            gdouble              anchor_offset,
-                                            gboolean             at_bottom,
-                                            int                  viewport_height,
-                                            int                  viewport_width)
-{
-  if (!self->current_room || !self->tab_manager)
-    return;
-
-  gnalk_room_tab_manager_background_tab (self->tab_manager,
-                                           self->current_room->room_token,
-                                           anchor_id, anchor_offset, at_bottom,
-                                           viewport_height, viewport_width);
 }
 
 /**

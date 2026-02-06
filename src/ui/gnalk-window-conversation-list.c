@@ -9,6 +9,7 @@
 #include "gnalk-application.h"
 #include "gnalk-account-manager.h"
 #include "gnalk-database.h"
+#include "gnalk-data-repository.h"
 #include "gnalk-conversation-row.h"
 #include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
@@ -67,13 +68,14 @@ gnalk_window_compare_conversations_by_activity (gconstpointer a,
 
 /* Async conversation loading data */
 typedef struct {
-  GnalkDatabase *db;
-  gint64          account_id;
+  GnalkDataRepository *repo;
+  gint64               account_id;
 } LoadConversationsData;
 
 static void
 load_conversations_data_free (LoadConversationsData *data)
 {
+  g_clear_object (&data->repo);
   g_slice_free (LoadConversationsData, data);
 }
 
@@ -86,7 +88,7 @@ load_conversations_thread (GTask        *task,
   LoadConversationsData *data = task_data;
 
   /* Run DB query in background thread */
-  GListStore *cached = gnalk_database_load_conversations (data->db, data->account_id);
+  GListStore *cached = gnalk_data_repository_load_conversations (data->repo, data->account_id);
   g_task_return_pointer (task, cached, g_object_unref);
 }
 
@@ -330,7 +332,7 @@ gnalk_window_load_conversations_from_db (GnalkWindow *self)
   if (!app)
     return;
 
-  GnalkDatabase *db = gnalk_application_get_database (app);
+  GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
   gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
 
   /* If no active session (e.g., starting offline), get account_id from autologin accounts */
@@ -346,14 +348,14 @@ gnalk_window_load_conversations_from_db (GnalkWindow *self)
         }
     }
 
-  if (!db || account_id <= 0)
+  if (!repo || account_id <= 0)
     return;
 
   self->conv_load_in_progress = TRUE;
 
   /* Prepare async task data */
   LoadConversationsData *data = g_slice_new (LoadConversationsData);
-  data->db = db;
+  data->repo = g_object_ref (repo);
   data->account_id = account_id;
 
   GTask *task = g_task_new (self, NULL, load_conversations_from_db_finish, NULL);
@@ -412,20 +414,20 @@ gnalk_window_on_sidebar_search_changed (GnalkConversationSidebar *sidebar,
   gnalk_conversation_sidebar_show_search_results (self->conversation_sidebar, FALSE);
 
   /* Only search if there's actually text (debouncing already handled by sidebar) */
-  if (text && *text && strlen (text) >= 2)
+  if (text && *text && strlen (text) >= 2 && self->conversation_controller)
     {
-      gnalk_http_client_search_contacts (self->http_client,
-                                          text,
-                                          gnalk_window_on_search_contacts_response,
-                                          self);
+      gnalk_conversation_controller_search_contacts (self->conversation_controller,
+                                                     text,
+                                                     gnalk_window_on_search_contacts_response,
+                                                     self);
     }
 }
 
 void
-gnalk_window_on_search_contacts_response (GnalkHttpClient *client,
-                                           JsonNode         *response,
-                                           GError           *error,
-                                           gpointer          user_data)
+gnalk_window_on_search_contacts_response (GnalkConversationController *controller G_GNUC_UNUSED,
+                                           JsonNode                     *response,
+                                           GError                       *error,
+                                           gpointer                      user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 

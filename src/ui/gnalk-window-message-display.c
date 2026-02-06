@@ -12,6 +12,7 @@
 
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
+#include "gnalk-data-repository.h"
 #include "gnalk-database.h"
 #include "gnalk-message-data.h"
 #include "gnalk-message-processor.h"
@@ -75,11 +76,12 @@ gnalk_window_load_messages_from_db (GnalkWindow *self,
       return;
     }
 
-  GnalkDatabase *db = gnalk_application_get_database (app);
+  GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
+  GnalkDatabase *db = repo ? gnalk_data_repository_get_database (repo) : NULL;
   gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
 
   /* If account_id not set yet (offline startup), look it up from settings */
-  if (account_id <= 0 && db)
+  if (account_id <= 0 && repo && gnalk_data_repository_is_open (repo))
     {
       GSettings *settings = gnalk_application_get_settings (app);
       g_autofree char *server_url = g_settings_get_string (settings, "last-server-url");
@@ -87,7 +89,7 @@ gnalk_window_load_messages_from_db (GnalkWindow *self,
 
       if (server_url && *server_url && user_id && *user_id)
         {
-          account_id = gnalk_database_get_or_create_account (db, server_url, user_id);
+          account_id = gnalk_data_repository_get_account_id (repo, server_url, user_id);
           g_message ("load_messages_from_db: looked up account_id=%" G_GINT64_FORMAT " from settings", account_id);
         }
     }

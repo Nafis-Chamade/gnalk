@@ -9,6 +9,7 @@
 #include "gnalk-account-manager.h"
 #include "gnalk-keyring.h"
 #include "gnalk-database.h"
+#include "gnalk-data-repository.h"
 #include "gnalk-goa.h"
 #include <glib/gi18n.h>
 
@@ -435,15 +436,15 @@ gnalk_window_show_offline_main_view (GnalkWindow *self)
 
   /* Reset participant status since we're starting offline and can't know real status */
   {
-    GnalkDatabase *db = gnalk_application_get_database (app);
+    GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
     GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
     GList *autologin_accounts = gnalk_account_manager_get_autologin_accounts (account_manager);
-    if (db && autologin_accounts)
+    if (repo && autologin_accounts)
       {
         GnalkAccount *account = GNALK_ACCOUNT (autologin_accounts->data);
         gint64 account_id = gnalk_account_get_id (account);
         if (account_id > 0)
-          gnalk_database_reset_participants_status (db, account_id);
+          gnalk_data_repository_reset_participants_status (repo, account_id);
         g_list_free_full (autologin_accounts, g_object_unref);
       }
   }
@@ -534,7 +535,7 @@ gnalk_window_attempt_autologin (GnalkWindow *self)
                                G_CALLBACK (gnalk_window_on_session_manager_active_changed), self, G_CONNECT_DEFAULT);
       g_signal_connect_object (self->session_manager, "any-session-state-changed",
                                G_CALLBACK (gnalk_window_on_session_manager_any_state_changed), self, G_CONNECT_DEFAULT);
-      /* conversations-changed reload now handled by DataRepository::data-changed */
+      /* conversations-changed → Application/AppState only; Window uses DataRepository::data-changed */
 
       if (self->account_switcher)
         {

@@ -282,7 +282,7 @@ void gnalk_window_update_conversation_active_states (GnalkWindow *self, const ch
 /* Search signal handlers */
 void gnalk_window_on_sidebar_search_changed         (GnalkConversationSidebar *sidebar,
                                                       const char *text, GnalkWindow *self);
-void gnalk_window_on_search_contacts_response       (GnalkHttpClient *client, JsonNode *response,
+void gnalk_window_on_search_contacts_response       (GnalkConversationController *controller, JsonNode *response,
                                                       GError *error, gpointer user_data);
 void gnalk_window_on_sidebar_search_result_selected (GnalkConversationSidebar *sidebar,
                                                       guint position, GnalkWindow *self);
@@ -370,7 +370,6 @@ void gnalk_window_disconnect_active_session (GnalkWindow *self);
 
 /* Session signals (called from gnalk-window-account-session.c when connecting signals) */
 void gnalk_window_on_session_state_changed            (GnalkSession *session, int old_state, int new_state, GnalkWindow *self);
-void gnalk_window_on_session_conversations_updated    (GnalkSession *session, GnalkWindow *self);
 void gnalk_window_on_session_room_joined              (GnalkSession *session, const char *room_token, const char *session_id, GnalkWindow *self);
 void gnalk_window_on_session_signaling_room_joined    (GnalkSession *session, const char *room_token, GnalkWindow *self);
 void gnalk_window_on_session_call_capability_changed  (GnalkSession *session, gboolean can_call, GnalkWindow *self);

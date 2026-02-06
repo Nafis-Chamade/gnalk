@@ -91,4 +91,34 @@ const char *gnalk_participant_controller_get_active_room (GnalkParticipantContro
  */
 gboolean gnalk_participant_controller_is_polling (GnalkParticipantController *self);
 
+/**
+ * gnalk_participant_controller_promote_moderator:
+ * @self: The controller
+ * @room_token: The room token
+ * @attendee_id: The attendee ID to promote
+ */
+void gnalk_participant_controller_promote_moderator (GnalkParticipantController *self,
+                                                     const char                 *room_token,
+                                                     gint64                      attendee_id);
+
+/**
+ * gnalk_participant_controller_demote_moderator:
+ * @self: The controller
+ * @room_token: The room token
+ * @attendee_id: The attendee ID to demote
+ */
+void gnalk_participant_controller_demote_moderator (GnalkParticipantController *self,
+                                                    const char                 *room_token,
+                                                    gint64                      attendee_id);
+
+/**
+ * gnalk_participant_controller_remove_attendee:
+ * @self: The controller
+ * @room_token: The room token
+ * @attendee_id: The attendee ID to remove
+ */
+void gnalk_participant_controller_remove_attendee (GnalkParticipantController *self,
+                                                   const char                 *room_token,
+                                                   gint64                      attendee_id);
+
 G_END_DECLS

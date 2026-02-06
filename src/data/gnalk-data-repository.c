@@ -842,3 +842,48 @@ gnalk_data_repository_update_conversation_read_status (GnalkDataRepository *self
                                                     last_read_message);
   g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
 }
+
+gint64
+gnalk_data_repository_get_account_id (GnalkDataRepository *self,
+                                      const char          *server_url,
+                                      const char          *user_id)
+{
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (self), 0);
+  g_return_val_if_fail (self->is_open, 0);
+  g_return_val_if_fail (server_url != NULL, 0);
+  g_return_val_if_fail (user_id != NULL, 0);
+
+  return gnalk_database_get_or_create_account (self->database, server_url, user_id);
+}
+
+void
+gnalk_data_repository_reset_participants_status (GnalkDataRepository *self,
+                                                 gint64               account_id)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+
+  gnalk_database_reset_participants_status (self->database, account_id);
+}
+
+GListStore *
+gnalk_data_repository_load_conversations (GnalkDataRepository *self,
+                                          gint64               account_id)
+{
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (self), NULL);
+  g_return_val_if_fail (self->is_open, NULL);
+
+  return gnalk_database_load_conversations (self->database, account_id);
+}
+
+JsonArray *
+gnalk_data_repository_load_participants (GnalkDataRepository *self,
+                                         gint64               account_id,
+                                         const char          *conversation_token)
+{
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (self), NULL);
+  g_return_val_if_fail (self->is_open, NULL);
+  g_return_val_if_fail (conversation_token != NULL, NULL);
+
+  return gnalk_database_load_participants (self->database, account_id, conversation_token);
+}

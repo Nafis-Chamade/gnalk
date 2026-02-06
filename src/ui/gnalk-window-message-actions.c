@@ -1,6 +1,7 @@
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
 #include "gnalk-database.h"
+#include "gnalk-data-repository.h"
 #include "gnalk-message-data.h"
 #include "gnalk-account.h"
 #include <glib/gi18n.h>
@@ -20,7 +21,7 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
 
   /* Reload participants from database */
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  GnalkDatabase *db = gnalk_application_get_database (app);
+  GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
   gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
   const char *my_user_id = NULL;
   if (self->active_session)
@@ -31,13 +32,13 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
 
   g_debug ("on_participant_controller_changed: room=%s, account_id=%ld", room_token, (long)account_id);
 
-  if (!db || account_id <= 0)
+  if (!repo || account_id <= 0)
     {
-      g_warning ("on_participant_controller_changed: skipping, db=%p, account_id=%ld", (void*)db, (long)account_id);
+      g_warning ("on_participant_controller_changed: skipping, repo=%p, account_id=%ld", (void*)repo, (long)account_id);
       return;
     }
 
-  JsonArray *participants = gnalk_database_load_participants (db, account_id, room_token);
+  JsonArray *participants = gnalk_data_repository_load_participants (repo, account_id, room_token);
   if (!participants)
     {
       g_warning ("on_participant_controller_changed: no participants loaded from DB");
@@ -105,149 +106,19 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
 
 /* ============ Participant Action Handlers ============ */
 
-typedef struct {
-  GnalkWindow *window;
-  char *actor_id;
-} Create1to1Data;
-
-static void
-create_1to1_data_free (Create1to1Data *data)
-{
-  g_free (data->actor_id);
-  g_free (data);
-}
-
-static void
-on_create_1to1_response (GnalkHttpClient *client G_GNUC_UNUSED,
-                          JsonNode         *response,
-                          GError           *error,
-                          gpointer          user_data)
-{
-  Create1to1Data *data = user_data;
-  GnalkWindow *self = data->window;
-
-  if (error)
-    {
-      g_warning ("Failed to create 1-to-1 conversation: %s", error->message);
-      AdwToast *toast = adw_toast_new ("Failed to start chat");
-      adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (self->toast_overlay), toast);
-      create_1to1_data_free (data);
-      return;
-    }
-
-  if (!response)
-    {
-      create_1to1_data_free (data);
-      return;
-    }
-
-  /* Parse response to get the room token */
-  JsonObject *root = json_node_get_object (response);
-  JsonObject *ocs = json_object_get_object_member (root, "ocs");
-  if (!ocs)
-    {
-      create_1to1_data_free (data);
-      return;
-    }
-
-  JsonObject *room_data = json_object_get_object_member (ocs, "data");
-  if (!room_data)
-    {
-      create_1to1_data_free (data);
-      return;
-    }
-
-  const char *token = json_object_get_string_member_with_default (room_data, "token", NULL);
-  if (token && *token)
-    {
-      /* Add the new conversation to the store so it can be opened properly */
-      GnalkConversationData *conv = gnalk_conversation_data_new_from_json (room_data, self->active_session);
-      if (conv)
-        {
-          /* Insert at position 0 (will be sorted properly on next refresh) */
-          g_list_store_insert (self->conversations_store, 0, conv);
-          g_object_unref (conv);
-        }
-
-      /* Navigate to the new conversation */
-      gnalk_window_open_room (self, token);
-    }
-
-  create_1to1_data_free (data);
-}
-
 void
 gnalk_window_on_participant_chat_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
                                               const char             *actor_id,
                                               GnalkWindow           *self)
 {
-  if (!actor_id || !*actor_id || !self->http_client)
+  if (!actor_id || !*actor_id || !self->conversation_controller)
     return;
 
   g_message ("Creating 1-to-1 conversation with %s", actor_id);
 
-  Create1to1Data *data = g_new0 (Create1to1Data, 1);
-  data->window = self;
-  data->actor_id = g_strdup (actor_id);
-
-  /* Create 1-to-1 conversation: roomType=1, invite=actorId */
-  gnalk_http_client_create_conversation (self->http_client, 1, actor_id, NULL,
-                                           on_create_1to1_response, data);
-}
-
-typedef struct {
-  GnalkWindow *window;
-  gint64 attendee_id;
-  char *actor_id;
-  char *action;  /* "promote", "demote", or "remove" */
-} ModeratorActionData;
-
-static void
-moderator_action_data_free (ModeratorActionData *data)
-{
-  g_free (data->actor_id);
-  g_free (data->action);
-  g_free (data);
-}
-
-static void
-on_moderator_action_response (GnalkHttpClient *client G_GNUC_UNUSED,
-                               JsonNode         *response G_GNUC_UNUSED,
-                               GError           *error,
-                               gpointer          user_data)
-{
-  ModeratorActionData *data = user_data;
-  GnalkWindow *self = data->window;
-
-  if (error)
-    {
-      g_warning ("Moderator action '%s' failed: %s", data->action, error->message);
-      g_autofree char *msg = g_strdup_printf ("Failed to %s", data->action);
-      AdwToast *toast = adw_toast_new (msg);
-      adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (self->toast_overlay), toast);
-    }
-  else
-    {
-      /* Show success toast */
-      const char *msg = NULL;
-      if (g_strcmp0 (data->action, "promote") == 0)
-        msg = "Promoted to moderator";
-      else if (g_strcmp0 (data->action, "demote") == 0)
-        msg = "Demoted from moderator";
-      else if (g_strcmp0 (data->action, "remove") == 0)
-        msg = "Removed from conversation";
-      else
-        msg = "Action completed";
-
-      AdwToast *toast = adw_toast_new (msg);
-      adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (self->toast_overlay), toast);
-
-      /* Refresh participants list */
-      if (self->participant_controller)
-        gnalk_participant_controller_refresh (self->participant_controller);
-    }
-
-  moderator_action_data_free (data);
+  /* ConversationController handles HTTP + DB save + emits conversation-created
+   * which triggers gnalk_window_on_conversation_controller_created → open room */
+  gnalk_conversation_controller_create (self->conversation_controller, 1, actor_id, NULL);
 }
 
 void
@@ -256,20 +127,15 @@ gnalk_window_on_participant_promote_requested (GnalkParticipantsList *list G_GNU
                                                  const char             *actor_id,
                                                  GnalkWindow           *self)
 {
-  if (!self->http_client || !self->current_room)
+  if (!self->participant_controller || !self->current_room)
     return;
 
   g_message ("Promoting participant %s (attendee %" G_GINT64_FORMAT ") to moderator",
              actor_id ? actor_id : "(unknown)", attendee_id);
 
-  ModeratorActionData *data = g_new0 (ModeratorActionData, 1);
-  data->window = self;
-  data->attendee_id = attendee_id;
-  data->actor_id = g_strdup (actor_id);
-  data->action = g_strdup ("promote");
-
-  gnalk_http_client_promote_moderator (self->http_client, self->current_room->room_token,
-                                         attendee_id, on_moderator_action_response, data);
+  gnalk_participant_controller_promote_moderator (self->participant_controller,
+                                                  self->current_room->room_token,
+                                                  attendee_id);
 }
 
 void
@@ -278,20 +144,15 @@ gnalk_window_on_participant_demote_requested (GnalkParticipantsList *list G_GNUC
                                                 const char             *actor_id,
                                                 GnalkWindow           *self)
 {
-  if (!self->http_client || !self->current_room)
+  if (!self->participant_controller || !self->current_room)
     return;
 
   g_message ("Demoting participant %s (attendee %" G_GINT64_FORMAT ") from moderator",
              actor_id ? actor_id : "(unknown)", attendee_id);
 
-  ModeratorActionData *data = g_new0 (ModeratorActionData, 1);
-  data->window = self;
-  data->attendee_id = attendee_id;
-  data->actor_id = g_strdup (actor_id);
-  data->action = g_strdup ("demote");
-
-  gnalk_http_client_demote_moderator (self->http_client, self->current_room->room_token,
-                                        attendee_id, on_moderator_action_response, data);
+  gnalk_participant_controller_demote_moderator (self->participant_controller,
+                                                 self->current_room->room_token,
+                                                 attendee_id);
 }
 
 void
@@ -300,20 +161,15 @@ gnalk_window_on_participant_remove_requested (GnalkParticipantsList *list G_GNUC
                                                 const char             *actor_id,
                                                 GnalkWindow           *self)
 {
-  if (!self->http_client || !self->current_room)
+  if (!self->participant_controller || !self->current_room)
     return;
 
   g_message ("Removing participant %s (attendee %" G_GINT64_FORMAT ") from room",
              actor_id ? actor_id : "(unknown)", attendee_id);
 
-  ModeratorActionData *data = g_new0 (ModeratorActionData, 1);
-  data->window = self;
-  data->attendee_id = attendee_id;
-  data->actor_id = g_strdup (actor_id);
-  data->action = g_strdup ("remove");
-
-  gnalk_http_client_remove_attendee (self->http_client, self->current_room->room_token,
-                                       attendee_id, on_moderator_action_response, data);
+  gnalk_participant_controller_remove_attendee (self->participant_controller,
+                                                self->current_room->room_token,
+                                                attendee_id);
 }
 
 /* ============ Message Row Action Handlers ============ */

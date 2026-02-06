@@ -1,5 +1,6 @@
 #include "gnalk-conversation-controller.h"
 #include "gnalk-conversation-data.h"
+#include <json-glib/json-glib.h>
 
 struct _GnalkConversationController
 {
@@ -353,4 +354,47 @@ gnalk_conversation_controller_set_favorite (GnalkConversationController *self,
                                                   favorite,
                                                   on_favorite_response,
                                                   cb_data);
+}
+
+/* ============ Search Contacts ============ */
+
+typedef struct {
+  GnalkConversationController  *controller;
+  GnalkSearchContactsCallback   callback;
+  gpointer                       user_data;
+} SearchContactsCallbackData;
+
+static void
+on_search_contacts_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                             JsonNode         *response,
+                             GError           *error,
+                             gpointer          user_data)
+{
+  SearchContactsCallbackData *cb_data = user_data;
+
+  if (cb_data->callback)
+    cb_data->callback (cb_data->controller, response, error, cb_data->user_data);
+
+  g_slice_free (SearchContactsCallbackData, cb_data);
+}
+
+void
+gnalk_conversation_controller_search_contacts (GnalkConversationController  *self,
+                                               const char                   *search_term,
+                                               GnalkSearchContactsCallback   callback,
+                                               gpointer                      user_data)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (search_term != NULL);
+
+  SearchContactsCallbackData *cb_data = g_slice_new0 (SearchContactsCallbackData);
+  cb_data->controller = self;
+  cb_data->callback = callback;
+  cb_data->user_data = user_data;
+
+  gnalk_http_client_search_contacts (self->http_client,
+                                     search_term,
+                                     on_search_contacts_response,
+                                     cb_data);
 }

@@ -108,10 +108,6 @@ void gnalk_message_controller_upload_voice_message (GnalkMessageController *self
                                                       GBytes                  *file_bytes,
                                                       const char              *reference_id);
 
-/* Generation tracking for stale response handling */
-guint gnalk_message_controller_get_generation (GnalkMessageController *self);
-void gnalk_message_controller_increment_generation (GnalkMessageController *self);
-
 /* Cancel pending operations */
 void gnalk_message_controller_cancel (GnalkMessageController *self);
 

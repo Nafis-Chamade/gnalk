@@ -397,4 +397,54 @@ void gnalk_data_repository_update_conversation_read_status (GnalkDataRepository 
                                                                const char          *conversation_token,
                                                                gint64               last_read_message);
 
+/**
+ * gnalk_data_repository_get_account_id:
+ * @self: The data repository
+ * @server_url: The server URL
+ * @user_id: The user ID
+ *
+ * Looks up or creates an account ID synchronously.
+ *
+ * Returns: The account ID, or 0 on failure
+ */
+gint64 gnalk_data_repository_get_account_id (GnalkDataRepository *self,
+                                             const char          *server_url,
+                                             const char          *user_id);
+
+/**
+ * gnalk_data_repository_reset_participants_status:
+ * @self: The data repository
+ * @account_id: The account ID
+ *
+ * Resets all participants' online status for an account synchronously.
+ */
+void gnalk_data_repository_reset_participants_status (GnalkDataRepository *self,
+                                                      gint64               account_id);
+
+/**
+ * gnalk_data_repository_load_conversations:
+ * @self: The data repository
+ * @account_id: The account ID
+ *
+ * Loads conversations synchronously.
+ *
+ * Returns: (transfer full) (nullable): A #GListStore of #GnalkConversationData
+ */
+GListStore *gnalk_data_repository_load_conversations (GnalkDataRepository *self,
+                                                      gint64               account_id);
+
+/**
+ * gnalk_data_repository_load_participants:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ *
+ * Loads participants for a conversation synchronously.
+ *
+ * Returns: (transfer full) (nullable): A #JsonArray of participants
+ */
+JsonArray *gnalk_data_repository_load_participants (GnalkDataRepository *self,
+                                                    gint64               account_id,
+                                                    const char          *conversation_token);
+
 G_END_DECLS
