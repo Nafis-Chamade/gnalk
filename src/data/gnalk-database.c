@@ -75,6 +75,7 @@ static const char *SCHEMA_SQL =
   "  reactions_json TEXT,"
   "  parent_json TEXT,"
   "  message_parameters_json TEXT,"
+  "  actor_type TEXT DEFAULT 'users',"
   "  PRIMARY KEY (id, account_id)"
   ");"
 
@@ -295,9 +296,10 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
           "  reactions_json TEXT,"
           "  parent_json TEXT,"
           "  message_parameters_json TEXT,"
+          "  actor_type TEXT DEFAULT 'users',"
           "  PRIMARY KEY (id, account_id)"
           ");"
-          "INSERT INTO messages_new SELECT * FROM messages;"
+          "INSERT INTO messages_new SELECT *, 'users' FROM messages;"
           "DROP TABLE messages;"
           "ALTER TABLE messages_new RENAME TO messages;"
           "CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(account_id, conversation_token, timestamp DESC);"
@@ -316,6 +318,31 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
           {
             g_message ("Database migration: messages table migration completed successfully");
           }
+      }
+  }
+
+  /* Migration: add actor_type column to messages table */
+  {
+    sqlite3_stmt *check_stmt;
+    const char *check_sql = "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'";
+    if (sqlite3_prepare_v2 (self->db, check_sql, -1, &check_stmt, NULL) == SQLITE_OK)
+      {
+        if (sqlite3_step (check_stmt) == SQLITE_ROW)
+          {
+            const char *schema = (const char *)sqlite3_column_text (check_stmt, 0);
+            if (schema && !strstr (schema, "actor_type"))
+              {
+                char *err_msg = NULL;
+                if (sqlite3_exec (self->db,
+                                   "ALTER TABLE messages ADD COLUMN actor_type TEXT DEFAULT 'users'",
+                                   NULL, NULL, &err_msg) != SQLITE_OK)
+                  {
+                    g_warning ("Failed to add actor_type column: %s", err_msg ? err_msg : "unknown");
+                    sqlite3_free (err_msg);
+                  }
+              }
+          }
+        sqlite3_finalize (check_stmt);
       }
   }
 
@@ -767,8 +794,8 @@ gnalk_database_save_message (GnalkDatabase    *self,
     "INSERT OR REPLACE INTO messages "
     "(id, account_id, conversation_token, timestamp, reply_to, last_edit_timestamp, "
     "message, author_id, author_name, reference_id, system_message, is_own, status, "
-    "reactions_json, parent_json, message_parameters_json) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    "reactions_json, parent_json, message_parameters_json, actor_type) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -792,6 +819,7 @@ gnalk_database_save_message (GnalkDatabase    *self,
       sqlite3_bind_text (stmt, 14, reactions_json, -1, SQLITE_TRANSIENT);
       sqlite3_bind_text (stmt, 15, parent_json, -1, SQLITE_TRANSIENT);
       sqlite3_bind_text (stmt, 16, params_json, -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text (stmt, 17, gnalk_message_data_get_actor_type (message), -1, SQLITE_STATIC);
 
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
@@ -884,7 +912,7 @@ gnalk_database_load_messages (GnalkDatabase *self,
       sql =
         "SELECT id, timestamp, reply_to, last_edit_timestamp, message, author_id, "
         "author_name, reference_id, system_message, is_own, status, reactions_json, "
-        "parent_json, message_parameters_json "
+        "parent_json, message_parameters_json, actor_type "
         "FROM messages WHERE account_id = ? AND conversation_token = ? AND id < ? "
         "ORDER BY timestamp DESC LIMIT ?";
     }
@@ -893,7 +921,7 @@ gnalk_database_load_messages (GnalkDatabase *self,
       sql =
         "SELECT id, timestamp, reply_to, last_edit_timestamp, message, author_id, "
         "author_name, reference_id, system_message, is_own, status, reactions_json, "
-        "parent_json, message_parameters_json "
+        "parent_json, message_parameters_json, actor_type "
         "FROM messages WHERE account_id = ? AND conversation_token = ? "
         "ORDER BY timestamp DESC LIMIT ?";
     }
@@ -932,7 +960,8 @@ gnalk_database_load_messages (GnalkDatabase *self,
             (GnalkMessageDataStatus) sqlite3_column_int (stmt, 10),  /* status */
             (const char *) sqlite3_column_text (stmt, 11),   /* reactions_json */
             (const char *) sqlite3_column_text (stmt, 12),   /* parent_json */
-            (const char *) sqlite3_column_text (stmt, 13));  /* message_parameters_json */
+            (const char *) sqlite3_column_text (stmt, 13),   /* message_parameters_json */
+            (const char *) sqlite3_column_text (stmt, 14));  /* actor_type */
 
           g_ptr_array_add (messages, data);
         }

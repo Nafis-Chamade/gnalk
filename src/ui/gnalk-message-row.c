@@ -67,6 +67,7 @@ struct _GnalkMessageRow
   GnalkMessageStatus status;
   gboolean is_self;
   gboolean is_system;
+  gboolean is_bot;
   gboolean is_one_to_one;  /* 1-to-1 conversation (no username shown) */
   gboolean show_avatar;    /* For message grouping (first of consecutive from same author) */
   GnalkMessageDisplayMode display_mode;
@@ -1684,6 +1685,7 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
 
   self->is_self = gnalk_message_data_get_is_own (data);
   self->is_system = (system_message && *system_message);
+  self->is_bot = gnalk_message_data_is_bot (data);
 
   g_autofree char *ts_str = format_timestamp (timestamp);
   g_autofree char *display_message = NULL;
@@ -1823,9 +1825,27 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
     gtk_widget_set_visible (self->status_icon, FALSE);
 
   /* Load avatar */
-  if (avatar_cache && actor_id && *actor_id && !self->is_system)
-    gnalk_avatar_cache_get_user_avatar (avatar_cache, actor_id, 64, on_avatar_loaded,
-                                         avatar_callback_data_new (self));
+  if (!self->is_system)
+    {
+      if (self->is_bot)
+        {
+          /* Bots: smaller icon centered in 32x32 round frame with background */
+          gtk_widget_set_size_request (self->avatar_frame, 32, 32);
+          gtk_image_set_pixel_size (GTK_IMAGE (self->avatar), 18);
+          gtk_image_set_from_icon_name (GTK_IMAGE (self->avatar), "computer-symbolic");
+          gtk_widget_add_css_class (self->avatar_frame, "bot-avatar");
+          GdkRGBA bot_color = { 0.35, 0.55, 0.75, 1.0 };
+          gnalk_message_row_set_bubble_color (self, &bot_color);
+        }
+      else if (avatar_cache && actor_id && *actor_id)
+        {
+          gtk_widget_set_size_request (self->avatar_frame, -1, -1);
+          gtk_image_set_pixel_size (GTK_IMAGE (self->avatar), 32);
+          gtk_widget_remove_css_class (self->avatar_frame, "bot-avatar");
+          gnalk_avatar_cache_get_user_avatar (avatar_cache, actor_id, 64, on_avatar_loaded,
+                                               avatar_callback_data_new (self));
+        }
+    }
 
   /* Set reactions */
   JsonObject *reactions = gnalk_message_data_get_reactions (data);

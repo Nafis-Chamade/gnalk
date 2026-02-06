@@ -223,7 +223,9 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
               /* Check messageParameters for mentions (@all or direct @user) */
               if (json_object_has_member (msg_obj, "messageParameters"))
                 {
-                  JsonObject *params = json_object_get_object_member (msg_obj, "messageParameters");
+                  JsonNode *params_node = json_object_get_member (msg_obj, "messageParameters");
+                  JsonObject *params = (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
+                    ? json_node_get_object (params_node) : NULL;
                   if (params)
                     {
                       GList *members = json_object_get_members (params);

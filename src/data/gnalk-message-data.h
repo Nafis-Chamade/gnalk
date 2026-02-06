@@ -49,7 +49,8 @@ GnalkMessageData *gnalk_message_data_new_from_db (gint64                   id,
                                                      GnalkMessageDataStatus  status,
                                                      const char              *reactions_json,
                                                      const char              *parent_json,
-                                                     const char              *message_parameters_json);
+                                                     const char              *message_parameters_json,
+                                                     const char              *actor_type);
 
 /* Serialization for database storage */
 char *gnalk_message_data_serialize_reactions   (GnalkMessageData *self);
@@ -72,6 +73,8 @@ JsonObject  *gnalk_message_data_get_message_parameters (GnalkMessageData *self);
 void         gnalk_message_data_set_message_parameters (GnalkMessageData *self,
                                                           JsonObject        *params);
 gboolean     gnalk_message_data_get_render_markdown (GnalkMessageData *self);
+const char  *gnalk_message_data_get_actor_type     (GnalkMessageData *self);
+gboolean     gnalk_message_data_is_bot             (GnalkMessageData *self);
 
 GnalkMessageDataStatus gnalk_message_data_get_status (GnalkMessageData *self);
 

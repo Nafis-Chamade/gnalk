@@ -582,7 +582,10 @@ on_shared_media_response (GnalkHttpClient *client,
       if (!json_object_has_member (item, "messageParameters"))
         continue;
 
-      JsonObject *params = json_object_get_object_member (item, "messageParameters");
+      JsonNode *params_node = json_object_get_member (item, "messageParameters");
+      if (!params_node || !JSON_NODE_HOLDS_OBJECT (params_node))
+        continue;
+      JsonObject *params = json_node_get_object (params_node);
       if (!params)
         continue;
 

@@ -1057,7 +1057,9 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
                   const char *local_path = gnalk_message_data_get_upload_file_path (existing);
                   if (local_path && *local_path && json_object_has_member (msg, "messageParameters"))
                     {
-                      JsonObject *params = json_object_get_object_member (msg, "messageParameters");
+                      JsonNode *params_node = json_object_get_member (msg, "messageParameters");
+                      JsonObject *params = (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
+                        ? json_node_get_object (params_node) : NULL;
                       if (params && json_object_has_member (params, "file"))
                         {
                           JsonObject *file = json_object_get_object_member (params, "file");

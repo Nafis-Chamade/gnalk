@@ -234,6 +234,7 @@
   /* Corner at bottom-right for own messages (right side) */
   border-radius: 18px 18px 4px 18px;
   padding: 8px 14px;
+  box-shadow: 0 1px 3px alpha(black, 0.12);
 }
 
 .display-bubbles.message-other {
@@ -245,6 +246,7 @@
   /* Corner at top-left for other's messages (left side) */
   border-radius: 4px 18px 18px 18px;
   padding: 8px 14px;
+  box-shadow: 0 1px 3px alpha(black, 0.12);
 }
 
 /* Aligned mode: all messages left-aligned (desktop/wide view) */
@@ -252,6 +254,7 @@
   /* background-color set dynamically from avatar */
   border-radius: 4px 18px 18px 18px;
   padding: 8px 14px;
+  box-shadow: 0 1px 3px alpha(black, 0.12);
 }
 
 /* System messages: more subtle appearance */
@@ -269,6 +272,10 @@
   border: none;
   background: none;
   padding: 0;
+}
+
+.message-avatar.bot-avatar {
+  background-color: alpha(@window_fg_color, 0.1);
 }
 
 .quote-avatar {
@@ -732,8 +739,8 @@
 }
 
 @keyframes unread-glow {
-  from { box-shadow: 0 0 4px alpha(@accent_bg_color, 0.3); }
-  to { box-shadow: 0 0 12px alpha(@accent_bg_color, 0.6); }
+  from { box-shadow: 0 1px 3px alpha(black, 0.12), 0 0 4px alpha(@accent_bg_color, 0.3); }
+  to { box-shadow: 0 1px 3px alpha(black, 0.12), 0 0 12px alpha(@accent_bg_color, 0.6); }
 }
 
 .message-marking-read .message-bubble {
@@ -741,8 +748,8 @@
 }
 
 @keyframes unread-fadeout {
-  from { box-shadow: 0 0 8px alpha(@accent_bg_color, 0.5); }
-  to { box-shadow: none; }
+  from { box-shadow: 0 1px 3px alpha(black, 0.12), 0 0 8px alpha(@accent_bg_color, 0.5); }
+  to { box-shadow: 0 1px 3px alpha(black, 0.12); }
 }
 
 /* Image Gallery */

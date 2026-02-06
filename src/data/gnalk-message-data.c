@@ -13,6 +13,7 @@ struct _GnalkMessageData
   char   *author_name;
   char   *reference_id;
   char   *system_message;
+  char   *actor_type;
   gboolean is_own;
   gboolean show_date_header;
   gboolean show_timestamp;
@@ -92,6 +93,7 @@ gnalk_message_data_finalize (GObject *object)
   g_free (self->author_name);
   g_free (self->reference_id);
   g_free (self->system_message);
+  g_free (self->actor_type);
   g_free (self->upload_file_name);
   g_free (self->upload_file_path);
   g_free (self->upload_mime_type);
@@ -148,6 +150,7 @@ gnalk_message_data_new_from_json (JsonObject *message_data,
   self->author_name = g_strdup (json_object_get_string_member_with_default (message_data, "actorDisplayName", ""));
   self->reference_id = g_strdup (json_object_get_string_member_with_default (message_data, "referenceId", ""));
   self->system_message = g_strdup (json_object_get_string_member_with_default (message_data, "systemMessage", ""));
+  self->actor_type = g_strdup (json_object_get_string_member_with_default (message_data, "actorType", "users"));
 
   self->is_own = current_user_id && g_strcmp0 (self->author_id, current_user_id) == 0;
 
@@ -310,6 +313,20 @@ gnalk_message_data_get_render_markdown (GnalkMessageData *self)
 {
   g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
   return self->render_markdown;
+}
+
+const char *
+gnalk_message_data_get_actor_type (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), "users");
+  return self->actor_type;
+}
+
+gboolean
+gnalk_message_data_is_bot (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
+  return self->actor_type && g_strcmp0 (self->actor_type, "bots") == 0;
 }
 
 void
@@ -680,7 +697,8 @@ gnalk_message_data_new_from_db (gint64                   id,
                                   GnalkMessageDataStatus  status,
                                   const char              *reactions_json,
                                   const char              *parent_json,
-                                  const char              *message_parameters_json)
+                                  const char              *message_parameters_json,
+                                  const char              *actor_type)
 {
   GnalkMessageData *self = g_object_new (GNALK_TYPE_MESSAGE_DATA, NULL);
 
@@ -693,6 +711,7 @@ gnalk_message_data_new_from_db (gint64                   id,
   self->author_name = g_strdup (author_name ? author_name : "");
   self->reference_id = g_strdup (reference_id ? reference_id : "");
   self->system_message = g_strdup (system_message ? system_message : "");
+  self->actor_type = g_strdup (actor_type ? actor_type : "users");
   self->is_own = is_own;
   self->status = status;
 
