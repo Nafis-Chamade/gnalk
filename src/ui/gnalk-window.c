@@ -14,7 +14,6 @@
 #include "gnalk-account-manager.h"
 #include "gnalk-database.h"
 #include "gnalk-app-state.h"
-#include "gnalk-room-controller.h"
 #include "gnalk-sync-coordinator.h"
 #include "gnalk-video-player-dialog.h"
 #include <glib/gi18n.h>
@@ -136,7 +135,7 @@ gnalk_window_get_property (GObject    *object,
       g_value_set_string (value, self->user_name);
       break;
     case GNALK_WINDOW_PROP_CURRENT_ROOM_NAME:
-      g_value_set_string (value, self->current_room_name);
+      g_value_set_string (value, self->current_room->room_name);
       break;
     case GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM:
       g_value_set_boolean (value, self->has_active_room);
@@ -161,8 +160,8 @@ gnalk_window_set_property (GObject      *object,
       self->user_name = g_value_dup_string (value);
       break;
     case GNALK_WINDOW_PROP_CURRENT_ROOM_NAME:
-      g_free (self->current_room_name);
-      self->current_room_name = g_value_dup_string (value);
+      g_free (self->current_room->room_name);
+      self->current_room->room_name = g_value_dup_string (value);
       break;
     case GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM:
       self->has_active_room = g_value_get_boolean (value);
@@ -359,7 +358,7 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
          * Long-polling will fetch any new messages incrementally. */
 
         /* Refresh participants now that we're online (may have been empty from offline start) */
-        if (self->current_room_token && self->participant_controller)
+        if (self->current_room && self->participant_controller)
           gnalk_participant_controller_refresh (self->participant_controller);
       }
       break;
@@ -401,12 +400,10 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
 
 void
 gnalk_window_on_session_conversations_updated (GnalkSession *session G_GNUC_UNUSED,
-                                                GnalkWindow  *self)
+                                                GnalkWindow  *self G_GNUC_UNUSED)
 {
-  /* Session has saved conversations to DB - reload from DB to use single code path.
-   * This ensures consistent behavior between initial load and HTTP refresh. */
-  g_message ("Window: session conversations updated, reloading from DB");
-  gnalk_window_load_conversations_from_db (self);
+  /* No-op: DataRepository::data-changed handles conversation list reloads.
+   * Kept as handler stub since Session still emits the signal. */
 }
 
 void
@@ -417,10 +414,10 @@ gnalk_window_on_session_room_joined (GnalkSession *session G_GNUC_UNUSED,
 {
   g_message ("Window: session room joined: %s (session_id: %s)", room_token, session_id);
 
-  g_free (self->current_room_token);
-  g_free (self->current_session_id);
-  self->current_room_token = g_strdup (room_token);
-  self->current_session_id = g_strdup (session_id);
+  g_free (self->current_room->room_token);
+  g_free (self->current_room->session_id);
+  self->current_room->room_token = g_strdup (room_token);
+  self->current_room->session_id = g_strdup (session_id);
   self->has_active_room = TRUE;
 
   g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
@@ -490,7 +487,7 @@ gnalk_window_on_session_typing (GnalkSession *session G_GNUC_UNUSED,
                                  GnalkWindow  *self)
 {
   /* Only show typing indicator for current room */
-  if (g_strcmp0 (room_token, self->current_room_token) != 0)
+  if (g_strcmp0 (room_token, self->current_room->room_token) != 0)
     return;
 
   gnalk_typing_indicator_set_typing (self->typing_indicator, session_id, display_name, is_typing);
@@ -518,17 +515,10 @@ gnalk_window_on_session_signaling_ready (GnalkSession *session,
                  stun ? stun : "(none)", turn ? turn : "(none)");
     }
 
-  /* If we have a pending room to join, do it now */
-  if (self->pending_room_token)
+  /* Join the current room if we have one (e.g., from immediate restore at startup) */
+  if (self->current_room && self->has_active_room && self->active_session)
     {
-      if (self->active_session)
-        gnalk_session_join_room (self->active_session, self->pending_room_token);
-      g_clear_pointer (&self->pending_room_token, g_free);
-    }
-  /* Also join the current room if we have one (e.g., from immediate restore at startup) */
-  else if (self->current_room_token && self->has_active_room && self->active_session)
-    {
-      gnalk_session_join_room (self->active_session, self->current_room_token);
+      gnalk_session_join_room (self->active_session, self->current_room->room_token);
     }
 
   /* Update call button now that signaling is ready */
@@ -647,7 +637,7 @@ gnalk_window_update_call_button_state (GnalkWindow *self)
   else
     {
       /* Fallback to direct check */
-      gboolean has_room = self->has_active_room && self->current_room_token != NULL;
+      gboolean has_room = self->has_active_room && self->current_room != NULL;
       gboolean signaling_connected = self->signaling && gnalk_signaling_is_connected (self->signaling);
       can_call = has_room && signaling_connected;
     }
@@ -702,7 +692,7 @@ static void
 start_call (GnalkWindow *self,
             gboolean      with_video)
 {
-  if (!self->current_room_token)
+  if (!self->current_room)
     return;
 
   if (!gnalk_signaling_is_connected (self->signaling))
@@ -711,7 +701,7 @@ start_call (GnalkWindow *self,
       return;
     }
 
-  if (!self->current_session_id)
+  if (!self->current_room->session_id)
     {
       g_warning ("Cannot start call: no session ID");
       return;
@@ -719,7 +709,7 @@ start_call (GnalkWindow *self,
 
   g_message ("start_call: starting %s call for room %s with session %.30s...",
              with_video ? "video" : "audio",
-             self->current_room_token, self->current_session_id);
+             self->current_room->room_token, self->current_room->session_id);
 
   /* Start the call with the current session.
    * The session should be valid since we joined the room when viewing it.
@@ -729,9 +719,9 @@ start_call (GnalkWindow *self,
   GnalkCallWindow *call_window = gnalk_call_window_new (app);
 
   gnalk_call_window_start_call (call_window,
-                                 self->current_room_token,
-                                 self->current_room_name,
-                                 self->current_session_id,
+                                 self->current_room->room_token,
+                                 self->current_room->room_name,
+                                 self->current_room->session_id,
                                  self->http_client,
                                  self->webrtc,
                                  self->signaling,
@@ -773,7 +763,7 @@ static void
 on_conversation_info_requested (GnalkConversationHeader *header G_GNUC_UNUSED,
                                  GnalkWindow             *self)
 {
-  if (!self->current_room_token)
+  if (!self->current_room)
     return;
 
   /* Find the conversation data for the current room */
@@ -783,7 +773,7 @@ on_conversation_info_requested (GnalkConversationHeader *header G_GNUC_UNUSED,
     {
       GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
       const char *token = gnalk_conversation_data_get_token (conv);
-      if (g_strcmp0 (token, self->current_room_token) == 0)
+      if (g_strcmp0 (token, self->current_room->room_token) == 0)
         {
           conversation = conv;
           break;
@@ -949,7 +939,7 @@ apply_message_display_mode (GnalkWindow *self)
     {
       GnalkMessageRow *row = GNALK_MESSAGE_ROW (key);
       gnalk_message_row_set_display_mode (row, self->message_display_mode);
-      gnalk_message_row_set_one_to_one (row, self->current_room_type == 1);
+      gnalk_message_row_set_one_to_one (row, self->current_room->room_type == 1);
     }
 }
 
@@ -1046,7 +1036,7 @@ on_msg_list_item_bind (GtkListItemFactory *factory,
   /* Set all state before display mode (which calls apply_layout) */
   gnalk_message_row_set_show_avatar (row, show_avatar);
   gnalk_message_row_set_show_timestamp (row, show_timestamp);
-  gnalk_message_row_set_one_to_one (row, self->current_room_type == 1);
+  gnalk_message_row_set_one_to_one (row, self->current_room->room_type == 1);
 
   /* Set display mode last - this calls apply_layout with all state set */
   gnalk_message_row_set_display_mode (row, self->message_display_mode);
@@ -1124,8 +1114,9 @@ on_message_view_load_older_requested (GnalkMessageView *view,
   (void) view;
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  if (self->has_more_history && !gnalk_message_view_get_loading_older (self->message_view) &&
-      self->current_room_token && self->oldest_loaded_message_id > 0)
+  if (self->current_room &&
+      self->current_room->has_more_history && !gnalk_message_view_get_loading_older (self->message_view) &&
+      self->current_room->oldest_loaded_id > 0)
     {
       g_debug ("Message view requested older messages");
       gnalk_window_load_older_messages (self);
@@ -1243,14 +1234,10 @@ gnalk_window_on_signaling_room_disinvited (GnalkSignaling *signaling G_GNUC_UNUS
 
   /* If we were disinvited from the current room, clear our room state
    * to prevent trying to rejoin after reconnection */
-  if (self->current_room_token && g_strcmp0 (self->current_room_token, room_token) == 0)
+  if (self->current_room && g_strcmp0 (self->current_room->room_token, room_token) == 0)
     {
       g_message ("Window: clearing current room state due to disinvite");
-      g_clear_pointer (&self->current_room_token, g_free);
-      g_clear_pointer (&self->current_room_name, g_free);
-
-      /* Cancel any pending room join */
-      self->room_join_in_progress = FALSE;
+      self->current_room = NULL;
     }
 }
 
@@ -1270,12 +1257,12 @@ gnalk_window_on_signaling_incoming_call (GnalkSignaling *signaling,
     return;
 
   /* Only show incoming call for the current room */
-  if (!self->current_room_token)
+  if (!self->current_room)
     return;
 
   /* Show the incoming call banner - it handles dedup and state internally */
   gnalk_incoming_call_banner_show_call (self->incoming_call_banner,
-                                          self->current_room_token,
+                                          self->current_room->room_token,
                                           actor_id);
 }
 
@@ -1292,7 +1279,7 @@ on_incoming_call_accept_requested (GnalkIncomingCallBanner *banner,
   hide_incoming_call (self);
 
   /* Start the call - reuse the existing call button logic */
-  if (!self->current_room_token)
+  if (!self->current_room)
     return;
 
   if (!gnalk_signaling_is_connected (self->signaling))
@@ -1305,9 +1292,9 @@ on_incoming_call_accept_requested (GnalkIncomingCallBanner *banner,
   GnalkCallWindow *call_window = gnalk_call_window_new (app);
 
   gnalk_call_window_start_call (call_window,
-                                 self->current_room_token,
-                                 self->current_room_name,
-                                 self->current_session_id,
+                                 self->current_room->room_token,
+                                 self->current_room->room_name,
+                                 self->current_room->session_id,
                                  self->http_client,
                                  self->webrtc,
                                  self->signaling,
@@ -1363,7 +1350,7 @@ on_typing_send_timer (gpointer user_data)
   else
     {
       /* Stop typing */
-      self->is_typing = FALSE;
+      self->current_room->is_typing = FALSE;
       self->typing_send_timer_id = 0;
       gnalk_signaling_send_typing (self->signaling, FALSE);
       return G_SOURCE_REMOVE;
@@ -1378,10 +1365,10 @@ on_message_input_text_changed (GnalkMessageInput *input,
   (void) input;
   gboolean has_text = text && *text;
 
-  if (has_text && !self->is_typing)
+  if (has_text && !self->current_room->is_typing)
     {
       /* Started typing */
-      self->is_typing = TRUE;
+      self->current_room->is_typing = TRUE;
       gnalk_signaling_send_typing (self->signaling, TRUE);
 
       /* Start timer to resend every 10 seconds */
@@ -1390,10 +1377,10 @@ on_message_input_text_changed (GnalkMessageInput *input,
                                                              on_typing_send_timer,
                                                              self);
     }
-  else if (!has_text && self->is_typing)
+  else if (!has_text && self->current_room->is_typing)
     {
       /* Stopped typing */
-      self->is_typing = FALSE;
+      self->current_room->is_typing = FALSE;
       gnalk_signaling_send_typing (self->signaling, FALSE);
 
       if (self->typing_send_timer_id > 0)
@@ -1423,7 +1410,7 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
   g_debug ("Window: Participants changed for %s", room_token);
 
   /* Only update if this is the current room */
-  if (!self->current_room_token || g_strcmp0 (room_token, self->current_room_token) != 0)
+  if (!self->current_room || g_strcmp0 (room_token, self->current_room->room_token) != 0)
     return;
 
   /* Reload participants from database */
@@ -1462,7 +1449,7 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
       const char *actor_id = json_object_get_string_member_with_default (participant, "actorId", "");
       gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
 
-      if (self->current_room_type == 1 && actor_id && *actor_id &&
+      if (self->current_room->room_type == 1 && actor_id && *actor_id &&
           g_strcmp0 (actor_id, my_user_id) != 0)
         gnalk_window_update_room_call_icon (self, 1, in_call);
     }
@@ -1474,7 +1461,7 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
     {
       GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
       const char *token = gnalk_conversation_data_get_token (conv);
-      if (g_strcmp0 (token, self->current_room_token) == 0)
+      if (g_strcmp0 (token, self->current_room->room_token) == 0)
         {
           my_participant_type = gnalk_conversation_data_get_participant_type (conv);
           g_object_unref (conv);
@@ -1487,10 +1474,10 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
   gnalk_participants_list_set_participants (self->participants_list, participants,
                                               self->avatar_cache, self->signaling,
                                               my_user_id, my_participant_type,
-                                              self->current_room_type);
+                                              self->current_room->room_type);
 
   /* For group rooms with participants, respect user preference and sync toggle */
-  if (self->current_room_type != 1 && n_participants > 0)
+  if (self->current_room->room_type != 1 && n_participants > 0)
     {
       GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
       GSettings *settings = gnalk_application_get_settings (app);
@@ -1662,7 +1649,7 @@ on_participant_promote_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
                                    const char             *actor_id,
                                    GnalkWindow           *self)
 {
-  if (!self->http_client || !self->current_room_token)
+  if (!self->http_client || !self->current_room)
     return;
 
   g_message ("Promoting participant %s (attendee %" G_GINT64_FORMAT ") to moderator",
@@ -1674,7 +1661,7 @@ on_participant_promote_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
   data->actor_id = g_strdup (actor_id);
   data->action = g_strdup ("promote");
 
-  gnalk_http_client_promote_moderator (self->http_client, self->current_room_token,
+  gnalk_http_client_promote_moderator (self->http_client, self->current_room->room_token,
                                          attendee_id, on_moderator_action_response, data);
 }
 
@@ -1684,7 +1671,7 @@ on_participant_demote_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
                                   const char             *actor_id,
                                   GnalkWindow           *self)
 {
-  if (!self->http_client || !self->current_room_token)
+  if (!self->http_client || !self->current_room)
     return;
 
   g_message ("Demoting participant %s (attendee %" G_GINT64_FORMAT ") from moderator",
@@ -1696,7 +1683,7 @@ on_participant_demote_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
   data->actor_id = g_strdup (actor_id);
   data->action = g_strdup ("demote");
 
-  gnalk_http_client_demote_moderator (self->http_client, self->current_room_token,
+  gnalk_http_client_demote_moderator (self->http_client, self->current_room->room_token,
                                         attendee_id, on_moderator_action_response, data);
 }
 
@@ -1706,7 +1693,7 @@ on_participant_remove_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
                                   const char             *actor_id,
                                   GnalkWindow           *self)
 {
-  if (!self->http_client || !self->current_room_token)
+  if (!self->http_client || !self->current_room)
     return;
 
   g_message ("Removing participant %s (attendee %" G_GINT64_FORMAT ") from room",
@@ -1718,7 +1705,7 @@ on_participant_remove_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
   data->actor_id = g_strdup (actor_id);
   data->action = g_strdup ("remove");
 
-  gnalk_http_client_remove_attendee (self->http_client, self->current_room_token,
+  gnalk_http_client_remove_attendee (self->http_client, self->current_room->room_token,
                                        attendee_id, on_moderator_action_response, data);
 }
 
@@ -1763,8 +1750,8 @@ gnalk_window_on_message_controller_sent (GnalkMessageController *controller G_GN
             {
               GnalkDatabase *db = gnalk_application_get_database (app);
               gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
-              if (db && account_id > 0 && self->current_room_token)
-                gnalk_database_save_message (db, account_id, self->current_room_token, msg_data);
+              if (db && account_id > 0 && self->current_room)
+                gnalk_database_save_message (db, account_id, self->current_room->room_token, msg_data);
             }
 
           /* Force UI update by remove/insert at same position (preserve order while pending) */
@@ -2009,13 +1996,13 @@ on_new_conversation_clicked (GnalkConversationSidebar *sidebar G_GNUC_UNUSED,
 }
 
 static void
-on_new_conversation_created (GnalkNewConversationDialog *dialog,
+on_new_conversation_created (GnalkNewConversationDialog *dialog G_GNUC_UNUSED,
                              const char                  *room_token,
                              GnalkWindow                *self)
 {
-  /* Reload from DB - the dialog already created the conversation on server,
-   * controller's polling will sync it to DB shortly */
-  gnalk_window_load_conversations_from_db (self);
+  /* DataRepository::data-changed handles the reload when sync saves to DB.
+   * Open the new conversation immediately. */
+  gnalk_window_open_conversation_by_token (self, room_token);
 }
 
 /* Login functions (start_login, start_guest_login, show_login_view, attempt_autologin,
@@ -2030,11 +2017,11 @@ on_reaction_requested (GnalkMessageRow *row G_GNUC_UNUSED,
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  if (!self->message_controller || !self->current_room_token)
+  if (!self->message_controller || !self->current_room)
     return;
 
   /* Add reaction via controller - signal handler will update UI on success */
-  gnalk_message_controller_set_room (self->message_controller, self->current_room_token);
+  gnalk_message_controller_set_room (self->message_controller, self->current_room->room_token);
   gnalk_message_controller_add_reaction (self->message_controller, message_id, emoji);
 }
 
@@ -2052,19 +2039,19 @@ find_and_highlight_row (GtkWidget *widget, gpointer user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  if (self->highlight_message_id <= 0)
+  if (self->current_room->highlight_message_id <= 0)
     return;
 
   if (GNALK_IS_MESSAGE_ROW (widget))
     {
       GnalkMessageRow *row = GNALK_MESSAGE_ROW (widget);
       gint64 row_id = gnalk_message_row_get_id (row);
-      if (row_id == self->highlight_message_id)
+      if (row_id == self->current_room->highlight_message_id)
         {
           /* Remove class and re-add after a frame to restart animation */
           gtk_widget_remove_css_class (widget, "message-highlight");
           g_timeout_add (50, add_highlight_class_idle, widget);
-          self->highlight_message_id = 0;  /* Found it, stop searching */
+          self->current_room->highlight_message_id = 0;  /* Found it, stop searching */
         }
     }
 }
@@ -2074,14 +2061,14 @@ iterate_children (GtkWidget *widget, gpointer user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  if (self->highlight_message_id <= 0)
+  if (self->current_room->highlight_message_id <= 0)
     return;
 
   find_and_highlight_row (widget, user_data);
 
   /* Recurse into children */
   GtkWidget *child = gtk_widget_get_first_child (widget);
-  while (child && self->highlight_message_id > 0)
+  while (child && self->current_room->highlight_message_id > 0)
     {
       iterate_children (child, user_data);
       child = gtk_widget_get_next_sibling (child);
@@ -2093,13 +2080,13 @@ apply_highlight_timeout (gpointer user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  if (self->highlight_message_id <= 0)
+  if (self->current_room->highlight_message_id <= 0)
     return G_SOURCE_REMOVE;
 
   /* Recursively search for the message row in the widget tree */
   iterate_children (GTK_WIDGET (gnalk_message_view_get_list_view (self->message_view)), self);
 
-  self->highlight_message_id = 0;
+  self->current_room->highlight_message_id = 0;
   self->highlight_clear_timer_id = 0;
   return G_SOURCE_REMOVE;
 }
@@ -2122,7 +2109,7 @@ on_scroll_to_message_requested (GnalkMessageRow *row,
       if (msg_data && gnalk_message_data_get_id (msg_data) == message_id)
         {
           /* Store target for highlighting */
-          self->highlight_message_id = message_id;
+          self->current_room->highlight_message_id = message_id;
 
           /* Scroll to this position with focus */
           gtk_list_view_scroll_to (gnalk_message_view_get_list_view (self->message_view), i,
@@ -2161,8 +2148,8 @@ on_quote_closed (GnalkConversationActions *actions,
   if (was_editing)
     gnalk_message_input_clear (self->message_input);
 
-  self->reply_to_message_id = 0;
-  self->edit_message_id = 0;
+  self->current_room->reply_to_message_id = 0;
+  self->current_room->edit_message_id = 0;
   gnalk_conversation_actions_clear_quote (self->conversation_actions);
 }
 
@@ -2315,7 +2302,7 @@ on_voice_message_recorded (GnalkMessageInput *input G_GNUC_UNUSED,
 {
   g_message ("Window: Voice message recorded, duration=%.1f", duration);
 
-  if (!self->message_controller || !self->current_room_token)
+  if (!self->message_controller || !self->current_room)
     {
       g_warning ("Window: Cannot send voice message - no message controller or room");
       return;
@@ -2339,7 +2326,7 @@ on_photo_captured (GnalkMediaCaptureDialog *dialog G_GNUC_UNUSED,
 {
   g_message ("Window: Photo captured");
 
-  if (!self->message_controller || !self->current_room_token)
+  if (!self->message_controller || !self->current_room)
     {
       g_warning ("Window: Cannot send photo - no message controller or room");
       return;
@@ -2369,7 +2356,7 @@ on_video_captured (GnalkMediaCaptureDialog *dialog G_GNUC_UNUSED,
 {
   g_message ("Window: Video captured");
 
-  if (!self->message_controller || !self->current_room_token)
+  if (!self->message_controller || !self->current_room)
     {
       g_warning ("Window: Cannot send video - no message controller or room");
       return;
@@ -2443,7 +2430,7 @@ on_quote_requested (GnalkMessageRow *row,
   (void) row;
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  self->reply_to_message_id = message_id;
+  self->current_room->reply_to_message_id = message_id;
 
   gnalk_conversation_actions_set_reply (self->conversation_actions, message_id, author_name, message_text);
 
@@ -2494,8 +2481,8 @@ on_edit_requested (GnalkMessageRow *row,
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
   /* Set edit mode - clear any reply in progress */
-  self->edit_message_id = message_id;
-  self->reply_to_message_id = 0;
+  self->current_room->edit_message_id = message_id;
+  self->current_room->reply_to_message_id = 0;
 
   /* Show edit indicator using conversation_actions */
   gnalk_conversation_actions_set_edit (self->conversation_actions, message_id, message_text);
@@ -2512,11 +2499,11 @@ on_delete_requested (GnalkMessageRow *row G_GNUC_UNUSED,
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  if (!self->current_room_token || message_id <= 0)
+  if (!self->current_room || message_id <= 0)
     return;
 
   /* Delete message via controller */
-  gnalk_message_controller_set_room (self->message_controller, self->current_room_token);
+  gnalk_message_controller_set_room (self->message_controller, self->current_room->room_token);
   gnalk_message_controller_delete_message (self->message_controller, message_id);
 }
 
@@ -3039,9 +3026,9 @@ gnalk_window_dispose (GObject *object)
 
   /* Leave the current room when window is closed.
    * This ensures push notifications work instead of signaling messages. */
-  if (self->current_room_token)
+  if (self->current_room)
     {
-      g_message ("Window dispose: leaving room %s", self->current_room_token);
+      g_message ("Window dispose: leaving room %s", self->current_room->room_token);
 
       /* Tell controllers we're leaving the room */
       if (self->message_controller)
@@ -3050,10 +3037,10 @@ gnalk_window_dispose (GObject *object)
         gnalk_participant_controller_set_active_room (self->participant_controller, NULL, 0);
 
       if (self->signaling)
-        gnalk_signaling_leave_room (self->signaling, self->current_room_token);
+        gnalk_signaling_leave_room (self->signaling, self->current_room->room_token);
 
       if (self->http_client)
-        gnalk_http_client_leave_room (self->http_client, self->current_room_token, NULL, NULL);
+        gnalk_http_client_leave_room (self->http_client, self->current_room->room_token, NULL, NULL);
 
       /* Clear active room in sync coordinator so notifications work */
       GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
@@ -3110,12 +3097,13 @@ gnalk_window_finalize (GObject *object)
       self->typing_send_timer_id = 0;
     }
 
-  if (self->room_switch_timer_id > 0)
+  g_clear_object (&self->room_controller);
+
+  if (self->conv_reload_debounce_id > 0)
     {
-      g_source_remove (self->room_switch_timer_id);
-      self->room_switch_timer_id = 0;
+      g_source_remove (self->conv_reload_debounce_id);
+      self->conv_reload_debounce_id = 0;
     }
-  g_clear_pointer (&self->pending_room_token, g_free);
 
   if (self->mark_read_debounce_id > 0)
     {
@@ -3150,10 +3138,7 @@ gnalk_window_finalize (GObject *object)
   g_clear_object (&self->search_results_store);
   g_clear_object (&self->tab_manager);
 
-  g_free (self->current_room_token);
-  g_free (self->current_room_name);
-  g_free (self->current_room_description);
-  g_free (self->current_session_id);
+  self->current_room = NULL;
   g_free (self->user_name);
   g_free (self->login_room_token);
 
@@ -3226,12 +3211,11 @@ gnalk_window_on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coo
 
   g_message ("SyncCoordinator: room %s synced (%u messages)", room_token, count);
 
-  /* Reload conversation list to show updated last message/unread count */
-  gnalk_window_load_conversations_from_db (self);
+  /* Conversation list reload is handled by DataRepository::data-changed (debounced) */
 
   /* For the active room, long-polling handles message updates - no need to reload.
    * Only background rooms need their tabs refreshed when switched to. */
-  if (self->current_room_token && g_strcmp0 (room_token, self->current_room_token) == 0)
+  if (self->current_room && g_strcmp0 (room_token, self->current_room->room_token) == 0)
     {
       g_debug ("SyncCoordinator: active room %s synced, polling handles updates", room_token);
       /* Don't reload - polling already handles incremental updates */
@@ -3244,16 +3228,13 @@ gnalk_window_on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coo
     }
 }
 
-/* Sync coordinator notification - refresh conversations list when synced.
- * Connected by gnalk-window-account-session.c to the active session's coordinator. */
+/* Sync coordinator notification - previously triggered conversation list reload.
+ * Now handled by DataRepository::data-changed (debounced). Kept as stub for signal. */
 void
 gnalk_window_on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
-                                                       gpointer              user_data)
+                                                       gpointer              user_data G_GNUC_UNUSED)
 {
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  g_debug ("SyncCoordinator: conversations synced, refreshing UI");
-  gnalk_window_load_conversations_from_db (self);
+  /* No-op: DataRepository::data-changed handles conversation list reloads */
 }
 
 static void
@@ -3357,8 +3338,7 @@ gnalk_window_init (GnalkWindow *self)
                                G_CALLBACK (gnalk_window_on_session_manager_active_changed), self, G_CONNECT_DEFAULT);
       g_signal_connect_object (self->session_manager, "any-session-state-changed",
                                G_CALLBACK (gnalk_window_on_session_manager_any_state_changed), self, G_CONNECT_DEFAULT);
-      g_signal_connect_object (self->session_manager, "conversations-changed",
-                               G_CALLBACK (gnalk_window_on_session_manager_conversations_changed), self, G_CONNECT_DEFAULT);
+      /* conversations-changed reload now handled by DataRepository::data-changed */
 
       /* Set up account switcher (created from template) */
       if (self->account_switcher)
@@ -3474,6 +3454,24 @@ gnalk_window_init (GnalkWindow *self)
     gint max_tabs = g_settings_get_int (settings, "max-loaded-rooms");
     gdouble height_mult = g_settings_get_double (settings, "background-tab-height-multiplier");
     self->tab_manager = gnalk_room_tab_manager_new ((guint) max_tabs, height_mult);
+
+    /* Create room controller for open/close orchestration */
+    self->room_controller = gnalk_room_controller_new (self->tab_manager,
+                                                         self->conversations_store,
+                                                         settings);
+    gnalk_room_controller_set_message_controller (self->room_controller, self->message_controller);
+    gnalk_room_controller_set_participant_controller (self->room_controller, self->participant_controller);
+    gnalk_room_controller_set_scroll_state_func (self->room_controller,
+                                                   gnalk_window_get_scroll_state, self);
+
+    g_signal_connect (self->room_controller, "room-opened",
+                      G_CALLBACK (gnalk_window_on_room_controller_room_opened), self);
+    g_signal_connect (self->room_controller, "room-closed",
+                      G_CALLBACK (gnalk_window_on_room_controller_room_closed), self);
+    g_signal_connect (self->room_controller, "messages-store-changed",
+                      G_CALLBACK (gnalk_window_on_room_controller_messages_store_changed), self);
+    g_signal_connect (self->room_controller, "scroll-requested",
+                      G_CALLBACK (gnalk_window_on_room_controller_scroll_requested), self);
   }
   self->bound_unread_rows = g_hash_table_new (g_direct_hash, g_direct_equal);
   self->bound_conversation_rows = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);

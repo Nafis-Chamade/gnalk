@@ -27,6 +27,7 @@ static guint signals[N_SIGNALS];
 typedef struct {
   GnalkConversationController *controller;
   char                        *room_token;
+  gboolean                     favorite;  /* Used by set_favorite */
 } OperationCallbackData;
 
 static void
@@ -313,16 +314,24 @@ on_favorite_response (GnalkHttpClient *client G_GNUC_UNUSED,
     }
 
   GnalkConversationController *self = cb_data->controller;
+  char *room_token = g_strdup (cb_data->room_token);
+  gboolean favorite = cb_data->favorite;
   operation_callback_data_free (cb_data);
 
   if (error)
     {
       g_warning ("ConversationController: Set favorite failed: %s", error->message);
       g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
+      g_free (room_token);
       return;
     }
 
-  /* SyncCoordinator will pick up the changes on next periodic sync */
+  /* Update DB immediately so data-changed fires and UI updates */
+  if (self->repository && self->account_id > 0 && room_token)
+    gnalk_data_repository_update_conversation_favorite (self->repository, self->account_id,
+                                                        room_token, favorite);
+
+  g_free (room_token);
 }
 
 void
@@ -337,6 +346,7 @@ gnalk_conversation_controller_set_favorite (GnalkConversationController *self,
   OperationCallbackData *cb_data = g_slice_new0 (OperationCallbackData);
   cb_data->controller = self;
   cb_data->room_token = g_strdup (room_token);
+  cb_data->favorite = favorite;
 
   gnalk_http_client_set_conversation_favorite (self->http_client,
                                                   room_token,

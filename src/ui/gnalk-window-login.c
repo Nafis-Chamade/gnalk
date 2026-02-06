@@ -493,21 +493,23 @@ gnalk_window_show_offline_main_view (GnalkWindow *self)
           g_message ("Immediate restore: opening room %s from cache", last_room);
 
           /* Set up room state immediately - conversation details will update when list loads */
-          g_free (self->current_room_token);
-          self->current_room_token = g_strdup (last_room);
+          {
+            GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, last_room);
+            self->current_room = &tab->state;
+          }
           self->has_active_room = TRUE;
           gnalk_message_controller_set_room (self->message_controller, last_room);
 
           g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
 
           /* Initialize state for lazy loading older messages */
-          self->oldest_loaded_message_id = 0;
-          self->has_more_history = TRUE;
-          self->initial_messages_loaded = FALSE;
+          self->current_room->oldest_loaded_id = 0;
+          self->current_room->has_more_history = TRUE;
+          self->current_room->initial_load_done = FALSE;
           gnalk_message_view_set_loading_older (self->message_view, FALSE);
 
           /* Load messages from DB cache and scroll to bottom */
-          self->scroll_to_bottom = TRUE;
+          self->current_room->scroll_to_bottom = TRUE;
           gnalk_message_view_show_messages (self->message_view);
           gnalk_window_load_messages_from_db (self, last_room);
         }
@@ -532,8 +534,7 @@ gnalk_window_attempt_autologin (GnalkWindow *self)
                                G_CALLBACK (gnalk_window_on_session_manager_active_changed), self, G_CONNECT_DEFAULT);
       g_signal_connect_object (self->session_manager, "any-session-state-changed",
                                G_CALLBACK (gnalk_window_on_session_manager_any_state_changed), self, G_CONNECT_DEFAULT);
-      g_signal_connect_object (self->session_manager, "conversations-changed",
-                               G_CALLBACK (gnalk_window_on_session_manager_conversations_changed), self, G_CONNECT_DEFAULT);
+      /* conversations-changed reload now handled by DataRepository::data-changed */
 
       if (self->account_switcher)
         {

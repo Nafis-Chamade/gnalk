@@ -54,7 +54,7 @@ gnalk_window_update_read_status (GnalkWindow *self, gint64 last_common_read_mess
   if (last_common_read_message <= 0)
     return;
 
-  self->last_common_read_message = last_common_read_message;
+  self->current_room->last_common_read_message = last_common_read_message;
 
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
   for (guint i = 0; i < n_items; i++)
@@ -161,10 +161,10 @@ static gboolean on_mark_read_delay_timer (gpointer user_data);
 void
 gnalk_window_mark_messages_read_up_to (GnalkWindow *self, gint64 message_id)
 {
-  if (message_id <= self->last_read_message_id)
+  if (message_id <= self->current_room->last_read_message_id)
     return;
 
-  self->last_read_message_id = message_id;
+  self->current_room->last_read_message_id = message_id;
 
   /* Update local message states */
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
@@ -180,28 +180,28 @@ gnalk_window_mark_messages_read_up_to (GnalkWindow *self, gint64 message_id)
     }
 
   /* Update first_unread_message_id */
-  if (self->first_unread_message_id > 0 && self->first_unread_message_id <= message_id)
+  if (self->current_room->first_unread_message_id > 0 && self->current_room->first_unread_message_id <= message_id)
     {
       /* Find new first unread */
-      self->first_unread_message_id = 0;
+      self->current_room->first_unread_message_id = 0;
       for (guint i = 0; i < n_items; i++)
         {
           GnalkMessageData *data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
           if (gnalk_message_data_get_is_unread (data))
             {
               gint64 msg_id = gnalk_message_data_get_id (data);
-              if (self->first_unread_message_id == 0 || msg_id < self->first_unread_message_id)
-                self->first_unread_message_id = msg_id;
+              if (self->current_room->first_unread_message_id == 0 || msg_id < self->current_room->first_unread_message_id)
+                self->current_room->first_unread_message_id = msg_id;
             }
           g_object_unref (data);
         }
     }
 
   /* Call API to mark as read on server */
-  if (self->current_room_token && self->http_client)
+  if (self->current_room && self->http_client)
     {
       gnalk_http_client_mark_chat_read (self->http_client,
-                                          self->current_room_token,
+                                          self->current_room->room_token,
                                           message_id,
                                           on_mark_chat_read_response,
                                           self);
@@ -276,15 +276,15 @@ on_mark_read_delay_timer (gpointer user_data)
     }
 
   /* Update first_unread_message_id by finding new first unread */
-  self->first_unread_message_id = 0;
+  self->current_room->first_unread_message_id = 0;
   for (guint i = 0; i < n_items; i++)
     {
       GnalkMessageData *data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
       if (gnalk_message_data_get_is_unread (data))
         {
           gint64 msg_id = gnalk_message_data_get_id (data);
-          if (self->first_unread_message_id == 0 || msg_id < self->first_unread_message_id)
-            self->first_unread_message_id = msg_id;
+          if (self->current_room->first_unread_message_id == 0 || msg_id < self->current_room->first_unread_message_id)
+            self->current_room->first_unread_message_id = msg_id;
         }
       g_object_unref (data);
     }
@@ -336,14 +336,14 @@ on_mark_read_debounce_timer (gpointer user_data)
     return G_SOURCE_REMOVE;
 
   /* Fire HTTP call immediately to mark as read on server */
-  if (highest_id > self->last_read_message_id &&
-      self->current_room_token && self->http_client)
+  if (self->current_room && self->http_client &&
+      highest_id > self->current_room->last_read_message_id)
     {
       g_debug ("read-status: calling mark_chat_read for token=%s, msg_id=%ld (last_read=%ld)",
-               self->current_room_token, (long) highest_id, (long) self->last_read_message_id);
-      self->last_read_message_id = highest_id;
+               self->current_room->room_token, (long) highest_id, (long) self->current_room->last_read_message_id);
+      self->current_room->last_read_message_id = highest_id;
       gnalk_http_client_mark_chat_read (self->http_client,
-                                          self->current_room_token,
+                                          self->current_room->room_token,
                                           highest_id,
                                           on_mark_chat_read_response,
                                           self);
@@ -351,8 +351,8 @@ on_mark_read_debounce_timer (gpointer user_data)
   else
     {
       g_debug ("read-status: skipping HTTP call (highest_id=%ld <= last_read=%ld, token=%s, client=%p)",
-               (long) highest_id, (long) self->last_read_message_id,
-               self->current_room_token ? self->current_room_token : "(null)",
+               (long) highest_id, (long) self->current_room->last_read_message_id,
+               self->current_room ? self->current_room->room_token : "(null)",
                (void *) self->http_client);
     }
 
@@ -483,7 +483,7 @@ gnalk_window_on_scroll_to_bottom_clicked_for_unread (GnalkMessageView *view G_GN
       gint64 last_id = gnalk_message_data_get_id (last);
       g_object_unref (last);
 
-      if (last_id > self->last_read_message_id)
+      if (last_id > self->current_room->last_read_message_id)
         gnalk_window_mark_messages_read_up_to (self, last_id);
     }
 }

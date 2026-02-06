@@ -567,6 +567,30 @@ gnalk_database_update_conversation_read_status (GnalkDatabase *self,
     }
 }
 
+void
+gnalk_database_update_conversation_favorite (GnalkDatabase *self,
+                                              gint64          account_id,
+                                              const char     *token,
+                                              gboolean        is_favorite)
+{
+  g_return_if_fail (GNALK_IS_DATABASE (self));
+  g_return_if_fail (self->db != NULL);
+  g_return_if_fail (token != NULL);
+
+  sqlite3_stmt *stmt;
+  const char *sql = "UPDATE conversations SET is_favorite = ? "
+                    "WHERE account_id = ? AND token = ?";
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_int (stmt, 1, is_favorite ? 1 : 0);
+      sqlite3_bind_int64 (stmt, 2, account_id);
+      sqlite3_bind_text (stmt, 3, token, -1, SQLITE_STATIC);
+      sqlite3_step (stmt);
+      sqlite3_finalize (stmt);
+    }
+}
+
 int
 gnalk_database_delete_stale_conversations (GnalkDatabase *self,
                                              gint64          account_id,

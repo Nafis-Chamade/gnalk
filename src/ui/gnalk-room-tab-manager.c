@@ -52,19 +52,19 @@ room_tab_new (const char *room_token)
   GNALK_TRACE_ROOM_SWITCH ("room_tab_new: creating tab for room %s", room_token);
 
   GnalkRoomTab *tab = g_new0 (GnalkRoomTab, 1);
-  tab->room_token = g_strdup (room_token);
-  tab->messages_store = g_list_store_new (GNALK_TYPE_MESSAGE_DATA);
-  tab->oldest_loaded_id = 0;
-  tab->newest_loaded_id = 0;
-  tab->anchor_message_id = 0;
-  tab->anchor_offset = 0.0;
-  tab->is_at_bottom = TRUE;
+  tab->state.room_token = g_strdup (room_token);
+  tab->state.messages_store = g_list_store_new (GNALK_TYPE_MESSAGE_DATA);
+  tab->state.oldest_loaded_id = 0;
+  tab->state.last_known_message_id = 0;
+  tab->state.anchor_message_id = 0;
+  tab->state.anchor_offset = 0.0;
+  tab->state.is_at_bottom = TRUE;
   tab->last_access_time = g_get_monotonic_time ();
-  tab->has_more_history = TRUE;
-  tab->initial_load_done = FALSE;
-  tab->last_read_message_id = 0;
+  tab->state.has_more_history = TRUE;
+  tab->state.initial_load_done = FALSE;
+  tab->state.last_read_message_id = 0;
 
-  GNALK_TRACE_STORE ("room_tab_new: created GListStore %p for room %s", (void*)tab->messages_store, room_token);
+  GNALK_TRACE_STORE ("room_tab_new: created GListStore %p for room %s", (void*)tab->state.messages_store, room_token);
   return tab;
 }
 
@@ -74,47 +74,50 @@ room_tab_free (GnalkRoomTab *tab)
   if (!tab)
     return;
 
-  GNALK_TRACE_ROOM_SWITCH ("room_tab_free: freeing tab for room %s", tab->room_token);
-  GNALK_TRACE_STORE ("room_tab_free: clearing GListStore %p", (void*)tab->messages_store);
+  GNALK_TRACE_ROOM_SWITCH ("room_tab_free: freeing tab for room %s", tab->state.room_token);
+  GNALK_TRACE_STORE ("room_tab_free: clearing GListStore %p", (void*)tab->state.messages_store);
 
-  g_free (tab->room_token);
-  g_clear_object (&tab->messages_store);
+  g_free (tab->state.room_token);
+  g_free (tab->state.room_name);
+  g_free (tab->state.room_description);
+  g_free (tab->state.session_id);
+  g_clear_object (&tab->state.messages_store);
   g_free (tab);
 }
 
 static void
 update_tab_tracking_ids (GnalkRoomTab *tab)
 {
-  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
 
-  GNALK_TRACE_STORE ("update_tab_tracking_ids: room %s, %u items in store", tab->room_token, n_items);
+  GNALK_TRACE_STORE ("update_tab_tracking_ids: room %s, %u items in store", tab->state.room_token, n_items);
 
   if (n_items == 0)
     {
-      tab->oldest_loaded_id = 0;
-      tab->newest_loaded_id = 0;
+      tab->state.oldest_loaded_id = 0;
+      tab->state.last_known_message_id = 0;
       GNALK_TRACE_STORE ("update_tab_tracking_ids: store empty, reset IDs to 0");
       return;
     }
 
   /* Get oldest (first) message */
-  GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (tab->messages_store), 0);
+  GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (tab->state.messages_store), 0);
   if (oldest)
     {
-      tab->oldest_loaded_id = gnalk_message_data_get_id (oldest);
+      tab->state.oldest_loaded_id = gnalk_message_data_get_id (oldest);
       g_object_unref (oldest);
     }
 
   /* Get newest (last non-pending) message */
   for (gint i = (gint) n_items - 1; i >= 0; i--)
     {
-      GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (tab->messages_store), i);
+      GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (tab->state.messages_store), i);
       if (msg)
         {
           gint64 msg_id = gnalk_message_data_get_id (msg);
           if (msg_id > 0)  /* Skip pending messages */
             {
-              tab->newest_loaded_id = msg_id;
+              tab->state.last_known_message_id = msg_id;
               g_object_unref (msg);
               break;
             }
@@ -123,7 +126,7 @@ update_tab_tracking_ids (GnalkRoomTab *tab)
     }
 
   GNALK_TRACE_STORE ("update_tab_tracking_ids: oldest=%"G_GINT64_FORMAT", newest=%"G_GINT64_FORMAT,
-                      tab->oldest_loaded_id, tab->newest_loaded_id);
+                      tab->state.oldest_loaded_id, tab->state.last_known_message_id);
 }
 
 static guint
@@ -166,10 +169,10 @@ trim_tab_messages (GnalkRoomTab *tab,
                    int            target_height,
                    int            viewport_width)
 {
-  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
 
   GNALK_TRACE_STORE ("trim_tab_messages: room %s, %u items, target_height=%d, viewport_width=%d",
-                      tab->room_token, n_items, target_height, viewport_width);
+                      tab->state.room_token, n_items, target_height, viewport_width);
 
   if (n_items == 0 || target_height <= 0 || viewport_width <= 0)
     {
@@ -182,8 +185,8 @@ trim_tab_messages (GnalkRoomTab *tab,
 
   /* Find anchor position */
   guint anchor_pos = G_MAXUINT;
-  if (tab->anchor_message_id > 0)
-    anchor_pos = find_message_position (tab->messages_store, tab->anchor_message_id);
+  if (tab->state.anchor_message_id > 0)
+    anchor_pos = find_message_position (tab->state.messages_store, tab->state.anchor_message_id);
 
   if (anchor_pos == G_MAXUINT)
     anchor_pos = n_items - 1;  /* Default to end if anchor not found */
@@ -196,7 +199,7 @@ trim_tab_messages (GnalkRoomTab *tab,
   /* Expand upward from anchor */
   for (gint i = (gint) anchor_pos; i >= 0 && above_height < half_budget; i--)
     {
-      GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (tab->messages_store), i);
+      GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (tab->state.messages_store), i);
       if (msg)
         {
           gnalk_message_row_set_from_data (measure_row, msg, NULL);
@@ -209,7 +212,7 @@ trim_tab_messages (GnalkRoomTab *tab,
   /* Expand downward from anchor */
   for (guint i = anchor_pos + 1; i < n_items && below_height < half_budget; i++)
     {
-      GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (tab->messages_store), i);
+      GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (tab->state.messages_store), i);
       if (msg)
         {
           gnalk_message_row_set_from_data (measure_row, msg, NULL);
@@ -227,20 +230,20 @@ trim_tab_messages (GnalkRoomTab *tab,
   if (keep_end + 1 < n_items)
     {
       guint remove_count = n_items - keep_end - 1;
-      g_list_store_splice (tab->messages_store, keep_end + 1, remove_count, NULL, 0);
+      g_list_store_splice (tab->state.messages_store, keep_end + 1, remove_count, NULL, 0);
     }
 
   if (keep_start > 0)
-    g_list_store_splice (tab->messages_store, 0, keep_start, NULL, 0);
+    g_list_store_splice (tab->state.messages_store, 0, keep_start, NULL, 0);
 
   /* Update tracking IDs */
   update_tab_tracking_ids (tab);
 
-  guint remaining = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+  guint remaining = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
   GNALK_TRACE_STORE ("trim_tab_messages: trimmed from %u to %u messages, kept range [%u, %u]",
                       n_items, remaining, keep_start, keep_end);
   g_debug ("Trimmed tab %s: kept %u messages around anchor",
-           tab->room_token, remaining);
+           tab->state.room_token, remaining);
 }
 
 /* Find tab with oldest last_access_time */
@@ -325,7 +328,7 @@ gnalk_room_tab_manager_get_tab (GnalkRoomTabManager *self,
   else
     {
       GNALK_TRACE_ROOM_SWITCH ("get_tab: found existing tab for %s with %u messages",
-                                room_token, g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store)));
+                                room_token, g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store)));
     }
 
   /* Update last access time */
@@ -366,9 +369,9 @@ gnalk_room_tab_manager_background_tab (GnalkRoomTabManager *self,
     }
 
   /* Save scroll anchor */
-  tab->anchor_message_id = anchor_id;
-  tab->anchor_offset = anchor_offset;
-  tab->is_at_bottom = at_bottom;
+  tab->state.anchor_message_id = anchor_id;
+  tab->state.anchor_offset = anchor_offset;
+  tab->state.is_at_bottom = at_bottom;
 
   GNALK_TRACE_SCROLL ("background_tab: saved anchor=%"G_GINT64_FORMAT", offset=%.1f, at_bottom=%d",
                        anchor_id, anchor_offset, at_bottom);
@@ -380,7 +383,7 @@ gnalk_room_tab_manager_background_tab (GnalkRoomTabManager *self,
    * This prevents returning to a room and finding messages missing. */
   if (at_bottom)
     {
-      guint n_msgs = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+      guint n_msgs = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
       GNALK_TRACE_STORE ("background_tab: at_bottom=TRUE, skipping trim to preserve %u messages", n_msgs);
       g_debug ("Skipping trim for tab %s (at bottom), preserving %u messages", room_token, n_msgs);
     }
@@ -417,19 +420,19 @@ gnalk_room_tab_manager_foreground_tab (GnalkRoomTabManager *self,
 
   /* Return anchor info */
   if (anchor_id)
-    *anchor_id = tab->anchor_message_id;
+    *anchor_id = tab->state.anchor_message_id;
   if (anchor_offset)
-    *anchor_offset = tab->anchor_offset;
+    *anchor_offset = tab->state.anchor_offset;
   if (was_at_bottom)
-    *was_at_bottom = tab->is_at_bottom;
+    *was_at_bottom = tab->state.is_at_bottom;
 
-  guint n_messages = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+  guint n_messages = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
   GNALK_TRACE_SCROLL ("foreground_tab: restoring anchor=%"G_GINT64_FORMAT", offset=%.1f, at_bottom=%d",
-                       tab->anchor_message_id, tab->anchor_offset, tab->is_at_bottom);
+                       tab->state.anchor_message_id, tab->state.anchor_offset, tab->state.is_at_bottom);
   GNALK_TRACE_STORE ("foreground_tab: tab has %u messages, initial_load_done=%d",
-                      n_messages, tab->initial_load_done);
+                      n_messages, tab->state.initial_load_done);
   g_debug ("Foregrounding tab %s: anchor=%"G_GINT64_FORMAT", at_bottom=%d, messages=%u",
-           room_token, tab->anchor_message_id, tab->is_at_bottom, n_messages);
+           room_token, tab->state.anchor_message_id, tab->state.is_at_bottom, n_messages);
 }
 
 void
@@ -480,7 +483,7 @@ gnalk_room_tab_manager_append_messages (GnalkRoomTabManager *self,
     }
 
   GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self, room_token);
-  guint before_count = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+  guint before_count = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
   guint added = 0;
 
   for (guint i = 0; i < messages->len; i++)
@@ -493,10 +496,10 @@ gnalk_room_tab_manager_append_messages (GnalkRoomTabManager *self,
 
       /* Check if message already exists */
       gboolean exists = FALSE;
-      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
       for (guint j = 0; j < n_items; j++)
         {
-          GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (tab->messages_store), j);
+          GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (tab->state.messages_store), j);
           if (existing)
             {
               if (gnalk_message_data_get_id (existing) == msg_id)
@@ -511,12 +514,12 @@ gnalk_room_tab_manager_append_messages (GnalkRoomTabManager *self,
 
       if (!exists)
         {
-          g_list_store_insert_sorted (tab->messages_store, msg, compare_messages_by_id, NULL);
+          g_list_store_insert_sorted (tab->state.messages_store, msg, compare_messages_by_id, NULL);
           added++;
         }
     }
 
-  guint after_count = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+  guint after_count = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
   GNALK_TRACE_STORE ("append_messages: added %u messages (before=%u, after=%u)", added, before_count, after_count);
 
   update_tab_tracking_ids (tab);
@@ -540,7 +543,7 @@ gnalk_room_tab_manager_prepend_messages (GnalkRoomTabManager *self,
     }
 
   GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self, room_token);
-  guint before_count = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+  guint before_count = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
 
   /* Filter out messages that already exist */
   GPtrArray *new_messages = g_ptr_array_new ();
@@ -555,10 +558,10 @@ gnalk_room_tab_manager_prepend_messages (GnalkRoomTabManager *self,
 
       /* Check if message already exists */
       gboolean exists = FALSE;
-      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
       for (guint j = 0; j < n_items; j++)
         {
-          GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (tab->messages_store), j);
+          GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (tab->state.messages_store), j);
           if (existing)
             {
               if (gnalk_message_data_get_id (existing) == msg_id)
@@ -578,11 +581,11 @@ gnalk_room_tab_manager_prepend_messages (GnalkRoomTabManager *self,
   /* Prepend all new messages at position 0 using splice */
   guint added = new_messages->len;
   if (new_messages->len > 0)
-    g_list_store_splice (tab->messages_store, 0, 0, new_messages->pdata, new_messages->len);
+    g_list_store_splice (tab->state.messages_store, 0, 0, new_messages->pdata, new_messages->len);
 
   g_ptr_array_free (new_messages, TRUE);
 
-  guint after_count = g_list_model_get_n_items (G_LIST_MODEL (tab->messages_store));
+  guint after_count = g_list_model_get_n_items (G_LIST_MODEL (tab->state.messages_store));
   GNALK_TRACE_STORE ("prepend_messages: added %u messages (before=%u, after=%u)", added, before_count, after_count);
 
   update_tab_tracking_ids (tab);

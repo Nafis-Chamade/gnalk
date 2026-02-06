@@ -63,6 +63,10 @@ void gnalk_database_update_conversation_read_status (GnalkDatabase *self,
                                                         gint64 account_id,
                                                         const char *token,
                                                         gint64 last_read_message);
+void gnalk_database_update_conversation_favorite (GnalkDatabase *self,
+                                                     gint64 account_id,
+                                                     const char *token,
+                                                     gboolean is_favorite);
 
 /* Messages */
 void gnalk_database_save_message (GnalkDatabase *self,

@@ -8,25 +8,17 @@
 
 #include <gtk/gtk.h>
 #include "gnalk-message-data.h"
+#include "gnalk-room-state.h"
 
 G_BEGIN_DECLS
 
-/* GnalkRoomTab - Per-room state (not a GObject, just a struct) */
+/* GnalkRoomTab - Per-room tab with embedded state and LRU tracking */
 typedef struct _GnalkRoomTab GnalkRoomTab;
 
 struct _GnalkRoomTab
 {
-  char       *room_token;
-  GListStore *messages_store;       /* This tab's messages */
-  gint64      oldest_loaded_id;     /* For history loading */
-  gint64      newest_loaded_id;     /* For polling */
-  gint64      anchor_message_id;    /* Scroll anchor when backgrounded */
-  gdouble     anchor_offset;        /* Pixel offset from anchor */
-  gboolean    is_at_bottom;         /* Was at bottom when backgrounded */
-  gint64      last_access_time;     /* For LRU eviction (monotonic microseconds) */
-  gboolean    has_more_history;     /* Server has older messages */
-  gboolean    initial_load_done;    /* Messages have been loaded at least once */
-  gint64      last_read_message_id; /* For unread message marking */
+  GnalkRoomState state;             /* Shared room state (window points here) */
+  gint64         last_access_time;  /* For LRU eviction (monotonic microseconds) */
 };
 
 /* GnalkRoomTabManager - Manages multiple room tabs */

@@ -37,8 +37,10 @@
 #include "gnalk-call-window.h"
 #include "gnalk-message-row.h"
 #include "gnalk-room-tab-manager.h"
+#include "gnalk-room-state.h"
 #include "gnalk-data-repository.h"
 #include "gnalk-sync-coordinator.h"
+#include "gnalk-room-controller.h"
 #include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
@@ -108,6 +110,7 @@ struct _GnalkWindow
   GnalkMessageController *message_controller;
   GnalkConversationController *conversation_controller;
   GnalkParticipantController  *participant_controller;
+  GnalkRoomController         *room_controller;
 
   /* Multi-account session management */
   GnalkSessionManager   *session_manager;  /* Reference from Application, not owned */
@@ -120,28 +123,15 @@ struct _GnalkWindow
 
   /* Tab-based room message management */
   GnalkRoomTabManager *tab_manager;  /* Manages per-room message stores */
+  GnalkRoomState *current_room;     /* Points to active tab's state (NULL if no room open) */
 
-  char   *current_room_token;
-  char   *current_room_name;
-  char   *current_room_description;
-  char   *current_session_id;
-  gint    current_room_type;
   GnalkMessageDisplayMode message_display_mode;  /* Bubbles (narrow) or aligned (wide) */
   char   *user_name;
-  gint64  last_known_message_id;
-  gint64  reply_to_message_id;
-  gint64  edit_message_id;  /* Message being edited (0 if not editing) */
-  gint64  last_common_read_message;  /* For tracking read status */
   guint   poll_timeout_id;
   guint   typing_send_timer_id;  /* Timer for throttling typing messages */
   gboolean has_active_room;
-  gboolean initial_messages_loaded;
-  gboolean skip_historical_call_messages;  /* Skip call_left/call_ended during initial load */
-  guint    message_load_generation;  /* Incremented on room switch to discard stale responses */
 
-  /* Lazy loading state */
-  gint64   oldest_loaded_message_id; /* For loading messages before this ID */
-  gboolean has_more_history;         /* Server has older messages */
+  /* Connection state */
   gboolean was_offline;              /* Was previously offline (for toast) */
   gboolean had_connection_error;     /* Had a connection error (for banner/toast) */
   gboolean initial_auth_done;        /* First auth attempt completed */
@@ -149,8 +139,6 @@ struct _GnalkWindow
   GnalkSyncCoordinator *connected_sync_coordinator;  /* Current session's coordinator, signals connected */
   gboolean was_active;               /* Previous window active state (to detect app switch vs popover) */
 
-  gboolean is_typing;  /* Are we currently typing */
-  gboolean scroll_to_bottom;  /* Should scroll to bottom when messages load */
   GnalkCallWindow *active_call_window;  /* Currently active call window, if any */
 
   /* Search results data (UI managed by conversation_sidebar) */
@@ -163,8 +151,7 @@ struct _GnalkWindow
   /* Track bound message rows for display mode updates */
   GHashTable *bound_message_rows;  /* GtkWidget* -> GtkWidget* (self-keyed set) */
 
-  /* Scroll-to-message highlight */
-  gint64 highlight_message_id;
+  /* Scroll-to-message highlight timer (message ID is in current_room state) */
   guint  highlight_clear_timer_id;
 
   /* File attachment data (UI preview handled by conversation_actions) */
@@ -180,17 +167,14 @@ struct _GnalkWindow
   char   *autologin_password;
   gboolean autologin_pending;  /* Waiting to authenticate */
 
-  /* Room switch debouncing */
-  guint   room_switch_timer_id;
-  char   *pending_room_token;  /* Room to switch to after debounce */
+  /* Room switch debouncing + join state now in GnalkRoomController */
 
-  /* Room join serialization - prevents overlapping HTTP sequences */
-  guint   room_join_generation;     /* Incremented on each room switch, used to discard stale responses */
-  gboolean room_join_in_progress;  /* TRUE while HTTP join sequence is running */
+  /* Conversation list reload debounce */
+  guint    conv_reload_debounce_id;   /* Debounce timer for DataRepository data-changed */
+  gboolean conv_load_in_progress;     /* Whether an async DB load is running */
+  gboolean conv_load_pending;         /* Reload requested while load was in progress */
 
-  /* Unread message tracking */
-  gint64  last_read_message_id;      /* Last message ID the user has read in current room */
-  gint64  first_unread_message_id;   /* First unread message for scrolling */
+  /* Unread message tracking (IDs are in current_room state) */
   guint   mark_read_debounce_id;     /* Debounce timer to wait for list to settle */
   guint   mark_read_timer_id;        /* Timer for delayed mark-as-read (glow time) */
   GHashTable *bound_unread_rows;     /* Maps message ID -> GtkWidget* for bound unread rows */
@@ -330,6 +314,29 @@ void gnalk_window_on_sidebar_conversation_selected (GnalkConversationSidebar *si
 /* Internal callback needed for signal blocking in room-switch.c */
 void gnalk_window_on_participants_toggled          (GtkToggleButton *button, GnalkWindow *self);
 void gnalk_window_on_content_page_hiding           (AdwNavigationPage *page, gpointer user_data);
+
+/* ============ Room controller support (gnalk-window-room-switch.c) ============ */
+
+/* Scroll state callback for GnalkRoomController */
+void gnalk_window_get_scroll_state (gpointer user_data, gint64 *anchor_id,
+                                      gdouble *anchor_offset, gboolean *at_bottom,
+                                      int *viewport_height, int *viewport_width);
+
+/* Room controller signal handlers */
+
+void gnalk_window_on_room_controller_room_opened         (GnalkRoomController *ctrl,
+                                                            const char *token, const char *old_token,
+                                                            GnalkConversationData *conv_data,
+                                                            GnalkWindow *self);
+void gnalk_window_on_room_controller_room_closed         (GnalkRoomController *ctrl,
+                                                            const char *old_token,
+                                                            GnalkWindow *self);
+void gnalk_window_on_room_controller_messages_store_changed (GnalkRoomController *ctrl,
+                                                               GListStore *store,
+                                                               GnalkWindow *self);
+void gnalk_window_on_room_controller_scroll_requested    (GnalkRoomController *ctrl,
+                                                            guint position,
+                                                            GnalkWindow *self);
 
 /* ============ UI helper functions (gnalk-window.c, called from room-switch) ============ */
 

@@ -22,8 +22,7 @@ connect_session_signals (GnalkWindow  *self,
 
   /* Note: Don't connect to "state-changed" here - we receive state changes through
    * session_manager's "any-session-state-changed" signal (connected in gnalk_window_init). */
-  g_signal_connect (session, "conversations-updated",
-                    G_CALLBACK (gnalk_window_on_session_conversations_updated), self);
+  /* conversations-updated reload now handled by DataRepository::data-changed */
   g_signal_connect (session, "room-joined",
                     G_CALLBACK (gnalk_window_on_session_room_joined), self);
   g_signal_connect (session, "signaling-room-joined",
@@ -71,7 +70,8 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
 
   /* Reset initial load flags so next load works properly */
   self->initial_conversations_loaded = FALSE;
-  self->initial_messages_loaded = FALSE;
+  if (self->current_room)
+    self->current_room->initial_load_done = FALSE;
 
   if (!session)
     {
@@ -103,9 +103,7 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       g_signal_connect_object (coordinator, "room-messages-synced",
                                G_CALLBACK (gnalk_window_on_sync_coordinator_room_messages_synced), self,
                                G_CONNECT_DEFAULT);
-      g_signal_connect_object (coordinator, "conversations-synced",
-                               G_CALLBACK (gnalk_window_on_sync_coordinator_conversations_synced), self,
-                               G_CONNECT_DEFAULT);
+      /* conversations-synced reload now handled by DataRepository::data-changed */
       self->connected_sync_coordinator = coordinator;
       g_debug ("Window: Connected to session's sync coordinator signals");
     }
@@ -166,11 +164,17 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   g_signal_connect (self->message_controller, "older-messages-loaded",
                     G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
 
-  /* Close the current conversation when switching accounts.
-   * The new account may not have access to the same room. */
-  if (self->current_room_token)
+  /* Close the current room via the controller before clearing tabs.
+   * This backgrounds the tab, saves messages, leaves signaling/HTTP,
+   * and clears the controller's current_room pointer so it won't
+   * dangle after tab_manager_clear_all frees all tabs. */
+  if (self->room_controller)
+    gnalk_room_controller_close_current (self->room_controller);
+
+  /* Clean up Window-side state */
+  if (self->current_room)
     {
-      g_clear_pointer (&self->current_room_token, g_free);
+      self->current_room = NULL;
       gnalk_window_clear_messages_store (self);
       self->has_active_room = FALSE;
       g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
@@ -223,6 +227,14 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
     g_signal_connect (self->participant_controller, "participants-changed",
                       G_CALLBACK (gnalk_window_on_participant_controller_changed), self);
   }
+
+  /* Update room controller with new session and recreated controllers */
+  if (self->room_controller)
+    {
+      gnalk_room_controller_set_session (self->room_controller, session);
+      gnalk_room_controller_set_message_controller (self->room_controller, self->message_controller);
+      gnalk_room_controller_set_participant_controller (self->room_controller, self->participant_controller);
+    }
 
   /* Update UI based on session state */
   GnalkSessionState state = gnalk_session_get_state (session);
@@ -373,23 +385,13 @@ gnalk_window_on_session_manager_any_state_changed (GnalkSessionManager *manager 
   gnalk_window_on_session_state_changed (session, old_state, new_state, self);
 }
 
-/* Rebuild conversation list from active session only.
- * Note: We only show conversations from the active session to ensure correct display
- * names for 1-to-1 rooms (e.g., a conversation between A and B shows as "B" for A
- * and "A" for B). */
+/* No-op: DataRepository::data-changed handles conversation list reloads.
+ * Kept as handler stub for signal compatibility. */
 void
-gnalk_window_on_session_manager_conversations_changed (GnalkSessionManager *manager,
-                                                        GnalkSession        *session,
-                                                        GnalkWindow         *self)
+gnalk_window_on_session_manager_conversations_changed (GnalkSessionManager *manager G_GNUC_UNUSED,
+                                                        GnalkSession        *session G_GNUC_UNUSED,
+                                                        GnalkWindow         *self G_GNUC_UNUSED)
 {
-  /* Only update if this is the active session */
-  GnalkSession *active = gnalk_session_manager_get_active_session (manager);
-  if (session != active)
-    return;
-
-  /* Session manager notifies when conversations change - reload from DB for single code path */
-  g_message ("Window: session_manager conversations_changed (active session), reloading from DB");
-  gnalk_window_load_conversations_from_db (self);
 }
 
 /* ============ Session Disconnect Helper (for dispose) ============ */

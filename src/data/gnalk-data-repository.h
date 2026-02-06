@@ -341,6 +341,21 @@ void gnalk_data_repository_set_has_more_history (GnalkDataRepository *self,
                                                   gboolean             has_more);
 
 /**
+ * gnalk_data_repository_update_conversation_favorite:
+ * @self: The data repository
+ * @account_id: The account ID
+ * @conversation_token: The conversation token
+ * @is_favorite: Whether the conversation is a favorite
+ *
+ * Updates the conversation's favorite status synchronously.
+ * Emits data-changed signal with scope "conversations".
+ */
+void gnalk_data_repository_update_conversation_favorite (GnalkDataRepository *self,
+                                                            gint64               account_id,
+                                                            const char          *conversation_token,
+                                                            gboolean             is_favorite);
+
+/**
  * gnalk_data_repository_update_conversation_last_message:
  * @self: The data repository
  * @account_id: The account ID

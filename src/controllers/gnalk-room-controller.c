@@ -1,97 +1,248 @@
+/* gnalk-room-controller.c
+ *
+ * Room open/close orchestration. Manages tab switching, debouncing,
+ * room join via session, and emits signals for the Window to update UI.
+ */
+
 #include "gnalk-room-controller.h"
+#include "gnalk-room-tab-manager.h"
 #include "gnalk-session.h"
+#include "gnalk-message-controller.h"
+#include "gnalk-participant-controller.h"
+#include "gnalk-conversation-data.h"
+#include "gnalk-signaling.h"
 #include "gnalk-http-client.h"
 #include "gnalk-message-data.h"
-#include "gnalk-conversation-data.h"
+#include "gnalk-log.h"
+
+#define ROOM_SWITCH_DEBOUNCE_MS 300
 
 struct _GnalkRoomController
 {
   GObject parent_instance;
 
-  GnalkAppState       *app_state;
-  GnalkDataRepository *data_repository;
-  GnalkSessionManager *session_manager;
-
-  /* Associated controllers (weak references) */
-  GnalkConversationController *conversation_controller;
-  GnalkParticipantController  *participant_controller;
+  /* Borrowed pointers (not owned) */
+  GnalkRoomTabManager        *tab_manager;
+  GListStore                 *conversations_store;
+  GSettings                  *settings;
+  GnalkMessageController     *message_controller;
+  GnalkParticipantController *participant_controller;
+  GnalkSession               *active_session;
 
   /* Current room state */
-  char          *current_room_token;
-  GnalkSession *current_session;  /* weak reference */
-  gint64         current_account_id;
-  int            current_room_type;
+  GnalkRoomState *current_room;   /* Points to active tab's state (not owned) */
+  GListStore     *messages_store; /* Convenience ptr, ref held */
+  gboolean        has_active_room;
 
-  /* Generation counter for cancelling stale async operations */
-  guint64 generation;
+  /* Debounce */
+  guint  debounce_timer_id;
+  char  *pending_room_token;
 
-  /* Loading state */
-  gboolean is_loading;
-  gboolean is_loading_history;
+  /* Join state */
+  guint  room_join_generation;
+
+  /* Scroll state callback (reads UI scroll info) */
+  GnalkScrollStateFunc scroll_state_func;
+  gpointer             scroll_state_data;
 };
-
-G_DEFINE_FINAL_TYPE (GnalkRoomController, gnalk_room_controller, G_TYPE_OBJECT)
 
 enum {
   SIGNAL_ROOM_OPENED,
   SIGNAL_ROOM_CLOSED,
-  SIGNAL_MESSAGES_LOADING,
-  SIGNAL_MESSAGES_LOADED,
-  SIGNAL_ERROR,
+  SIGNAL_MESSAGES_STORE_CHANGED,
+  SIGNAL_SCROLL_REQUESTED,
+  SIGNAL_JOIN_COMPLETE,
   N_SIGNALS
 };
 
 static guint signals[N_SIGNALS];
 
-/* Context for async operations */
-typedef struct {
-  GnalkRoomController *controller;
-  guint64               generation;
-  char                 *room_token;
-  gint64                account_id;
-} AsyncContext;
+G_DEFINE_FINAL_TYPE (GnalkRoomController, gnalk_room_controller, G_TYPE_OBJECT)
 
-static AsyncContext *
-async_context_new (GnalkRoomController *controller,
-                   const char           *room_token)
+/* ============ Internal helpers ============ */
+
+static GnalkConversationData *
+find_conversation_by_token (GnalkRoomController *self, const char *token)
 {
-  AsyncContext *ctx = g_new0 (AsyncContext, 1);
-  ctx->controller = g_object_ref (controller);
-  ctx->generation = controller->generation;
-  ctx->room_token = g_strdup (room_token);
-  ctx->account_id = controller->current_account_id;
-  return ctx;
+  if (!self->conversations_store)
+    return NULL;
+
+  guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+  for (guint i = 0; i < n; i++)
+    {
+      GnalkConversationData *data = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
+      const char *data_token = gnalk_conversation_data_get_token (data);
+      if (g_strcmp0 (data_token, token) == 0)
+        return data;  /* caller takes ownership of ref */
+      g_object_unref (data);
+    }
+
+  return NULL;
 }
 
+/**
+ * background_current_internal:
+ *
+ * Backgrounds the current room tab by saving scroll state via the
+ * scroll_state_func callback and calling the tab manager.
+ */
 static void
-async_context_free (AsyncContext *ctx)
+background_current_internal (GnalkRoomController *self)
 {
-  g_clear_object (&ctx->controller);
-  g_free (ctx->room_token);
-  g_free (ctx);
+  if (!self->current_room || !self->tab_manager)
+    return;
+
+  GNALK_TRACE_ROOM_SWITCH ("room_controller: backgrounding room %s",
+                             self->current_room->room_token);
+
+  gint64 anchor_id = 0;
+  gdouble anchor_offset = 0.0;
+  gboolean at_bottom = TRUE;
+  int viewport_height = 0, viewport_width = 0;
+
+  if (self->scroll_state_func)
+    self->scroll_state_func (self->scroll_state_data,
+                              &anchor_id, &anchor_offset, &at_bottom,
+                              &viewport_height, &viewport_width);
+
+  gnalk_room_tab_manager_background_tab (self->tab_manager,
+                                           self->current_room->room_token,
+                                           anchor_id, anchor_offset, at_bottom,
+                                           viewport_height, viewport_width);
+
+  g_debug ("room_controller: backgrounded %s: anchor=%" G_GINT64_FORMAT ", at_bottom=%d",
+           self->current_room->room_token, anchor_id, at_bottom);
 }
 
-static gboolean
-async_context_is_stale (AsyncContext *ctx)
+/**
+ * stop_typing_internal:
+ *
+ * Sends not-typing signaling message if the current room has typing active.
+ */
+static void
+stop_typing_internal (GnalkRoomController *self)
 {
-  return ctx->generation != ctx->controller->generation;
+  if (!self->current_room || !self->current_room->is_typing)
+    return;
+
+  if (self->active_session)
+    {
+      GnalkSignaling *sig = gnalk_session_get_signaling (self->active_session);
+      if (sig)
+        gnalk_signaling_send_typing (sig, FALSE);
+    }
+  self->current_room->is_typing = FALSE;
 }
 
-/* Forward declarations */
-static void load_messages_from_cache (GnalkRoomController *self);
-static void load_participants_from_cache (GnalkRoomController *self);
+/**
+ * find_scroll_position:
+ *
+ * Determines which item index to scroll to when restoring a tab
+ * that already has messages.
+ */
+static guint
+find_scroll_position (GnalkRoomController *self)
+{
+  guint n = g_list_model_get_n_items (G_LIST_MODEL (self->current_room->messages_store));
+  if (n == 0)
+    return 0;
+
+  if (self->current_room->is_at_bottom)
+    return n - 1;
+
+  if (self->current_room->anchor_message_id > 0)
+    {
+      for (guint i = 0; i < n; i++)
+        {
+          GnalkMessageData *msg = g_list_model_get_item (
+              G_LIST_MODEL (self->current_room->messages_store), i);
+          if (msg)
+            {
+              gint64 msg_id = gnalk_message_data_get_id (msg);
+              g_object_unref (msg);
+              if (msg_id == self->current_room->anchor_message_id)
+                return i;
+            }
+        }
+    }
+
+  return n - 1;  /* fallback: bottom */
+}
+
+/**
+ * update_room_state_from_conv:
+ *
+ * Updates the current room state fields from conversation data.
+ */
+static void
+update_room_state_from_conv (GnalkRoomController   *self,
+                               GnalkConversationData *conv_data)
+{
+  g_free (self->current_room->room_name);
+  g_free (self->current_room->room_description);
+  self->current_room->room_name = g_strdup (gnalk_conversation_data_get_title (conv_data));
+  self->current_room->room_description = g_strdup (gnalk_conversation_data_get_description (conv_data));
+  self->current_room->room_type = gnalk_conversation_data_get_room_type (conv_data);
+
+  /* Read status */
+  self->current_room->last_common_read_message =
+      gnalk_conversation_data_get_last_common_read_message (conv_data);
+  self->current_room->last_read_message_id =
+      gnalk_conversation_data_get_last_read_message (conv_data);
+  self->current_room->first_unread_message_id = 0;
+
+  /* Reset per-entry state */
+  self->current_room->message_load_generation++;
+  self->current_room->scroll_to_bottom = TRUE;
+  self->current_room->skip_historical_call_messages = TRUE;
+  g_clear_pointer (&self->current_room->session_id, g_free);
+}
+
+/**
+ * join_room_via_session:
+ *
+ * Joins the room using the appropriate session (conversation's session
+ * or the active session as fallback).
+ */
+static void
+join_room_via_session (GnalkRoomController   *self,
+                         GnalkConversationData *conv_data,
+                         const char            *token)
+{
+  GnalkSession *session = NULL;
+
+  if (conv_data)
+    session = gnalk_conversation_data_get_session (conv_data);
+  if (!session)
+    session = self->active_session;
+
+  if (session)
+    {
+      g_message ("room_controller: joining room %s via session", token);
+      gnalk_session_join_room (session, token);
+    }
+}
+
+/* ============ GObject boilerplate ============ */
 
 static void
 gnalk_room_controller_finalize (GObject *object)
 {
   GnalkRoomController *self = GNALK_ROOM_CONTROLLER (object);
 
-  g_free (self->current_room_token);
-  g_clear_object (&self->app_state);
-  g_clear_object (&self->data_repository);
-  g_clear_object (&self->session_manager);
+  if (self->debounce_timer_id > 0)
+    g_source_remove (self->debounce_timer_id);
+
+  g_free (self->pending_room_token);
+  g_clear_object (&self->messages_store);
 
   G_OBJECT_CLASS (gnalk_room_controller_parent_class)->finalize (object);
+}
+
+static void
+gnalk_room_controller_init (GnalkRoomController *self)
+{
+  (void) self;
 }
 
 static void
@@ -100,468 +251,390 @@ gnalk_room_controller_class_init (GnalkRoomControllerClass *klass)
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
   object_class->finalize = gnalk_room_controller_finalize;
 
+  /**
+   * GnalkRoomController::room-opened:
+   * @self: The controller
+   * @token: The new room token
+   * @old_token: (nullable): The previous room token
+   * @conv_data: (nullable): Conversation data for the new room
+   *
+   * Emitted after the controller has switched to a new room tab.
+   * The Window should update all UI (header, highlights, buttons, etc.)
+   * and check whether messages need loading from DB.
+   */
   signals[SIGNAL_ROOM_OPENED] =
-    g_signal_new ("room-opened", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+    g_signal_new ("room-opened",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 3,
+                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_OBJECT);
 
+  /**
+   * GnalkRoomController::room-closed:
+   * @self: The controller
+   * @old_token: The room token being closed
+   *
+   * Emitted when leaving a room (content page hiding).
+   * current_room is still valid when this signal fires.
+   */
   signals[SIGNAL_ROOM_CLOSED] =
-    g_signal_new ("room-closed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+    g_signal_new ("room-closed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_STRING);
 
-  signals[SIGNAL_MESSAGES_LOADING] =
-    g_signal_new ("messages-loading", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  /**
+   * GnalkRoomController::messages-store-changed:
+   * @self: The controller
+   * @store: The new message store
+   *
+   * Emitted when the active GListStore changes.
+   * Window should rebind its GtkNoSelection model.
+   */
+  signals[SIGNAL_MESSAGES_STORE_CHANGED] =
+    g_signal_new ("messages-store-changed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_OBJECT);
 
-  signals[SIGNAL_MESSAGES_LOADED] =
-    g_signal_new ("messages-loaded", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  /**
+   * GnalkRoomController::scroll-requested:
+   * @self: The controller
+   * @position: Item index to scroll to
+   *
+   * Emitted when the controller wants the message view to scroll
+   * to a specific position (e.g., restoring a tab's scroll state).
+   */
+  signals[SIGNAL_SCROLL_REQUESTED] =
+    g_signal_new ("scroll-requested",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_UINT);
 
-  signals[SIGNAL_ERROR] =
-    g_signal_new ("error", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  /**
+   * GnalkRoomController::join-complete:
+   * @self: The controller
+   * @token: The room token
+   * @session_id: The session ID from the join
+   *
+   * Emitted when a room join sequence completes.
+   */
+  signals[SIGNAL_JOIN_COMPLETE] =
+    g_signal_new ("join-complete",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 2,
+                  G_TYPE_STRING, G_TYPE_STRING);
 }
 
-static void
-gnalk_room_controller_init (GnalkRoomController *self)
-{
-  self->generation = 0;
-  self->is_loading = FALSE;
-  self->is_loading_history = FALSE;
-}
+/* ============ Constructor and dependency setters ============ */
 
 GnalkRoomController *
-gnalk_room_controller_new (GnalkAppState       *app_state,
-                             GnalkDataRepository *data_repository,
-                             GnalkSessionManager *session_manager)
+gnalk_room_controller_new (GnalkRoomTabManager *tab_manager,
+                             GListStore          *conversations_store,
+                             GSettings           *settings)
 {
-  g_return_val_if_fail (GNALK_IS_APP_STATE (app_state), NULL);
-  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (data_repository), NULL);
-  g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (session_manager), NULL);
-
   GnalkRoomController *self = g_object_new (GNALK_TYPE_ROOM_CONTROLLER, NULL);
-  self->app_state = g_object_ref (app_state);
-  self->data_repository = g_object_ref (data_repository);
-  self->session_manager = g_object_ref (session_manager);
-
+  self->tab_manager = tab_manager;
+  self->conversations_store = conversations_store;
+  self->settings = settings;
   return self;
 }
 
-/* Async callback for loading messages from cache */
-static void
-on_messages_loaded_from_cache (GnalkDataRepository *repository G_GNUC_UNUSED,
-                                gpointer              result,
-                                GError               *error,
-                                gpointer              user_data)
-{
-  AsyncContext *ctx = user_data;
-  GnalkRoomController *self = ctx->controller;
-
-  /* Check if room changed while loading */
-  if (async_context_is_stale (ctx))
-    {
-      g_debug ("RoomController: Ignoring stale messages load for %s", ctx->room_token);
-      if (result)
-        g_object_unref (result);
-      async_context_free (ctx);
-      return;
-    }
-
-  if (error)
-    {
-      g_warning ("RoomController: Failed to load cached messages: %s", error->message);
-      g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
-    }
-  else if (result)
-    {
-      GListStore *messages = G_LIST_STORE (result);
-      guint n = g_list_model_get_n_items (G_LIST_MODEL (messages));
-      g_debug ("RoomController: Loaded %u cached messages for %s", n, ctx->room_token);
-
-      /* Update app state with cached messages */
-      gnalk_app_state_set_messages (self->app_state, messages);
-      g_object_unref (messages);
-    }
-
-  self->is_loading = FALSE;
-  g_signal_emit (self, signals[SIGNAL_MESSAGES_LOADED], 0);
-
-  async_context_free (ctx);
-}
-
-static void
-load_messages_from_cache (GnalkRoomController *self)
-{
-  if (!self->current_room_token || !self->current_session)
-    return;
-
-  self->is_loading = TRUE;
-  g_signal_emit (self, signals[SIGNAL_MESSAGES_LOADING], 0);
-
-  AsyncContext *ctx = async_context_new (self, self->current_room_token);
-
-  gnalk_data_repository_load_messages_async (
-    self->data_repository,
-    self->current_account_id,
-    self->current_room_token,
-    50,  /* Load last 50 messages initially */
-    0,   /* From latest */
-    on_messages_loaded_from_cache,
-    ctx);
-}
-
-/* Async callback for loading participants from cache */
-static void
-on_participants_loaded_from_cache (GnalkDataRepository *repository G_GNUC_UNUSED,
-                                    gpointer              result,
-                                    GError               *error,
-                                    gpointer              user_data)
-{
-  AsyncContext *ctx = user_data;
-  GnalkRoomController *self G_GNUC_UNUSED = ctx->controller;
-
-  /* Check if room changed while loading */
-  if (async_context_is_stale (ctx))
-    {
-      g_debug ("RoomController: Ignoring stale participants load for %s", ctx->room_token);
-      if (result)
-        json_array_unref (result);
-      async_context_free (ctx);
-      return;
-    }
-
-  if (error)
-    {
-      g_debug ("RoomController: No cached participants: %s", error->message);
-    }
-  else if (result)
-    {
-      JsonArray *participants = result;
-      guint n = json_array_get_length (participants);
-      g_debug ("RoomController: Loaded %u cached participants for %s", n, ctx->room_token);
-
-      /* TODO: Convert JsonArray to GListStore and update app state */
-      /* For now, we'll let the session handle participants via its signals */
-
-      json_array_unref (participants);
-    }
-
-  async_context_free (ctx);
-}
-
-static void
-load_participants_from_cache (GnalkRoomController *self)
-{
-  if (!self->current_room_token || !self->current_session)
-    return;
-
-  AsyncContext *ctx = async_context_new (self, self->current_room_token);
-
-  gnalk_data_repository_load_participants_async (
-    self->data_repository,
-    self->current_account_id,
-    self->current_room_token,
-    on_participants_loaded_from_cache,
-    ctx);
-}
-
-/* Public API */
-
 void
-gnalk_room_controller_open_room (GnalkRoomController *self,
-                                   const char           *token,
-                                   GnalkSession        *session,
-                                   int                   room_type)
+gnalk_room_controller_set_session (GnalkRoomController *self,
+                                     GnalkSession        *session)
 {
-  g_return_if_fail (GNALK_IS_ROOM_CONTROLLER (self));
-  g_return_if_fail (token != NULL);
-  g_return_if_fail (GNALK_IS_SESSION (session));
-
-  /* Check if we're already in this room */
-  if (g_strcmp0 (self->current_room_token, token) == 0 &&
-      self->current_session == session)
-    {
-      g_debug ("RoomController: Already in room %s", token);
-      return;
-    }
-
-  /* Close current room if any */
-  if (self->current_room_token)
-    gnalk_room_controller_close_room (self);
-
-  g_debug ("RoomController: Opening room %s (type %d)", token, room_type);
-
-  /* Increment generation to invalidate any in-flight async operations */
-  self->generation++;
-
-  /* Update state */
-  self->current_room_token = g_strdup (token);
-  self->current_session = session;
-  self->current_account_id = gnalk_session_get_account_id (session);
-  self->current_room_type = room_type;
-
-  /* Update app state */
-  gnalk_app_state_set_active_room (self->app_state, token, session);
-
-  /* Note: SyncCoordinator handles sync coordination via Application set_active_room */
-
-  /* Notify participant controller to start loading and polling for this room */
-  if (self->participant_controller)
-    gnalk_participant_controller_set_active_room (self->participant_controller, token, room_type);
-
-  /* Load cached data first (fast, appears immediately) */
-  load_messages_from_cache (self);
-  load_participants_from_cache (self);
-
-  /* Join the room via session (HTTP call for signaling, mark read, etc.) */
-  gnalk_session_join_room (session, token);
-
-  g_signal_emit (self, signals[SIGNAL_ROOM_OPENED], 0, token);
+  self->active_session = session;
 }
 
 void
-gnalk_room_controller_close_room (GnalkRoomController *self)
+gnalk_room_controller_set_message_controller (GnalkRoomController    *self,
+                                                GnalkMessageController *mc)
 {
-  g_return_if_fail (GNALK_IS_ROOM_CONTROLLER (self));
-
-  if (!self->current_room_token)
-    return;
-
-  g_debug ("RoomController: Closing room %s", self->current_room_token);
-
-  /* Increment generation to invalidate any in-flight async operations */
-  self->generation++;
-
-  /* Notify participant controller to stop loading/polling */
-  if (self->participant_controller)
-    gnalk_participant_controller_set_active_room (self->participant_controller, NULL, 0);
-
-  /* Note: SyncCoordinator handles sync coordination via Application set_active_room */
-
-  /* Leave the room via session */
-  if (self->current_session)
-    gnalk_session_leave_room (self->current_session);
-
-  /* Clear state */
-  g_free (self->current_room_token);
-  self->current_room_token = NULL;
-  self->current_session = NULL;
-  self->current_account_id = 0;
-  self->current_room_type = 0;
-
-  /* Update app state */
-  gnalk_app_state_set_active_room (self->app_state, NULL, NULL);
-
-  g_signal_emit (self, signals[SIGNAL_ROOM_CLOSED], 0);
-}
-
-const char *
-gnalk_room_controller_get_current_room (GnalkRoomController *self)
-{
-  g_return_val_if_fail (GNALK_IS_ROOM_CONTROLLER (self), NULL);
-  return self->current_room_token;
-}
-
-GnalkSession *
-gnalk_room_controller_get_current_session (GnalkRoomController *self)
-{
-  g_return_val_if_fail (GNALK_IS_ROOM_CONTROLLER (self), NULL);
-  return self->current_session;
-}
-
-/* Async callback for loading older messages */
-static void
-on_older_messages_loaded (GnalkDataRepository *repository G_GNUC_UNUSED,
-                           gpointer              result,
-                           GError               *error,
-                           gpointer              user_data)
-{
-  AsyncContext *ctx = user_data;
-  GnalkRoomController *self = ctx->controller;
-
-  /* Check if room changed while loading */
-  if (async_context_is_stale (ctx))
-    {
-      g_debug ("RoomController: Ignoring stale history load for %s", ctx->room_token);
-      if (result)
-        g_object_unref (result);
-      async_context_free (ctx);
-      return;
-    }
-
-  self->is_loading_history = FALSE;
-
-  if (error)
-    {
-      g_warning ("RoomController: Failed to load older messages: %s", error->message);
-      g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
-    }
-  else if (result)
-    {
-      GListStore *messages = G_LIST_STORE (result);
-      guint n = g_list_model_get_n_items (G_LIST_MODEL (messages));
-      g_debug ("RoomController: Loaded %u older messages for %s", n, ctx->room_token);
-
-      /* Prepend to app state */
-      gnalk_app_state_prepend_messages (self->app_state, messages);
-      g_object_unref (messages);
-    }
-
-  g_signal_emit (self, signals[SIGNAL_MESSAGES_LOADED], 0);
-  async_context_free (ctx);
-}
-
-void
-gnalk_room_controller_load_older_messages (GnalkRoomController *self)
-{
-  g_return_if_fail (GNALK_IS_ROOM_CONTROLLER (self));
-
-  if (!self->current_room_token || !self->current_session)
-    {
-      g_debug ("RoomController: No room open, can't load history");
-      return;
-    }
-
-  if (self->is_loading_history)
-    {
-      g_debug ("RoomController: Already loading history");
-      return;
-    }
-
-  /* Get the oldest message ID currently loaded */
-  GListStore *messages = gnalk_app_state_get_messages (self->app_state);
-  guint n = g_list_model_get_n_items (G_LIST_MODEL (messages));
-
-  if (n == 0)
-    {
-      g_debug ("RoomController: No messages loaded, can't determine before_id");
-      return;
-    }
-
-  GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (messages), 0);
-  gint64 before_id = gnalk_message_data_get_id (oldest);
-  g_object_unref (oldest);
-
-  g_debug ("RoomController: Loading messages before ID %ld", (long) before_id);
-
-  self->is_loading_history = TRUE;
-
-  AsyncContext *ctx = async_context_new (self, self->current_room_token);
-
-  gnalk_data_repository_load_messages_async (
-    self->data_repository,
-    self->current_account_id,
-    self->current_room_token,
-    50,  /* Load 50 more messages */
-    before_id,
-    on_older_messages_loaded,
-    ctx);
-}
-
-void
-gnalk_room_controller_send_message (GnalkRoomController *self,
-                                       const char           *text,
-                                       gint64                reply_to)
-{
-  g_return_if_fail (GNALK_IS_ROOM_CONTROLLER (self));
-  g_return_if_fail (text != NULL);
-
-  if (!self->current_room_token || !self->current_session)
-    {
-      g_warning ("RoomController: No room open, can't send message");
-      g_signal_emit (self, signals[SIGNAL_ERROR], 0, "No room open");
-      return;
-    }
-
-  g_debug ("RoomController: Sending message to %s", self->current_room_token);
-
-  /* Generate a unique reference ID for tracking */
-  g_autofree char *reference_id = g_uuid_string_random ();
-
-  /* Delegate to session */
-  gnalk_session_send_message (self->current_session,
-                                 self->current_room_token,
-                                 text,
-                                 reply_to,
-                                 reference_id);
-}
-
-/* Callback for mark read response (currently does nothing) */
-static void
-on_mark_read_response (GnalkHttpClient *client G_GNUC_UNUSED,
-                        JsonNode         *response G_GNUC_UNUSED,
-                        GError           *error,
-                        gpointer          user_data G_GNUC_UNUSED)
-{
-  if (error)
-    g_debug ("RoomController: Mark read failed: %s", error->message);
-}
-
-void
-gnalk_room_controller_mark_read (GnalkRoomController *self)
-{
-  g_return_if_fail (GNALK_IS_ROOM_CONTROLLER (self));
-
-  if (!self->current_room_token || !self->current_session)
-    return;
-
-  /* Get the last message ID */
-  GListStore *messages = gnalk_app_state_get_messages (self->app_state);
-  guint n = g_list_model_get_n_items (G_LIST_MODEL (messages));
-
-  if (n == 0)
-    return;
-
-  GnalkMessageData *latest = g_list_model_get_item (G_LIST_MODEL (messages), n - 1);
-  gint64 last_msg_id = gnalk_message_data_get_id (latest);
-  g_object_unref (latest);
-
-  /* Use HTTP client from session */
-  GnalkHttpClient *http_client = gnalk_session_get_http_client (self->current_session);
-  if (http_client)
-    {
-      gnalk_http_client_mark_chat_read (http_client,
-                                           self->current_room_token,
-                                           last_msg_id,
-                                           on_mark_read_response,
-                                           NULL);
-    }
-}
-
-void
-gnalk_room_controller_refresh (GnalkRoomController *self)
-{
-  g_return_if_fail (GNALK_IS_ROOM_CONTROLLER (self));
-
-  if (!self->current_room_token || !self->current_session)
-    return;
-
-  g_debug ("RoomController: Refreshing room %s", self->current_room_token);
-
-  /* Re-join room to refresh messages */
-  gnalk_session_join_room (self->current_session, self->current_room_token);
-}
-
-gboolean
-gnalk_room_controller_is_loading (GnalkRoomController *self)
-{
-  g_return_val_if_fail (GNALK_IS_ROOM_CONTROLLER (self), FALSE);
-  return self->is_loading || self->is_loading_history;
-}
-
-void
-gnalk_room_controller_set_conversation_controller (GnalkRoomController         *self,
-                                                      GnalkConversationController *conversation_controller)
-{
-  g_return_if_fail (GNALK_IS_ROOM_CONTROLLER (self));
-
-  self->conversation_controller = conversation_controller;
+  self->message_controller = mc;
 }
 
 void
 gnalk_room_controller_set_participant_controller (GnalkRoomController        *self,
-                                                     GnalkParticipantController *participant_controller)
+                                                    GnalkParticipantController *pc)
 {
-  g_return_if_fail (GNALK_IS_ROOM_CONTROLLER (self));
+  self->participant_controller = pc;
+}
 
-  self->participant_controller = participant_controller;
+void
+gnalk_room_controller_set_conversations_store (GnalkRoomController *self,
+                                                 GListStore          *store)
+{
+  self->conversations_store = store;
+}
+
+void
+gnalk_room_controller_set_scroll_state_func (GnalkRoomController  *self,
+                                               GnalkScrollStateFunc  func,
+                                               gpointer              user_data)
+{
+  self->scroll_state_func = func;
+  self->scroll_state_data = user_data;
+}
+
+/* ============ Core operations ============ */
+
+/**
+ * gnalk_room_controller_open_room:
+ * @self: The controller
+ * @token: Room token to open
+ *
+ * Opens a room: backgrounds the current room, switches to the new tab,
+ * updates state, and emits signals for the Window to update UI.
+ *
+ * Signal emission order:
+ * 1. "room-closed" (if there was an old room) - Window saves messages, stops typing timer
+ * 2. "messages-store-changed" (if store changed) - Window rebinds selection model
+ * 3. "room-opened" - Window updates all UI
+ * 4. "scroll-requested" (if tab already had messages) - Window scrolls view
+ */
+void
+gnalk_room_controller_open_room (GnalkRoomController *self, const char *token)
+{
+  if (!token)
+    return;
+
+  /* Already in this room */
+  if (self->current_room &&
+      g_strcmp0 (self->current_room->room_token, token) == 0)
+    {
+      g_message ("room_controller: already in room %s", token);
+      return;
+    }
+
+  /* Find conversation data in the store */
+  g_autoptr(GnalkConversationData) found_data = find_conversation_by_token (self, token);
+
+  g_message ("room_controller: opening room %s (found=%d)", token, found_data != NULL);
+
+  /* Save old room token before switching */
+  g_autofree char *old_token = self->current_room
+      ? g_strdup (self->current_room->room_token) : NULL;
+
+  /* Background the current room's tab (saves scroll anchor, trims messages) */
+  background_current_internal (self);
+
+  /* Stop typing in the old room */
+  stop_typing_internal (self);
+
+  /* Emit room-closed for the old room so Window can save messages + do cleanup.
+   * current_room still points to the old room at this point. */
+  if (self->current_room)
+    g_signal_emit (self, signals[SIGNAL_ROOM_CLOSED], 0, old_token);
+
+  /* === SWITCH TO NEW TAB === */
+  GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, token);
+  self->current_room = &tab->state;
+  tab->last_access_time = g_get_monotonic_time ();
+
+  /* Swap messages store and notify if changed */
+  GListStore *new_store = self->current_room->messages_store;
+  if (self->messages_store != new_store)
+    {
+      GNALK_TRACE_STORE ("room_controller: swapping store from %p to %p",
+                           (void *)self->messages_store, (void *)new_store);
+      g_set_object (&self->messages_store, new_store);
+      g_signal_emit (self, signals[SIGNAL_MESSAGES_STORE_CHANGED], 0, new_store);
+    }
+
+  gnalk_room_tab_manager_enforce_limit (self->tab_manager);
+
+  /* Update state from conversation data */
+  if (found_data)
+    update_room_state_from_conv (self, found_data);
+
+  self->has_active_room = TRUE;
+
+  /* Set message controller room */
+  if (self->message_controller)
+    gnalk_message_controller_set_room (self->message_controller, token);
+
+  /* Save last room to settings */
+  if (self->settings && found_data)
+    g_settings_set_string (self->settings, "last-room-token", token);
+
+  /* Emit room-opened - Window does all UI updates */
+  g_signal_emit (self, signals[SIGNAL_ROOM_OPENED], 0, token, old_token, found_data);
+
+  /* Handle scroll restoration for tabs that already have messages */
+  guint tab_msg_count = g_list_model_get_n_items (G_LIST_MODEL (self->current_room->messages_store));
+  GNALK_TRACE_ROOM_SWITCH ("room_controller: tab for %s has %u msgs, initial_load_done=%d",
+                             token, tab_msg_count, self->current_room->initial_load_done);
+
+  if (self->current_room->initial_load_done && tab_msg_count > 0)
+    {
+      /* Tab already has messages - request scroll restoration */
+      guint scroll_pos = find_scroll_position (self);
+      GNALK_TRACE_SCROLL ("room_controller: requesting scroll to position %u", scroll_pos);
+      g_signal_emit (self, signals[SIGNAL_SCROLL_REQUESTED], 0, scroll_pos);
+
+      /* Start polling for new messages */
+      if (self->message_controller)
+        gnalk_message_controller_start_polling (self->message_controller,
+                                                  self->current_room->last_known_message_id);
+    }
+  /* else: the room-opened handler will load messages from DB */
+
+  /* Join room via session */
+  join_room_via_session (self, found_data, token);
+}
+
+/* Debounce callback */
+static gboolean
+on_debounce_timeout (gpointer user_data)
+{
+  GnalkRoomController *self = GNALK_ROOM_CONTROLLER (user_data);
+
+  self->debounce_timer_id = 0;
+
+  if (self->pending_room_token)
+    {
+      g_autofree char *token = g_steal_pointer (&self->pending_room_token);
+      gnalk_room_controller_open_room (self, token);
+    }
+
+  return G_SOURCE_REMOVE;
+}
+
+void
+gnalk_room_controller_open_room_debounced (GnalkRoomController *self,
+                                             const char          *token)
+{
+  g_free (self->pending_room_token);
+  self->pending_room_token = g_strdup (token);
+
+  if (self->debounce_timer_id > 0)
+    g_source_remove (self->debounce_timer_id);
+
+  self->debounce_timer_id = g_timeout_add (ROOM_SWITCH_DEBOUNCE_MS,
+                                             on_debounce_timeout, self);
+}
+
+void
+gnalk_room_controller_background_current (GnalkRoomController *self,
+                                            gint64               anchor_id,
+                                            gdouble              anchor_offset,
+                                            gboolean             at_bottom,
+                                            int                  viewport_height,
+                                            int                  viewport_width)
+{
+  if (!self->current_room || !self->tab_manager)
+    return;
+
+  gnalk_room_tab_manager_background_tab (self->tab_manager,
+                                           self->current_room->room_token,
+                                           anchor_id, anchor_offset, at_bottom,
+                                           viewport_height, viewport_width);
+}
+
+/**
+ * gnalk_room_controller_close_current:
+ *
+ * Closes the current room (e.g., when navigating back in mobile mode).
+ * Backgrounds the tab, emits room-closed, leaves signaling/HTTP, clears state.
+ */
+void
+gnalk_room_controller_close_current (GnalkRoomController *self)
+{
+  if (!self->current_room)
+    return;
+
+  g_autofree char *old_token = g_strdup (self->current_room->room_token);
+  g_message ("room_controller: closing room %s", old_token);
+
+  /* Background current tab (saves scroll anchor) */
+  background_current_internal (self);
+
+  /* Stop typing */
+  stop_typing_internal (self);
+
+  /* Emit room-closed BEFORE clearing state (handler needs current_room) */
+  g_signal_emit (self, signals[SIGNAL_ROOM_CLOSED], 0, old_token);
+
+  /* Stop participant polling */
+  if (self->participant_controller)
+    gnalk_participant_controller_set_active_room (self->participant_controller, NULL, 0);
+
+  /* Leave room via session's signaling and HTTP */
+  if (self->active_session)
+    {
+      GnalkSignaling *sig = gnalk_session_get_signaling (self->active_session);
+      GnalkHttpClient *http = gnalk_session_get_http_client (self->active_session);
+      if (sig)
+        gnalk_signaling_leave_room (sig, old_token);
+      if (http)
+        gnalk_http_client_leave_room (http, old_token, NULL, NULL);
+    }
+
+  /* Clear state */
+  self->current_room = NULL;
+  g_clear_object (&self->messages_store);
+  self->has_active_room = FALSE;
+}
+
+void
+gnalk_room_controller_restore_last_room (GnalkRoomController *self,
+                                           gboolean             is_collapsed)
+{
+  /* If room already open, nothing to do here (Window handles header update) */
+  if (self->current_room)
+    return;
+
+  /* In collapsed/mobile mode, stay on room list */
+  if (is_collapsed)
+    return;
+
+  if (!self->settings)
+    return;
+
+  g_autofree char *last_room = g_settings_get_string (self->settings, "last-room-token");
+  if (!last_room || !*last_room)
+    return;
+
+  g_message ("room_controller: restoring last room %s", last_room);
+
+  /* Only restore if the room exists in our conversation list */
+  g_autoptr(GnalkConversationData) conv = find_conversation_by_token (self, last_room);
+  if (conv)
+    gnalk_room_controller_open_room (self, last_room);
+}
+
+/* ============ State queries ============ */
+
+GnalkRoomState *
+gnalk_room_controller_get_current_room (GnalkRoomController *self)
+{
+  return self->current_room;
+}
+
+const char *
+gnalk_room_controller_get_current_room_token (GnalkRoomController *self)
+{
+  return self->current_room ? self->current_room->room_token : NULL;
+}
+
+gboolean
+gnalk_room_controller_has_active_room (GnalkRoomController *self)
+{
+  return self->has_active_room;
+}
+
+GListStore *
+gnalk_room_controller_get_messages_store (GnalkRoomController *self)
+{
+  return self->messages_store;
 }

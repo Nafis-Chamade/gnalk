@@ -167,7 +167,7 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
 {
   (void) input;
 
-  if (!self->current_room_token)
+  if (!self->current_room)
     return;
 
   gboolean has_text = text && *text;
@@ -190,11 +190,11 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
           /* Caption only on the last message */
           const char *caption = is_last ? text : NULL;
           /* Reply-to only on the first message */
-          gint64 reply_to = (i == 0) ? self->reply_to_message_id : 0;
+          gint64 reply_to = (i == 0) ? self->current_room->reply_to_message_id : 0;
 
           g_autofree char *reference_id = gnalk_window_generate_reference_id (
               caption ? caption : att->file_name,
-              self->current_room_token);
+              self->current_room->room_token);
 
           /* Create a copy of the attachment for the queue (since we'll clear the array) */
           AttachmentInfo *att_copy = g_new0 (AttachmentInfo, 1);
@@ -214,13 +214,13 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
 
       /* Clear entry and quote state */
       gnalk_message_input_clear (self->message_input);
-      self->reply_to_message_id = 0;
+      self->current_room->reply_to_message_id = 0;
       gnalk_conversation_actions_clear_quote (self->conversation_actions);
       return;
     }
 
   /* If we're in edit mode, send edit request instead of new message */
-  if (self->edit_message_id > 0)
+  if (self->current_room->edit_message_id > 0)
     {
       /* Check if we're editing a message near the bottom */
       guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
@@ -230,7 +230,7 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
       for (guint j = 0; j < n_items; j++)
         {
           GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (self->messages_store), j);
-          if (gnalk_message_data_get_id (existing) == self->edit_message_id)
+          if (gnalk_message_data_get_id (existing) == self->current_room->edit_message_id)
             {
               /* Update message text and set edit timestamp to current time */
               gnalk_message_data_set_message (existing, text);
@@ -256,15 +256,15 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
         gnalk_message_view_scroll_to_bottom (self->message_view);
 
       /* Edit message via controller */
-      gnalk_message_controller_set_room (self->message_controller, self->current_room_token);
+      gnalk_message_controller_set_room (self->message_controller, self->current_room->room_token);
       gnalk_message_controller_edit_message (self->message_controller,
-                                               self->edit_message_id,
+                                               self->current_room->edit_message_id,
                                                text);
 
       gnalk_message_input_clear (self->message_input);
 
       /* Clear edit state */
-      self->edit_message_id = 0;
+      self->current_room->edit_message_id = 0;
       gnalk_conversation_actions_clear_quote (self->conversation_actions);
       return;
     }
@@ -280,7 +280,7 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
     }
 
   /* Generate unique reference ID for tracking */
-  g_autofree char *reference_id = gnalk_window_generate_reference_id (text, self->current_room_token);
+  g_autofree char *reference_id = gnalk_window_generate_reference_id (text, self->current_room->room_token);
 
   /* Create pending message data immediately (optimistic UI) */
   GnalkMessageData *pending_data = gnalk_message_data_new_pending (
@@ -288,16 +288,16 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
       user_display_name ? user_display_name : user_id,
       user_id,
       reference_id,
-      self->reply_to_message_id);
+      self->current_room->reply_to_message_id);
 
   /* If replying to a message, copy the parent data for quote display */
-  if (self->reply_to_message_id > 0 && self->messages_store)
+  if (self->current_room->reply_to_message_id > 0 && self->messages_store)
     {
       guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
       for (guint i = 0; i < n_items; i++)
         {
           GnalkMessageData *msg_data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
-          if (msg_data && gnalk_message_data_get_id (msg_data) == self->reply_to_message_id)
+          if (msg_data && gnalk_message_data_get_id (msg_data) == self->current_room->reply_to_message_id)
             {
               /* Build parent object with necessary fields for quote display */
               JsonObject *parent = json_object_new ();
@@ -338,19 +338,19 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
   if (is_online)
     {
       /* Send message via controller */
-      gnalk_message_controller_set_room (self->message_controller, self->current_room_token);
+      gnalk_message_controller_set_room (self->message_controller, self->current_room->room_token);
       gnalk_message_controller_send_message (self->message_controller,
                                                text,
-                                               self->reply_to_message_id,
+                                               self->current_room->reply_to_message_id,
                                                reference_id);
     }
   else
     {
       /* Queue message for later sending */
       gnalk_sync_manager_queue_message (self->sync_manager,
-                                          self->current_room_token,
+                                          self->current_room->room_token,
                                           text,
-                                          self->reply_to_message_id,
+                                          self->current_room->reply_to_message_id,
                                           reference_id);
       g_debug ("Message queued for offline send: %s", reference_id);
     }
@@ -358,6 +358,6 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
   gnalk_message_input_clear (self->message_input);
 
   /* Clear quote state */
-  self->reply_to_message_id = 0;
+  self->current_room->reply_to_message_id = 0;
   gnalk_conversation_actions_clear_quote (self->conversation_actions);
 }

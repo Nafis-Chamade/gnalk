@@ -791,6 +791,20 @@ gnalk_data_repository_set_has_more_history (GnalkDataRepository *self,
 }
 
 void
+gnalk_data_repository_update_conversation_favorite (GnalkDataRepository *self,
+                                                     gint64               account_id,
+                                                     const char          *conversation_token,
+                                                     gboolean             is_favorite)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (conversation_token != NULL);
+
+  gnalk_database_update_conversation_favorite (self->database, account_id, conversation_token, is_favorite);
+  g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
+}
+
+void
 gnalk_data_repository_update_conversation_last_message (GnalkDataRepository *self,
                                                           gint64               account_id,
                                                           const char          *conversation_token,

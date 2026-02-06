@@ -10,8 +10,6 @@
 #include "gnalk-keyring.h"
 #include "gnalk-data-repository.h"
 #include "gnalk-app-state.h"
-#include "gnalk-room-controller.h"
-
 #include <glib/gi18n.h>
 
 struct _GnalkApplication
@@ -43,9 +41,6 @@ struct _GnalkApplication
 
   /* Centralized UI state */
   GnalkAppState       *app_state;
-
-  /* Room controller */
-  GnalkRoomController *room_controller;
 
   /* Multi-account support */
   GnalkAccountManager *account_manager;
@@ -515,11 +510,6 @@ on_database_opened (GnalkDataRepository *repository G_GNUC_UNUSED,
   g_signal_connect (self->session_manager, "any-session-state-changed",
                     G_CALLBACK (on_session_online_changed), self);
 
-  /* Create room controller */
-  self->room_controller = gnalk_room_controller_new (self->app_state,
-                                                     self->data_repository,
-                                                     self->session_manager);
-
   /* Set up push notification callback at application level */
   gnalk_push_client_set_notification_callback (self->push_client,
                                                   on_app_push_notification,
@@ -582,7 +572,6 @@ gnalk_application_finalize (GObject *object)
   g_clear_object (&self->notification_service);
   g_clear_object (&self->http_client);
   g_clear_object (&self->push_client);
-  g_clear_object (&self->room_controller);
   g_clear_object (&self->session_manager);
   g_clear_object (&self->account_manager);
   /* Note: database is owned by data_repository, don't double-free */

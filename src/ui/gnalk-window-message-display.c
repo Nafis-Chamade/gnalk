@@ -52,7 +52,7 @@ gnalk_window_clear_messages_store (GnalkWindow *self)
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
   GNALK_TRACE_STORE ("clear_messages_store: clearing %u items from store %p for room %s",
                       n_items, (void*)self->messages_store,
-                      self->current_room_token ? self->current_room_token : "(null)");
+                      self->current_room ? self->current_room->room_token : "(null)");
 
   /* Disconnect model from view first - this prevents GTK from trying to
    * unbind items during removal which can cause crashes during transitions */
@@ -140,7 +140,7 @@ gnalk_window_save_messages_to_db (GnalkWindow *self)
   GnalkDatabase *db = gnalk_application_get_database (app);
   gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
 
-  if (!db || account_id <= 0 || !self->current_room_token)
+  if (!db || account_id <= 0 || !self->current_room)
     return;
 
   /* Copy messages to array for async saving */
@@ -159,7 +159,7 @@ gnalk_window_save_messages_to_db (GnalkWindow *self)
   SaveMessagesData *data = g_slice_new (SaveMessagesData);
   data->db = db;
   data->account_id = account_id;
-  data->room_token = g_strdup (self->current_room_token);
+  data->room_token = g_strdup (self->current_room->room_token);
   data->messages = messages;
 
   GTask *task = g_task_new (self, NULL, NULL, NULL);  /* No callback needed */
@@ -270,12 +270,12 @@ load_messages_from_db_finish (GObject      *source_object,
 
   /* Check if room changed while loading */
   const char *expected_token = g_task_get_name (task);
-  if (g_strcmp0 (self->current_room_token, expected_token) != 0)
+  if (!self->current_room || g_strcmp0 (self->current_room->room_token, expected_token) != 0)
     {
       GNALK_TRACE_DATABASE ("load_messages_from_db_finish: room changed (expected=%s, current=%s), discarding",
-                             expected_token, self->current_room_token);
+                             expected_token, self->current_room ? self->current_room->room_token : "(null)");
       g_message ("load_messages_from_db_finish: room changed (expected=%s, current=%s), discarding",
-                 expected_token, self->current_room_token);
+                 expected_token, self->current_room ? self->current_room->room_token : "(null)");
       return;
     }
 
@@ -312,16 +312,16 @@ load_messages_from_db_finish (GObject      *source_object,
 
   /* If last_read_message_id is not set (e.g., immediate restore at startup),
    * look it up from the conversation data now that conversations are loaded */
-  if (self->last_read_message_id == 0 && self->current_room_token)
+  if (self->current_room && self->current_room->last_read_message_id == 0)
     {
       guint n_convos = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
       for (guint i = 0; i < n_convos; i++)
         {
           GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
           const char *conv_token = gnalk_conversation_data_get_token (conv);
-          if (conv_token && g_strcmp0 (conv_token, self->current_room_token) == 0)
+          if (conv_token && g_strcmp0 (conv_token, self->current_room->room_token) == 0)
             {
-              self->last_read_message_id = gnalk_conversation_data_get_last_read_message (conv);
+              self->current_room->last_read_message_id = gnalk_conversation_data_get_last_read_message (conv);
               g_object_unref (conv);
               break;
             }
@@ -330,7 +330,7 @@ load_messages_from_db_finish (GObject      *source_object,
     }
 
   /* Reset first_unread_message_id before populating */
-  self->first_unread_message_id = 0;
+  self->current_room->first_unread_message_id = 0;
 
   GNALK_TRACE_STORE ("load_messages_from_db_finish: populating store with %u messages", n_cached);
 
@@ -373,17 +373,17 @@ load_messages_from_db_finish (GObject      *source_object,
               gnalk_message_data_set_is_own (data, is_own);
 
               /* Mark as unread if message ID > last_read_message_id and not our own message */
-              if (self->last_read_message_id > 0)
+              if (self->current_room->last_read_message_id > 0)
                 {
-                  if (msg_id > self->last_read_message_id && !is_own)
+                  if (msg_id > self->current_room->last_read_message_id && !is_own)
                     {
                       gnalk_message_data_set_is_unread (data, TRUE);
 
                       /* Track first unread message for scrolling */
-                      if (self->first_unread_message_id == 0 ||
-                          msg_id < self->first_unread_message_id)
+                      if (self->current_room->first_unread_message_id == 0 ||
+                          msg_id < self->current_room->first_unread_message_id)
                         {
-                          self->first_unread_message_id = msg_id;
+                          self->current_room->first_unread_message_id = msg_id;
                         }
                     }
                 }
@@ -422,7 +422,7 @@ load_messages_from_db_finish (GObject      *source_object,
       GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (self->messages_store), 0);
       if (oldest)
         {
-          self->oldest_loaded_message_id = gnalk_message_data_get_id (oldest);
+          self->current_room->oldest_loaded_id = gnalk_message_data_get_id (oldest);
           g_object_unref (oldest);
         }
 
@@ -430,16 +430,16 @@ load_messages_from_db_finish (GObject      *source_object,
       GnalkMessageData *newest = g_list_model_get_item (G_LIST_MODEL (self->messages_store), n_items - 1);
       if (newest)
         {
-          self->last_known_message_id = gnalk_message_data_get_id (newest);
+          self->current_room->last_known_message_id = gnalk_message_data_get_id (newest);
           g_object_unref (newest);
         }
 
       GNALK_TRACE_MESSAGES ("load_messages_from_db_finish: oldest_id=%"G_GINT64_FORMAT", newest_id=%"G_GINT64_FORMAT,
-                             self->oldest_loaded_message_id, self->last_known_message_id);
+                             self->current_room->oldest_loaded_id, self->current_room->last_known_message_id);
     }
 
   g_debug ("Loaded %u messages from database for conversation %s (last_known=%"G_GINT64_FORMAT")",
-           n_cached, expected_token, self->last_known_message_id);
+           n_cached, expected_token, self->current_room->last_known_message_id);
 
   /* Update tab state */
   if (self->tab_manager)
@@ -447,10 +447,10 @@ load_messages_from_db_finish (GObject      *source_object,
       GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, expected_token);
       if (tab)
         {
-          tab->oldest_loaded_id = self->oldest_loaded_message_id;
-          tab->newest_loaded_id = self->last_known_message_id;
-          tab->initial_load_done = TRUE;
-          tab->has_more_history = self->has_more_history;
+          tab->state.oldest_loaded_id = self->current_room->oldest_loaded_id;
+          tab->state.last_known_message_id = self->current_room->last_known_message_id;
+          tab->state.initial_load_done = TRUE;
+          tab->state.has_more_history = self->current_room->has_more_history;
         }
     }
 
@@ -459,7 +459,7 @@ load_messages_from_db_finish (GObject      *source_object,
   n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
   g_message ("Messages displayed: %u (from cache)", n_items);
   GNALK_TRACE_SCROLL ("load_messages_from_db_finish: showing view at bottom (%u items)", n_items);
-  self->scroll_to_bottom = TRUE;
+  self->current_room->scroll_to_bottom = TRUE;
 
   if (n_items > 0)
     gnalk_message_view_show_messages_at_bottom (self->message_view);
@@ -467,13 +467,13 @@ load_messages_from_db_finish (GObject      *source_object,
     gnalk_message_view_show_messages (self->message_view);
 
   /* Start message polling for new messages (cache-first: we displayed cache, now poll for updates) */
-  if (self->message_controller && !self->initial_messages_loaded)
+  if (self->message_controller && !self->current_room->initial_load_done)
     {
       GNALK_TRACE_POLLING ("load_messages_from_db_finish: starting polling from message %"G_GINT64_FORMAT,
-                            self->last_known_message_id);
-      self->initial_messages_loaded = TRUE;
+                            self->current_room->last_known_message_id);
+      self->current_room->initial_load_done = TRUE;
       gnalk_message_controller_start_polling (self->message_controller,
-                                                self->last_known_message_id);
+                                                self->current_room->last_known_message_id);
     }
   else
     {
@@ -487,7 +487,7 @@ gnalk_window_load_messages_from_db (GnalkWindow *self,
                                       const char   *room_token)
 {
   GNALK_TRACE_DATABASE ("load_messages_from_db: starting for room %s, current_room=%s",
-                          room_token, self->current_room_token ? self->current_room_token : "(null)");
+                          room_token, self->current_room ? self->current_room->room_token : "(null)");
   g_message ("load_messages_from_db: starting for room %s", room_token);
 
   /* Clear old messages before reloading */
@@ -581,8 +581,9 @@ load_older_messages_from_db_finish (GObject      *source_object,
   LoadOlderMessagesData *data = g_task_get_task_data (task);
 
   /* Check if room changed while loading */
-  if (data->generation != self->message_load_generation ||
-      g_strcmp0 (self->current_room_token, data->room_token) != 0)
+  if (!self->current_room ||
+      data->generation != self->current_room->message_load_generation ||
+      g_strcmp0 (self->current_room->room_token, data->room_token) != 0)
     {
       g_debug ("Room changed during older messages load, discarding results");
       gnalk_message_view_set_loading_older (self->message_view, FALSE);
@@ -603,15 +604,15 @@ load_older_messages_from_db_finish (GObject      *source_object,
     {
       g_object_unref (older);
       /* No more in DB, try fetching from server via MessageController */
-      if (self->message_controller && self->oldest_loaded_message_id > 0 && self->current_room_token)
+      if (self->message_controller && self->current_room && self->current_room->oldest_loaded_id > 0)
         {
           g_debug ("DB exhausted, fetching older messages from server via MessageController");
           gnalk_message_controller_load_older_messages (self->message_controller,
-                                                          self->oldest_loaded_message_id);
+                                                          self->current_room->oldest_loaded_id);
         }
       else
         {
-          self->has_more_history = FALSE;
+          self->current_room->has_more_history = FALSE;
           gnalk_message_view_set_loading_older (self->message_view, FALSE);
         }
       return;
@@ -638,7 +639,7 @@ load_older_messages_from_db_finish (GObject      *source_object,
   GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (older), 0);
   if (oldest)
     {
-      self->oldest_loaded_message_id = gnalk_message_data_get_id (oldest);
+      self->current_room->oldest_loaded_id = gnalk_message_data_get_id (oldest);
       g_object_unref (oldest);
     }
 
@@ -657,10 +658,12 @@ load_older_messages_from_db_finish (GObject      *source_object,
 void
 gnalk_window_load_older_messages (GnalkWindow *self)
 {
-  if (gnalk_message_view_get_loading_older (self->message_view) || !self->has_more_history)
+  if (!self->current_room ||
+      gnalk_message_view_get_loading_older (self->message_view) ||
+      !self->current_room->has_more_history)
     return;
 
-  if (!self->current_room_token || self->oldest_loaded_message_id <= 0)
+  if (self->current_room->oldest_loaded_id <= 0)
     return;
 
   gnalk_message_view_set_loading_older (self->message_view, TRUE);
@@ -678,10 +681,10 @@ gnalk_window_load_older_messages (GnalkWindow *self)
   if (!db || account_id <= 0)
     {
       /* No database or no session, try server directly via MessageController */
-      if (self->message_controller && self->current_room_token)
+      if (self->message_controller && self->current_room)
         {
           gnalk_message_controller_load_older_messages (self->message_controller,
-                                                          self->oldest_loaded_message_id);
+                                                          self->current_room->oldest_loaded_id);
         }
       else
         {
@@ -694,9 +697,9 @@ gnalk_window_load_older_messages (GnalkWindow *self)
   LoadOlderMessagesData *data = g_slice_new (LoadOlderMessagesData);
   data->db = db;
   data->account_id = account_id;
-  data->room_token = g_strdup (self->current_room_token);
-  data->before_id = self->oldest_loaded_message_id;
-  data->generation = self->message_load_generation;
+  data->room_token = g_strdup (self->current_room->room_token);
+  data->before_id = self->current_room->oldest_loaded_id;
+  data->generation = self->current_room->message_load_generation;
 
   GTask *task = g_task_new (self, NULL, load_older_messages_from_db_finish, NULL);
   g_task_set_task_data (task, data, (GDestroyNotify) load_older_messages_data_free);
@@ -726,7 +729,7 @@ gnalk_window_process_messages_array (GnalkWindow *self,
 
   gboolean initial_load = is_initial_load &&
                           (g_list_model_get_n_items (G_LIST_MODEL (self->messages_store)) == 0);
-  gboolean was_at_bottom = initial_load || self->scroll_to_bottom ||
+  gboolean was_at_bottom = initial_load || self->current_room->scroll_to_bottom ||
                            gnalk_message_view_is_at_bottom (self->message_view);
 
   /* For initial load from server, disconnect model to prevent visual movement */
@@ -736,7 +739,7 @@ gnalk_window_process_messages_array (GnalkWindow *self,
       GNALK_TRACE_UI ("process_messages_array: disconnected model for batch insert (initial_load, %u msgs)", len);
     }
 
-  gint64 max_id = self->last_known_message_id;
+  gint64 max_id = self->current_room->last_known_message_id;
 
   for (guint i = 0; i < len; i++)
     {
@@ -859,7 +862,7 @@ gnalk_window_process_messages_array (GnalkWindow *self,
 
       /* Handle call_left system message - clear call state for actor
        * Skip during initial load - call state is already set from participants API */
-      if (!self->skip_historical_call_messages && g_strcmp0 (system_message, "call_left") == 0)
+      if (!self->current_room->skip_historical_call_messages && g_strcmp0 (system_message, "call_left") == 0)
         {
           const char *actor_id = json_object_get_string_member_with_default (msg, "actorId", "");
           if (actor_id && *actor_id)
@@ -874,7 +877,7 @@ gnalk_window_process_messages_array (GnalkWindow *self,
 
       /* Handle call_ended system message - clear all call states
        * Skip during initial load - call state is already set from participants API */
-      if (!self->skip_historical_call_messages && g_strcmp0 (system_message, "call_ended") == 0)
+      if (!self->current_room->skip_historical_call_messages && g_strcmp0 (system_message, "call_ended") == 0)
         {
           gnalk_signaling_clear_call_states (self->signaling);
           /* Clear all participant call icons via component */
@@ -953,8 +956,8 @@ gnalk_window_process_messages_array (GnalkWindow *self,
                   {
                     GnalkDatabase *db = gnalk_application_get_database (app);
                     gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
-                    if (db && account_id > 0 && self->current_room_token)
-                      gnalk_database_save_message (db, account_id, self->current_room_token, existing);
+                    if (db && account_id > 0 && self->current_room)
+                      gnalk_database_save_message (db, account_id, self->current_room->room_token, existing);
                   }
 
                   /* Force UI update by remove/insert at same position (preserve order while pending) */
@@ -1029,17 +1032,17 @@ gnalk_window_process_messages_array (GnalkWindow *self,
               GnalkMessageData *msg_data = gnalk_message_data_new_from_json (msg, current_user);
 
               /* Mark as unread if message ID > last_read_message_id and not our own message */
-              if (self->last_read_message_id > 0 &&
-                  msg_id > self->last_read_message_id &&
+              if (self->current_room->last_read_message_id > 0 &&
+                  msg_id > self->current_room->last_read_message_id &&
                   !gnalk_message_data_get_is_own (msg_data))
                 {
                   gnalk_message_data_set_is_unread (msg_data, TRUE);
 
                   /* Track first unread message for scrolling */
-                  if (self->first_unread_message_id == 0 ||
-                      msg_id < self->first_unread_message_id)
+                  if (self->current_room->first_unread_message_id == 0 ||
+                      msg_id < self->current_room->first_unread_message_id)
                     {
-                      self->first_unread_message_id = msg_id;
+                      self->current_room->first_unread_message_id = msg_id;
                     }
                 }
 
@@ -1070,17 +1073,17 @@ gnalk_window_process_messages_array (GnalkWindow *self,
     }
 
   /* Update read status for messages based on lastCommonReadMessage */
-  if (self->last_common_read_message > 0)
-    gnalk_window_update_read_status (self, self->last_common_read_message);
+  if (self->current_room->last_common_read_message > 0)
+    gnalk_window_update_read_status (self, self->current_room->last_common_read_message);
 
-  self->last_known_message_id = max_id;
+  self->current_room->last_known_message_id = max_id;
 
   /* Update tab's newest_loaded_id */
-  if (self->tab_manager && self->current_room_token && max_id > 0)
+  if (self->tab_manager && self->current_room && max_id > 0)
     {
-      GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, self->current_room_token);
+      GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, self->current_room->room_token);
       if (tab)
-        tab->newest_loaded_id = max_id;
+        tab->state.last_known_message_id = max_id;
     }
 
   /* Track oldest message for lazy loading - only on initial load */
@@ -1092,19 +1095,19 @@ gnalk_window_process_messages_array (GnalkWindow *self,
           GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (self->messages_store), 0);
           if (oldest)
             {
-              self->oldest_loaded_message_id = gnalk_message_data_get_id (oldest);
+              self->current_room->oldest_loaded_id = gnalk_message_data_get_id (oldest);
               g_object_unref (oldest);
             }
         }
       /* If we got fewer messages than expected, history might be exhausted */
       if (len < 50)
-        self->has_more_history = FALSE;
+        self->current_room->has_more_history = FALSE;
     }
 
   if (len > 0 && was_at_bottom)
     {
       /* On initial load, scroll to first unread message if there are any */
-      if (initial_load && self->first_unread_message_id > 0)
+      if (initial_load && self->current_room->first_unread_message_id > 0)
         {
           /* Find the position of the first unread message */
           guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
@@ -1114,7 +1117,7 @@ gnalk_window_process_messages_array (GnalkWindow *self,
               gint64 msg_id = gnalk_message_data_get_id (data);
               g_object_unref (data);
 
-              if (msg_id == self->first_unread_message_id)
+              if (msg_id == self->current_room->first_unread_message_id)
                 {
                   /* Show view at unread position (no visual jump) */
                   gnalk_message_view_show_messages_at_item (self->message_view, i);
@@ -1138,10 +1141,10 @@ gnalk_window_process_messages_array (GnalkWindow *self,
         }
     }
 
-  self->scroll_to_bottom = FALSE;
+  self->current_room->scroll_to_bottom = FALSE;
 
   /* Clear the flag after processing first HTTP messages */
-  self->skip_historical_call_messages = FALSE;
+  self->current_room->skip_historical_call_messages = FALSE;
 }
 
 /* ============ Message Controller Signal Handlers ============ */
@@ -1174,7 +1177,7 @@ gnalk_window_on_message_controller_messages_loaded (GnalkMessageController *cont
       GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (self->messages_store), 0);
       if (oldest)
         {
-          self->oldest_loaded_message_id = gnalk_message_data_get_id (oldest);
+          self->current_room->oldest_loaded_id = gnalk_message_data_get_id (oldest);
           g_object_unref (oldest);
         }
     }
@@ -1184,24 +1187,24 @@ gnalk_window_on_message_controller_messages_loaded (GnalkMessageController *cont
   gnalk_message_view_scroll_to_bottom (self->message_view);
 
   /* Update tab state after server load */
-  if (self->tab_manager && self->current_room_token)
+  if (self->tab_manager && self->current_room)
     {
-      GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, self->current_room_token);
+      GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, self->current_room->room_token);
       if (tab)
         {
-          tab->oldest_loaded_id = self->oldest_loaded_message_id;
-          tab->newest_loaded_id = self->last_known_message_id;
-          tab->initial_load_done = TRUE;
-          tab->has_more_history = self->has_more_history;
+          tab->state.oldest_loaded_id = self->current_room->oldest_loaded_id;
+          tab->state.last_known_message_id = self->current_room->last_known_message_id;
+          tab->state.initial_load_done = TRUE;
+          tab->state.has_more_history = self->current_room->has_more_history;
         }
     }
 
   /* Start polling after initial messages are loaded */
-  if (!self->initial_messages_loaded)
+  if (!self->current_room->initial_load_done)
     {
-      self->initial_messages_loaded = TRUE;
+      self->current_room->initial_load_done = TRUE;
       gnalk_message_controller_start_polling (self->message_controller,
-                                                self->last_known_message_id);
+                                                self->current_room->last_known_message_id);
     }
 }
 
@@ -1243,7 +1246,7 @@ gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController
   guint len = json_array_get_length (messages);
   if (len == 0)
     {
-      self->has_more_history = FALSE;
+      self->current_room->has_more_history = FALSE;
       GNALK_TRACE_MESSAGES ("older_messages_loaded: no messages, history exhausted");
       g_debug ("No more messages from server, history exhausted");
       return;
@@ -1298,22 +1301,22 @@ gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController
 
   /* Update oldest_loaded_message_id from the oldest message received (now at index 0) */
   GnalkMessageData *oldest = g_ptr_array_index (new_messages, 0);
-  self->oldest_loaded_message_id = gnalk_message_data_get_id (oldest);
-  GNALK_TRACE_MESSAGES ("older_messages_loaded: updated oldest_id=%"G_GINT64_FORMAT, self->oldest_loaded_message_id);
+  self->current_room->oldest_loaded_id = gnalk_message_data_get_id (oldest);
+  GNALK_TRACE_MESSAGES ("older_messages_loaded: updated oldest_id=%"G_GINT64_FORMAT, self->current_room->oldest_loaded_id);
 
   g_ptr_array_free (new_messages, TRUE);
 
   /* Update has_more_history flag */
-  self->has_more_history = has_more;
+  self->current_room->has_more_history = has_more;
 
   /* Update tab state */
-  if (self->tab_manager && self->current_room_token)
+  if (self->tab_manager && self->current_room)
     {
-      GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, self->current_room_token);
+      GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, self->current_room->room_token);
       if (tab)
         {
-          tab->oldest_loaded_id = self->oldest_loaded_message_id;
-          tab->has_more_history = has_more;
+          tab->state.oldest_loaded_id = self->current_room->oldest_loaded_id;
+          tab->state.has_more_history = has_more;
         }
     }
 

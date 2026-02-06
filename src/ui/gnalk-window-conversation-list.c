@@ -98,15 +98,47 @@ load_conversations_from_db_finish (GObject      *source_object,
   GnalkWindow *self = GNALK_WINDOW (source_object);
   gboolean is_initial_load = !self->initial_conversations_loaded;
 
+  self->conv_load_in_progress = FALSE;
+
   GListStore *cached = g_task_propagate_pointer (G_TASK (result), NULL);
   if (!cached)
-    return;
+    {
+      /* Check for pending reload even on failure */
+      if (self->conv_load_pending)
+        {
+          self->conv_load_pending = FALSE;
+          gnalk_window_load_conversations_from_db (self);
+        }
+      return;
+    }
 
   guint n_cached = g_list_model_get_n_items (G_LIST_MODEL (cached));
   if (n_cached == 0)
     {
       g_object_unref (cached);
       self->initial_conversations_loaded = TRUE;
+
+      /* Empty DB + session online: force a sync so conversations appear */
+      if (self->active_session)
+        {
+          GnalkSessionState state = gnalk_session_get_state (self->active_session);
+          if (state == GNALK_SESSION_STATE_ONLINE)
+            {
+              GnalkSyncCoordinator *coord = gnalk_session_get_sync_coordinator (self->active_session);
+              if (coord)
+                {
+                  g_message ("Empty DB with online session, forcing sync");
+                  gnalk_sync_coordinator_trigger (coord, GNALK_SYNC_TRIGGER_RECONNECT);
+                }
+            }
+        }
+
+      /* Check for pending reload */
+      if (self->conv_load_pending)
+        {
+          self->conv_load_pending = FALSE;
+          gnalk_window_load_conversations_from_db (self);
+        }
       return;
     }
 
@@ -275,6 +307,13 @@ load_conversations_from_db_finish (GObject      *source_object,
       /* Call into window.c to handle post-load room restoration */
       gnalk_window_maybe_restore_last_room (self);
     }
+
+  /* If a reload was requested while this load was running, start another */
+  if (self->conv_load_pending)
+    {
+      self->conv_load_pending = FALSE;
+      gnalk_window_load_conversations_from_db (self);
+    }
 }
 
 /* Load conversations from database asynchronously */
@@ -289,6 +328,13 @@ gnalk_window_load_conversations_from_db (GnalkWindow *self)
         user_id = gnalk_account_get_user_id (account);
     }
   g_message ("[%s] load_conversations_from_db called", user_id ? user_id : "?");
+
+  /* Concurrency protection: if a load is already in progress, queue a pending reload */
+  if (self->conv_load_in_progress)
+    {
+      self->conv_load_pending = TRUE;
+      return;
+    }
 
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
   if (!app)
@@ -312,6 +358,8 @@ gnalk_window_load_conversations_from_db (GnalkWindow *self)
 
   if (!db || account_id <= 0)
     return;
+
+  self->conv_load_in_progress = TRUE;
 
   /* Prepare async task data */
   LoadConversationsData *data = g_slice_new (LoadConversationsData);
@@ -673,7 +721,7 @@ gnalk_window_on_conv_list_item_bind (GtkListItemFactory *factory,
 
       /* Set active state based on current room */
       const char *token = gnalk_conversation_data_get_token (data);
-      gboolean is_active = self->current_room_token && g_strcmp0 (token, self->current_room_token) == 0;
+      gboolean is_active = self->current_room && g_strcmp0 (token, self->current_room->room_token) == 0;
       gnalk_conversation_row_set_active (row, is_active);
 
       /* Track this row for direct active state updates */
@@ -751,8 +799,7 @@ gnalk_window_on_conversation_controller_created (GnalkConversationController *co
                                                   GnalkWindow                 *self)
 {
   g_debug ("Window: Conversation created: %s", room_token);
-  /* Reload conversations from DB and open the new one */
-  gnalk_window_load_conversations_from_db (self);
+  /* DataRepository::data-changed handles the reload (controller saves via repository) */
   gnalk_window_open_conversation_by_token (self, room_token);
 }
 
@@ -765,11 +812,10 @@ gnalk_window_on_conversation_controller_left (GnalkConversationController *contr
   g_debug ("Window: Left conversation: %s", room_token);
 
   /* If this was the current room, clear the view */
-  if (self->current_room_token && g_strcmp0 (room_token, self->current_room_token) == 0)
+  if (self->current_room && g_strcmp0 (room_token, self->current_room->room_token) == 0)
     {
-      g_autofree char *old_token = g_steal_pointer (&self->current_room_token);
-      g_clear_pointer (&self->current_room_name, g_free);
-      g_clear_pointer (&self->current_room_description, g_free);
+      g_autofree char *old_token = g_strdup (self->current_room->room_token);
+      self->current_room = NULL;
       self->has_active_room = FALSE;
       g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
       gnalk_message_view_show_empty (self->message_view);
@@ -778,8 +824,7 @@ gnalk_window_on_conversation_controller_left (GnalkConversationController *contr
       /* Update conversation row highlight */
       gnalk_window_update_conversation_active_states (self, old_token, NULL);
     }
-
-  gnalk_window_load_conversations_from_db (self);
+  /* DataRepository::data-changed handles the reload (controller deletes via repository) */
 }
 
 /* Called when a conversation is deleted */
@@ -791,11 +836,10 @@ gnalk_window_on_conversation_controller_deleted (GnalkConversationController *co
   g_debug ("Window: Conversation deleted: %s", room_token);
 
   /* If this was the current room, clear the view */
-  if (self->current_room_token && g_strcmp0 (room_token, self->current_room_token) == 0)
+  if (self->current_room && g_strcmp0 (room_token, self->current_room->room_token) == 0)
     {
-      g_autofree char *old_token = g_steal_pointer (&self->current_room_token);
-      g_clear_pointer (&self->current_room_name, g_free);
-      g_clear_pointer (&self->current_room_description, g_free);
+      g_autofree char *old_token = g_strdup (self->current_room->room_token);
+      self->current_room = NULL;
       self->has_active_room = FALSE;
       g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
       gnalk_message_view_show_empty (self->message_view);
@@ -804,8 +848,18 @@ gnalk_window_on_conversation_controller_deleted (GnalkConversationController *co
       /* Update conversation row highlight */
       gnalk_window_update_conversation_active_states (self, old_token, NULL);
     }
+  /* DataRepository::data-changed handles the reload (controller deletes via repository) */
+}
+
+/* Debounce timer callback for conversation list reload */
+static gboolean
+on_conv_reload_debounce_timeout (gpointer user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+  self->conv_reload_debounce_id = 0;
 
   gnalk_window_load_conversations_from_db (self);
+  return G_SOURCE_REMOVE;
 }
 
 /* Called when DataRepository emits data-changed (e.g., from SyncCoordinator) */
@@ -814,21 +868,13 @@ gnalk_window_on_data_repository_changed (GnalkDataRepository *repository G_GNUC_
                                           const char          *scope,
                                           GnalkWindow         *self)
 {
-  const char *user_id = NULL;
-  if (self->active_session)
-    {
-      GnalkAccount *account = gnalk_session_get_account (self->active_session);
-      if (account)
-        user_id = gnalk_account_get_user_id (account);
-    }
+  g_debug ("Window: DataRepository data-changed (scope=%s)", scope ? scope : "(null)");
 
-  g_debug ("[%s] Window: DataRepository data-changed (scope=%s)",
-           user_id ? user_id : "?", scope ? scope : "(null)");
-
-  /* Reload conversation list when conversations data changes */
+  /* Debounced reload when conversations data changes */
   if (g_strcmp0 (scope, "conversations") == 0)
     {
-      g_message ("[%s] Window: Conversations changed, reloading from DB", user_id ? user_id : "?");
-      gnalk_window_load_conversations_from_db (self);
+      if (self->conv_reload_debounce_id > 0)
+        g_source_remove (self->conv_reload_debounce_id);
+      self->conv_reload_debounce_id = g_timeout_add (100, on_conv_reload_debounce_timeout, self);
     }
 }
