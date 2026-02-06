@@ -349,7 +349,25 @@ gnalk_participant_controller_set_active_room (GnalkParticipantController *self,
 
   g_debug ("ParticipantController: Active room set to %s (type %d)", room_token, room_type);
 
-  /* Fetch participants for the new room */
+  /* Load cached participants for immediate display */
+  if (self->database && self->account_id > 0)
+    {
+      JsonArray *cached = gnalk_database_load_participants (self->database,
+                                                               self->account_id,
+                                                               room_token);
+      if (cached)
+        {
+          guint n = json_array_get_length (cached);
+          json_array_unref (cached);
+          if (n > 0)
+            {
+              g_debug ("ParticipantController: Emitting cached participants (%u) for %s", n, room_token);
+              g_signal_emit (self, signals[SIGNAL_PARTICIPANTS_CHANGED], 0, room_token);
+            }
+        }
+    }
+
+  /* Fetch participants from server for the new room */
   do_fetch (self);
 
   /* Start polling for group rooms */

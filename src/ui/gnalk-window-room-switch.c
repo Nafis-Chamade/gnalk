@@ -7,9 +7,7 @@
 
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
-#include "gnalk-database.h"
 #include "gnalk-conversation-data.h"
-#include "gnalk-background-generator.h"
 #include "gnalk-log.h"
 #include <glib/gi18n.h>
 
@@ -201,17 +199,18 @@ gnalk_window_update_mosaic_background (GnalkWindow *self, JsonArray *participant
 
 /* ============ Load Participants ============ */
 
-/* Load and display participants for a room (cache-first pattern) */
+/* Load and display participants for a room.
+ * Pre-configures widgets, then delegates to ParticipantController which
+ * loads from DB cache (immediate signal) and fetches HTTP (signal if changed).
+ * The on_participant_controller_changed handler does all widget population. */
 void
 gnalk_window_load_participants (GnalkWindow *self, const char *token)
 {
   /* Clear call states from previous room */
   gnalk_signaling_clear_call_states (self->signaling);
-
-  /* Hide room call icon initially */
   gnalk_conversation_header_set_call_active (self->conversation_header, FALSE);
 
-  /* Hide participants bar for 1:1 conversations, but still fetch for call state */
+  /* Hide participants bar for 1:1 conversations */
   if (self->current_room->room_type == 1)
     gnalk_participants_list_hide (self->participants_list);
 
@@ -223,83 +222,9 @@ gnalk_window_load_participants (GnalkWindow *self, const char *token)
       return;
     }
 
-  /* Clear existing participants */
   gnalk_participants_list_clear (self->participants_list);
 
-  /* Load cached participants for immediate display */
-  GnalkDatabase *db = gnalk_application_get_database (app);
-  gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
-  const char *my_user_id = NULL;
-  if (self->active_session)
-    {
-      GnalkAccount *account = gnalk_session_get_account (self->active_session);
-      my_user_id = gnalk_account_get_user_id (account);
-    }
-
-  g_debug ("load_participants: token=%s, account_id=%ld, room_type=%d",
-           token, (long)account_id, self->current_room->room_type);
-
-  /* Get current user's participant type from conversation data */
-  gint my_participant_type = 3;  /* Default to regular user */
-  guint n_convs = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
-  for (guint i = 0; i < n_convs; i++)
-    {
-      GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
-      const char *conv_token = gnalk_conversation_data_get_token (conv);
-      if (g_strcmp0 (conv_token, token) == 0)
-        {
-          my_participant_type = gnalk_conversation_data_get_participant_type (conv);
-          g_object_unref (conv);
-          break;
-        }
-      g_object_unref (conv);
-    }
-
-  if (db && account_id > 0)
-    {
-      JsonArray *cached = gnalk_database_load_participants (db, account_id, token);
-      if (cached)
-        {
-          guint n = json_array_get_length (cached);
-
-          /* For 1:1, update call icon for the other participant */
-          for (guint i = 0; i < n; i++)
-            {
-              JsonObject *p = json_array_get_object_element (cached, i);
-              const char *actor_id = json_object_get_string_member_with_default (p, "actorId", "");
-              gint64 in_call = json_object_get_int_member_with_default (p, "inCall", 0);
-              if (self->current_room->room_type == 1 && actor_id && *actor_id &&
-                  g_strcmp0 (actor_id, my_user_id) != 0)
-                gnalk_window_update_room_call_icon (self, 1, in_call);
-            }
-
-          gnalk_participants_list_set_participants (self->participants_list, cached,
-                                                      self->avatar_cache, self->signaling,
-                                                      my_user_id, my_participant_type,
-                                                      self->current_room->room_type);
-
-          /* For group rooms with participants, respect user preference */
-          if (self->current_room->room_type != 1 && n > 0)
-            {
-              GSettings *settings = gnalk_application_get_settings (app);
-              gboolean show_participants = g_settings_get_boolean (settings, "show-participants");
-              gnalk_participants_list_set_visible (self->participants_list, show_participants);
-              /* Sync toggle button with the setting */
-              gnalk_window_block_participants_toggle (self);
-              gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->participants_toggle_button), show_participants);
-              gnalk_window_unblock_participants_toggle (self);
-            }
-          else
-            gnalk_participants_list_hide (self->participants_list);
-
-          /* Update mosaic background with participant avatars */
-          gnalk_window_update_mosaic_background (self, cached);
-
-          json_array_unref (cached);
-        }
-    }
-
-  /* Notify participant controller to start fetching/polling (will emit signal if data changed) */
+  /* Controller loads from cache (emits immediate signal) then fetches HTTP */
   if (self->participant_controller)
     gnalk_participant_controller_set_active_room (self->participant_controller, token, self->current_room->room_type);
 }
