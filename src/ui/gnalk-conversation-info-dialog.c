@@ -27,6 +27,7 @@ struct _GnalkConversationInfoDialog
   GtkWidget *settings_name_entry;
   GtkWidget *settings_description_entry;
   GtkWidget *settings_avatar_row;
+  GtkWidget *settings_avatar_preview;
   GtkWidget *change_avatar_button;
   GtkWidget *notification_level_row;
   GtkWidget *call_notifications_row;
@@ -79,6 +80,7 @@ static void load_participants (GnalkConversationInfoDialog *self);
 static void update_info_page (GnalkConversationInfoDialog *self);
 static void update_settings_page (GnalkConversationInfoDialog *self);
 static void on_room_avatar_loaded (GnalkAvatarCache *cache, GdkTexture *texture, gpointer user_data);
+static void on_settings_avatar_loaded (GnalkAvatarCache *cache, GdkTexture *texture, gpointer user_data);
 
 static void
 show_dialog_toast (GnalkConversationInfoDialog *self, const char *message, guint timeout)
@@ -387,34 +389,80 @@ on_avatar_file_opened (GObject      *source,
       return;
     }
 
-  /* Check that image is square (server rejects non-square) */
   int width = gdk_texture_get_width (texture);
   int height = gdk_texture_get_height (texture);
-  if (width != height)
-    {
-      g_warning ("Avatar image must be square (%dx%d)", width, height);
-      show_dialog_toast (self, "Avatar image must be square", 3);
-      g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
-      return;
-    }
 
-  /* Determine content type - only accept PNG and JPEG (server rejects GIF/WEBP) */
-  g_free (self->new_avatar_content_type);
-  g_autofree char *basename = g_file_get_basename (file);
-  if (g_str_has_suffix (basename, ".png"))
-    self->new_avatar_content_type = g_strdup ("image/png");
-  else if (g_str_has_suffix (basename, ".jpg") || g_str_has_suffix (basename, ".jpeg"))
-    self->new_avatar_content_type = g_strdup ("image/jpeg");
+  /* Center-crop to square and/or scale down if needed (server requires square) */
+  if (width != height || MIN (width, height) > 512)
+    {
+      g_autoptr(GInputStream) stream = g_memory_input_stream_new_from_bytes (self->new_avatar_bytes);
+      g_autoptr(GdkPixbuf) pixbuf = gdk_pixbuf_new_from_stream (stream, NULL, NULL);
+      if (!pixbuf)
+        {
+          show_dialog_toast (self, "Failed to process avatar image", 3);
+          g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
+          return;
+        }
+
+      int pw = gdk_pixbuf_get_width (pixbuf);
+      int ph = gdk_pixbuf_get_height (pixbuf);
+      int min_dim = MIN (pw, ph);
+      GdkPixbuf *final_pb = pixbuf;
+
+      /* Center-crop to square if non-square */
+      g_autoptr(GdkPixbuf) cropped = NULL;
+      if (pw != ph)
+        {
+          int crop_x = (pw - min_dim) / 2;
+          int crop_y = (ph - min_dim) / 2;
+          cropped = gdk_pixbuf_new_subpixbuf (pixbuf, crop_x, crop_y, min_dim, min_dim);
+          final_pb = cropped;
+        }
+
+      /* Scale down if too large */
+      g_autoptr(GdkPixbuf) scaled = NULL;
+      if (min_dim > 512)
+        {
+          scaled = gdk_pixbuf_scale_simple (final_pb, 512, 512, GDK_INTERP_BILINEAR);
+          final_pb = scaled;
+        }
+
+      /* Re-encode as PNG */
+      char *buf = NULL;
+      gsize buf_size = 0;
+      g_autoptr(GError) enc_error = NULL;
+      if (!gdk_pixbuf_save_to_buffer (final_pb, &buf, &buf_size, "png", &enc_error, NULL))
+        {
+          g_warning ("Failed to encode avatar: %s", enc_error->message);
+          show_dialog_toast (self, "Failed to encode avatar image", 3);
+          g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
+          return;
+        }
+
+      g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
+      self->new_avatar_bytes = g_bytes_new_take (buf, buf_size);
+
+      g_free (self->new_avatar_content_type);
+      self->new_avatar_content_type = g_strdup ("image/png");
+    }
   else
     {
-      g_warning ("Avatar must be PNG or JPEG");
-      show_dialog_toast (self, "Avatar must be PNG or JPEG", 3);
-      g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
-      return;
+      /* Image is square and small enough - determine content type from extension */
+      g_free (self->new_avatar_content_type);
+      g_autofree char *basename = g_file_get_basename (file);
+      if (g_str_has_suffix (basename, ".png"))
+        self->new_avatar_content_type = g_strdup ("image/png");
+      else
+        self->new_avatar_content_type = g_strdup ("image/jpeg");
     }
 
-  /* Update the info avatar preview */
-  gtk_image_set_from_paintable (GTK_IMAGE (self->info_avatar), GDK_PAINTABLE (texture));
+  /* Update avatar previews (settings page + info page) */
+  g_autoptr(GdkTexture) preview = gdk_texture_new_from_bytes (self->new_avatar_bytes, NULL);
+  if (preview)
+    {
+      gtk_image_set_from_paintable (GTK_IMAGE (self->settings_avatar_preview), GDK_PAINTABLE (preview));
+      gtk_image_set_from_paintable (GTK_IMAGE (self->info_avatar), GDK_PAINTABLE (preview));
+    }
 }
 
 static void
@@ -450,6 +498,17 @@ on_room_avatar_loaded (GnalkAvatarCache *cache G_GNUC_UNUSED,
 
   if (texture)
     gtk_image_set_from_paintable (GTK_IMAGE (self->info_avatar), GDK_PAINTABLE (texture));
+}
+
+static void
+on_settings_avatar_loaded (GnalkAvatarCache *cache G_GNUC_UNUSED,
+                           GdkTexture        *texture,
+                           gpointer           user_data)
+{
+  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+
+  if (texture)
+    gtk_image_set_from_paintable (GTK_IMAGE (self->settings_avatar_preview), GDK_PAINTABLE (texture));
 }
 
 static void
@@ -541,6 +600,18 @@ update_settings_page (GnalkConversationInfoDialog *self)
   /* Call notifications: 0=off, 1=on */
   gint call_level = gnalk_conversation_data_get_call_notification_level (self->conversation);
   adw_switch_row_set_active (ADW_SWITCH_ROW (self->call_notifications_row), call_level != 0);
+
+  /* Load current avatar into settings preview */
+  if (self->avatar_cache && is_group)
+    {
+      const char *token = gnalk_conversation_data_get_token (self->conversation);
+      gnalk_avatar_cache_get_room_avatar (self->avatar_cache, token,
+                                             on_settings_avatar_loaded, self);
+    }
+  else
+    {
+      gtk_image_set_from_icon_name (GTK_IMAGE (self->settings_avatar_preview), "avatar-default-symbolic");
+    }
 
   /* Clear any pending avatar change */
   g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
@@ -1265,6 +1336,7 @@ gnalk_conversation_info_dialog_class_init (GnalkConversationInfoDialogClass *kla
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationInfoDialog, settings_name_entry);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationInfoDialog, settings_description_entry);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationInfoDialog, settings_avatar_row);
+  gtk_widget_class_bind_template_child (widget_class, GnalkConversationInfoDialog, settings_avatar_preview);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationInfoDialog, change_avatar_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationInfoDialog, notification_level_row);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationInfoDialog, call_notifications_row);

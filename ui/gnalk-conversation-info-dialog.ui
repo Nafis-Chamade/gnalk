@@ -197,6 +197,20 @@
                                 <child>
                                   <object class="AdwActionRow" id="settings_avatar_row">
                                     <property name="title" translatable="yes">Avatar</property>
+                                    <child type="prefix">
+                                      <object class="GtkFrame">
+                                        <property name="overflow">hidden</property>
+                                        <style>
+                                          <class name="avatar-frame-small"/>
+                                        </style>
+                                        <child>
+                                          <object class="GtkImage" id="settings_avatar_preview">
+                                            <property name="pixel-size">48</property>
+                                            <property name="icon-name">avatar-default-symbolic</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
                                     <child type="suffix">
                                       <object class="GtkButton" id="change_avatar_button">
                                         <property name="label" translatable="yes">Change</property>
