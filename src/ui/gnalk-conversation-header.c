@@ -144,6 +144,15 @@ gnalk_conversation_header_set_room (GnalkConversationHeader *self,
 }
 
 void
+gnalk_conversation_header_set_title (GnalkConversationHeader *self,
+                                       const char               *title)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_HEADER (self));
+
+  gtk_label_set_text (GTK_LABEL (self->room_title), title ? title : "");
+}
+
+void
 gnalk_conversation_header_set_avatar (GnalkConversationHeader *self,
                                         GdkTexture               *texture)
 {

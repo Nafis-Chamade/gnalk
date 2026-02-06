@@ -40,6 +40,7 @@ struct _GnalkConversationRow
   /* Bound data for in-place updates */
   GnalkConversationData *bound_data;
   gulong                  updated_handler_id;
+  GnalkAvatarCache      *avatar_cache;  /* unowned, for avatar re-fetch on data updates */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkConversationRow, gnalk_conversation_row, GTK_TYPE_BOX)
@@ -191,6 +192,10 @@ gnalk_conversation_row_class_init (GnalkConversationRowClass *klass)
 
 static void update_status_indicator (GnalkConversationRow *self);
 
+/* Forward declarations for avatar re-fetch in on_data_updated */
+typedef struct { GWeakRef weak_ref; } AvatarCallbackData;
+static void on_avatar_loaded (GnalkAvatarCache *cache, GdkTexture *texture, gpointer user_data);
+
 /* Helper to get current user ID from conversation data's session */
 static const char *
 get_current_user_id (GnalkConversationData *data)
@@ -258,6 +263,15 @@ on_data_updated (GnalkConversationData *data,
 
   /* Update status indicator */
   update_status_indicator (self);
+
+  /* Re-fetch room avatar (cache-hit is fast; actual fetch only after invalidation) */
+  if (self->avatar_cache && self->token && self->room_type != 1)
+    {
+      AvatarCallbackData *cb_data = g_new0 (AvatarCallbackData, 1);
+      g_weak_ref_init (&cb_data->weak_ref, self);
+      gnalk_avatar_cache_get_room_avatar (self->avatar_cache, self->token,
+                                             on_avatar_loaded, cb_data);
+    }
 }
 
 static void
@@ -449,12 +463,6 @@ gnalk_conversation_row_new (void)
 {
   return g_object_new (GNALK_TYPE_CONVERSATION_ROW, NULL);
 }
-
-/* Weak reference wrapper for async avatar callbacks */
-typedef struct
-{
-  GWeakRef weak_ref;
-} AvatarCallbackData;
 
 static void
 on_avatar_loaded (GnalkAvatarCache *cache,
@@ -703,6 +711,7 @@ gnalk_conversation_row_set_from_data (GnalkConversationRow  *self,
 
   /* Connect to updated signal for in-place updates */
   self->bound_data = g_object_ref (data);
+  self->avatar_cache = avatar_cache;  /* unowned, for avatar re-fetch on data updates */
   self->updated_handler_id = g_signal_connect (data, "updated",
                                                 G_CALLBACK (on_data_updated), self);
 

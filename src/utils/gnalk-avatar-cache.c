@@ -485,6 +485,32 @@ gnalk_avatar_cache_clear (GnalkAvatarCache *self)
   g_hash_table_remove_all (self->color_cache);
 }
 
+void
+gnalk_avatar_cache_invalidate (GnalkAvatarCache *self,
+                                  const char        *key)
+{
+  g_return_if_fail (GNALK_IS_AVATAR_CACHE (self));
+  g_return_if_fail (key != NULL);
+
+  g_hash_table_remove (self->cache, key);
+
+  /* Delete disk cache file */
+  g_autofree char *path = get_avatar_cache_path (key);
+  if (g_file_test (path, G_FILE_TEST_EXISTS))
+    g_unlink (path);
+}
+
+void
+gnalk_avatar_cache_invalidate_room (GnalkAvatarCache *self,
+                                       const char        *room_token)
+{
+  g_return_if_fail (GNALK_IS_AVATAR_CACHE (self));
+  g_return_if_fail (room_token != NULL);
+
+  g_autofree char *key = g_strdup_printf ("room:%ld:%s", (long) self->account_id, room_token);
+  gnalk_avatar_cache_invalidate (self, key);
+}
+
 gboolean
 gnalk_avatar_cache_get_user_color (GnalkAvatarCache *self,
                                      const char        *user_id,

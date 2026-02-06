@@ -628,6 +628,16 @@ gnalk_window_update_room_call_icon (GnalkWindow *self,
     }
 }
 
+/* Callback for header avatar re-fetch (used when avatar cache was invalidated) */
+static void
+on_header_avatar_refetched (GnalkAvatarCache *cache G_GNUC_UNUSED,
+                             GdkTexture        *texture,
+                             gpointer           user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+  gnalk_conversation_header_set_avatar (self->conversation_header, texture);
+}
+
 /* Handler for ConversationData "updated" signal — keeps chat header and
  * participants list in sync with the conversation list's user status. */
 static void
@@ -642,6 +652,21 @@ on_current_room_conv_data_updated (GnalkConversationData *conv_data,
 
   /* Update header status icon (only meaningful for 1:1 rooms) */
   gnalk_window_update_room_status_icon (self, room_type, user_status);
+
+  /* Update header title and nav page title */
+  const char *title = gnalk_conversation_data_get_title (conv_data);
+  gnalk_conversation_header_set_title (self->conversation_header, title);
+  adw_navigation_page_set_title (ADW_NAVIGATION_PAGE (self->content_page),
+      title ? title : "Messages");
+
+  /* Re-fetch room avatar (cheap cache-hit in common case, actual fetch after invalidation) */
+  if (self->avatar_cache && room_type != 1)
+    {
+      const char *token = gnalk_conversation_data_get_token (conv_data);
+      if (token)
+        gnalk_avatar_cache_get_room_avatar (self->avatar_cache, token,
+                                               on_header_avatar_refetched, self);
+    }
 
   /* For 1:1 rooms, also update the participant's status in the list.
    * In the conversations API, "name" is the other user's ID for 1:1 rooms. */

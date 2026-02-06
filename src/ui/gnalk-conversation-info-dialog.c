@@ -78,6 +78,23 @@ static void load_shared_media (GnalkConversationInfoDialog *self);
 static void load_participants (GnalkConversationInfoDialog *self);
 static void update_info_page (GnalkConversationInfoDialog *self);
 static void update_settings_page (GnalkConversationInfoDialog *self);
+static void on_room_avatar_loaded (GnalkAvatarCache *cache, GdkTexture *texture, gpointer user_data);
+
+static void
+show_dialog_toast (GnalkConversationInfoDialog *self, const char *message, guint timeout)
+{
+  AdwToast *toast = adw_toast_new (message);
+  adw_toast_set_timeout (toast, timeout);
+  GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (self));
+  if (root && ADW_IS_APPLICATION_WINDOW (root))
+    {
+      GtkWidget *child = gtk_widget_get_first_child (GTK_WIDGET (root));
+      while (child && !ADW_IS_TOAST_OVERLAY (child))
+        child = gtk_widget_get_next_sibling (child);
+      if (child)
+        adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (child), toast);
+    }
+}
 
 static void
 on_settings_button_clicked (GtkButton                    *button G_GNUC_UNUSED,
@@ -99,6 +116,36 @@ on_save_complete (GnalkConversationInfoDialog *self)
       gtk_spinner_set_spinning (GTK_SPINNER (self->settings_spinner), FALSE);
       gtk_widget_set_sensitive (self->save_button, TRUE);
 
+      /* Refresh info page labels from the (now-updated) conversation data */
+      if (self->conversation)
+        {
+          const char *name = gnalk_conversation_data_get_title (self->conversation);
+          const char *description = gnalk_conversation_data_get_description (self->conversation);
+          gint room_type = gnalk_conversation_data_get_room_type (self->conversation);
+
+          gtk_label_set_text (GTK_LABEL (self->info_name), name ? name : "");
+
+          gboolean is_group = (room_type == 2 || room_type == 3);
+          if (is_group && description && *description)
+            {
+              g_autofree char *markup = gnalk_markdown_to_pango (description, NULL);
+              gtk_label_set_markup (GTK_LABEL (self->info_description), markup);
+              gtk_widget_set_visible (self->info_description, TRUE);
+            }
+          else
+            {
+              gtk_widget_set_visible (self->info_description, FALSE);
+            }
+
+          /* Re-fetch room avatar if it was changed */
+          if (self->avatar_cache && is_group)
+            {
+              const char *token = gnalk_conversation_data_get_token (self->conversation);
+              gnalk_avatar_cache_get_room_avatar (self->avatar_cache, token,
+                                                     on_room_avatar_loaded, self);
+            }
+        }
+
       /* Go back to info page */
       adw_navigation_view_pop (self->navigation_view);
     }
@@ -114,6 +161,11 @@ on_name_saved (GnalkHttpClient *client G_GNUC_UNUSED,
 
   if (error)
     g_warning ("Failed to save name: %s", error->message);
+  else if (self->conversation)
+    {
+      const char *new_name = gtk_editable_get_text (GTK_EDITABLE (self->settings_name_entry));
+      gnalk_conversation_data_set_title (self->conversation, new_name);
+    }
 
   on_save_complete (self);
 }
@@ -128,6 +180,11 @@ on_description_saved (GnalkHttpClient *client G_GNUC_UNUSED,
 
   if (error)
     g_warning ("Failed to save description: %s", error->message);
+  else if (self->conversation)
+    {
+      const char *new_desc = gtk_editable_get_text (GTK_EDITABLE (self->settings_description_entry));
+      gnalk_conversation_data_set_description (self->conversation, new_desc);
+    }
 
   on_save_complete (self);
 }
@@ -141,9 +198,23 @@ on_avatar_saved (GnalkHttpClient *client G_GNUC_UNUSED,
   GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
 
   if (error)
-    g_warning ("Failed to save avatar: %s", error->message);
+    {
+      g_warning ("Failed to save avatar: %s", error->message);
+      show_dialog_toast (self, error->message, 5);
+    }
   else if (!result)
-    g_warning ("Avatar save returned false");
+    {
+      g_warning ("Avatar save returned false");
+    }
+  else if (self->avatar_cache && self->conversation)
+    {
+      /* Invalidate cached avatar so next request fetches the new one */
+      const char *token = gnalk_conversation_data_get_token (self->conversation);
+      gnalk_avatar_cache_invalidate_room (self->avatar_cache, token);
+
+      /* Emit "updated" to trigger re-fetch in header/sidebar */
+      g_signal_emit_by_name (self->conversation, "updated");
+    }
 
   on_save_complete (self);
 }
@@ -307,24 +378,43 @@ on_avatar_file_opened (GObject      *source,
   g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
   self->new_avatar_bytes = g_bytes_new_take (contents, length);
 
-  /* Determine content type */
+  /* Validate image before accepting */
+  g_autoptr(GdkTexture) texture = gdk_texture_new_from_bytes (self->new_avatar_bytes, NULL);
+  if (!texture)
+    {
+      g_warning ("Failed to load avatar image");
+      g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
+      return;
+    }
+
+  /* Check that image is square (server rejects non-square) */
+  int width = gdk_texture_get_width (texture);
+  int height = gdk_texture_get_height (texture);
+  if (width != height)
+    {
+      g_warning ("Avatar image must be square (%dx%d)", width, height);
+      show_dialog_toast (self, "Avatar image must be square", 3);
+      g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
+      return;
+    }
+
+  /* Determine content type - only accept PNG and JPEG (server rejects GIF/WEBP) */
   g_free (self->new_avatar_content_type);
   g_autofree char *basename = g_file_get_basename (file);
   if (g_str_has_suffix (basename, ".png"))
     self->new_avatar_content_type = g_strdup ("image/png");
   else if (g_str_has_suffix (basename, ".jpg") || g_str_has_suffix (basename, ".jpeg"))
     self->new_avatar_content_type = g_strdup ("image/jpeg");
-  else if (g_str_has_suffix (basename, ".gif"))
-    self->new_avatar_content_type = g_strdup ("image/gif");
-  else if (g_str_has_suffix (basename, ".webp"))
-    self->new_avatar_content_type = g_strdup ("image/webp");
   else
-    self->new_avatar_content_type = g_strdup ("image/png");
+    {
+      g_warning ("Avatar must be PNG or JPEG");
+      show_dialog_toast (self, "Avatar must be PNG or JPEG", 3);
+      g_clear_pointer (&self->new_avatar_bytes, g_bytes_unref);
+      return;
+    }
 
   /* Update the info avatar preview */
-  g_autoptr(GdkTexture) texture = gdk_texture_new_from_bytes (self->new_avatar_bytes, NULL);
-  if (texture)
-    gtk_image_set_from_paintable (GTK_IMAGE (self->info_avatar), GDK_PAINTABLE (texture));
+  gtk_image_set_from_paintable (GTK_IMAGE (self->info_avatar), GDK_PAINTABLE (texture));
 }
 
 static void
@@ -334,10 +424,11 @@ on_change_avatar_clicked (GtkButton                    *button G_GNUC_UNUSED,
   GtkFileDialog *dialog = gtk_file_dialog_new ();
   gtk_file_dialog_set_title (dialog, "Select Avatar");
 
-  /* Set up file filter for images */
+  /* Set up file filter for images (only PNG and JPEG accepted by server) */
   GtkFileFilter *filter = gtk_file_filter_new ();
-  gtk_file_filter_set_name (filter, "Images");
-  gtk_file_filter_add_mime_type (filter, "image/*");
+  gtk_file_filter_set_name (filter, "Images (PNG, JPEG)");
+  gtk_file_filter_add_mime_type (filter, "image/png");
+  gtk_file_filter_add_mime_type (filter, "image/jpeg");
 
   g_autoptr(GListStore) filters = g_list_store_new (GTK_TYPE_FILE_FILTER);
   g_list_store_append (filters, filter);

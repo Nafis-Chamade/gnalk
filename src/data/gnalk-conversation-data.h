@@ -78,6 +78,14 @@ GnalkSession *gnalk_conversation_data_get_session (GnalkConversationData *self);
 void           gnalk_conversation_data_set_session (GnalkConversationData *self,
                                                       GnalkSession          *session);
 
+/* Set title in-place (emits "updated" signal if changed) */
+void gnalk_conversation_data_set_title (GnalkConversationData *self,
+                                          const char             *title);
+
+/* Set description in-place (emits "updated" signal if changed) */
+void gnalk_conversation_data_set_description (GnalkConversationData *self,
+                                                 const char             *description);
+
 /* Update conversation data in-place from JSON (emits "updated" signal) */
 void gnalk_conversation_data_update_from_json (GnalkConversationData *self,
                                                  JsonObject             *room_data);

@@ -15,6 +15,8 @@ void gnalk_conversation_header_set_room        (GnalkConversationHeader *self,
                                                   const char               *name,
                                                   const char               *description,
                                                   gint                      room_type);
+void gnalk_conversation_header_set_title       (GnalkConversationHeader *self,
+                                                  const char               *title);
 void gnalk_conversation_header_set_avatar      (GnalkConversationHeader *self,
                                                   GdkTexture               *texture);
 void gnalk_conversation_header_set_user_status (GnalkConversationHeader *self,

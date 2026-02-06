@@ -551,6 +551,34 @@ gnalk_conversation_data_set_session (GnalkConversationData *self,
   self->session = session;  /* Weak reference, not owned */
 }
 
+void
+gnalk_conversation_data_set_title (GnalkConversationData *self,
+                                      const char             *title)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_DATA (self));
+
+  if (g_strcmp0 (self->title, title) == 0)
+    return;
+
+  g_free (self->title);
+  self->title = g_strdup (title);
+  g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
+}
+
+void
+gnalk_conversation_data_set_description (GnalkConversationData *self,
+                                            const char             *description)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_DATA (self));
+
+  if (g_strcmp0 (self->description, description) == 0)
+    return;
+
+  g_free (self->description);
+  self->description = g_strdup (description);
+  g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
+}
+
 gint
 gnalk_conversation_data_get_participant_type (GnalkConversationData *self)
 {

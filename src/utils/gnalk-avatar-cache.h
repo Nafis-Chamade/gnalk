@@ -38,6 +38,12 @@ GdkTexture *gnalk_avatar_cache_lookup (GnalkAvatarCache *self,
 
 void gnalk_avatar_cache_clear (GnalkAvatarCache *self);
 
+void gnalk_avatar_cache_invalidate (GnalkAvatarCache *self,
+                                       const char        *key);
+
+void gnalk_avatar_cache_invalidate_room (GnalkAvatarCache *self,
+                                            const char        *room_token);
+
 GtkWidget *gnalk_avatar_cache_create_round_avatar (GdkTexture *texture,
                                                      int         size);
 

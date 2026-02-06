@@ -1948,7 +1948,21 @@ on_upload_response (GObject      *source,
   status = soup_message_get_status (msg);
   const char *reason = soup_message_get_reason_phrase (msg);
 
-  gnalk_log_http_response (client->user_id, status, reason, NULL, data->url);
+  /* Log response body on failure to aid debugging (e.g., avatar upload 400) */
+  const char *body_str = NULL;
+  g_autofree char *body_text = NULL;
+  if (bytes && !SOUP_STATUS_IS_SUCCESSFUL (status))
+    {
+      gsize body_size;
+      gconstpointer body_data = g_bytes_get_data (bytes, &body_size);
+      if (body_data && body_size > 0 && body_size < 4096)
+        {
+          body_text = g_strndup (body_data, body_size);
+          body_str = body_text;
+        }
+    }
+
+  gnalk_log_http_response (client->user_id, status, reason, body_str, data->url);
 
   /* 201 Created or 204 No Content means success */
   gboolean success = (status == SOUP_STATUS_CREATED || status == SOUP_STATUS_NO_CONTENT ||
