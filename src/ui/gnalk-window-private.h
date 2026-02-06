@@ -402,6 +402,26 @@ void gnalk_window_on_participant_controller_changed   (GnalkParticipantControlle
 /* Mosaic background update (uses participant avatars) */
 void gnalk_window_update_mosaic_background (GnalkWindow *self, JsonArray *participants);
 
+/* ============ Message action functions (gnalk-window-message-actions.c) ============ */
+
+/* Participant controller changed handler */
+/* (already declared above as gnalk_window_on_participant_controller_changed) */
+
+/* Participant action handlers */
+void gnalk_window_on_participant_chat_requested    (GnalkParticipantsList *list, const char *actor_id, GnalkWindow *self);
+void gnalk_window_on_participant_promote_requested (GnalkParticipantsList *list, gint64 attendee_id, const char *actor_id, GnalkWindow *self);
+void gnalk_window_on_participant_demote_requested  (GnalkParticipantsList *list, gint64 attendee_id, const char *actor_id, GnalkWindow *self);
+void gnalk_window_on_participant_remove_requested  (GnalkParticipantsList *list, gint64 attendee_id, const char *actor_id, GnalkWindow *self);
+
+/* Message row action handlers */
+void gnalk_window_on_reaction_requested              (GnalkMessageRow *row, gint64 message_id, const char *emoji, gpointer user_data);
+void gnalk_window_on_quote_requested                 (GnalkMessageRow *row, gint64 message_id, const char *author_name, const char *message_text, gpointer user_data);
+void gnalk_window_on_edit_requested                  (GnalkMessageRow *row, gint64 message_id, const char *message_text, gpointer user_data);
+void gnalk_window_on_delete_requested                (GnalkMessageRow *row, gint64 message_id, gpointer user_data);
+void gnalk_window_on_scroll_to_message_requested     (GnalkMessageRow *row, gint64 message_id, gpointer user_data);
+void gnalk_window_on_quote_preview_scroll_requested  (GnalkConversationActions *actions, gint64 message_id, GnalkWindow *self);
+void gnalk_window_on_quote_closed                    (GnalkConversationActions *actions, gboolean was_editing, GnalkWindow *self);
+
 /* ============ File handling functions (gnalk-window-file-handling.c) ============ */
 
 void gnalk_window_on_attach_clicked             (GtkButton *button, GnalkWindow *self);

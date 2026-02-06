@@ -55,11 +55,6 @@ static void on_set_status_response (GnalkHttpClient *client, JsonNode *response,
 /* AppState signal handlers (new async startup architecture) */
 static void on_app_state_loading_changed (GnalkAppState *app_state, gboolean is_loading, GnalkWindow *self);
 
-static void on_reaction_requested (GnalkMessageRow *row, gint64 message_id, const char *emoji, gpointer user_data);
-static void on_quote_requested (GnalkMessageRow *row, gint64 message_id, const char *author_name, const char *message_text, gpointer user_data);
-static void on_edit_requested (GnalkMessageRow *row, gint64 message_id, const char *message_text, gpointer user_data);
-static void on_delete_requested (GnalkMessageRow *row, gint64 message_id, gpointer user_data);
-static void on_scroll_to_message_requested (GnalkMessageRow *row, gint64 message_id, gpointer user_data);
 static void on_call_window_destroy (GtkWidget *widget, GnalkWindow *self);
 static void on_new_conversation_clicked (GnalkConversationSidebar *sidebar, GnalkWindow *self);
 static void on_new_conversation_created (GnalkNewConversationDialog *dialog, const char *room_token, GnalkWindow *self);
@@ -672,22 +667,6 @@ start_call (GnalkWindow *self,
   gtk_window_present (GTK_WINDOW (call_window));
 }
 
-/* Forward declarations for participant action handlers */
-static void on_participant_chat_requested (GnalkParticipantsList *list,
-                                            const char             *actor_id,
-                                            GnalkWindow           *self);
-static void on_participant_promote_requested (GnalkParticipantsList *list,
-                                               gint64                  attendee_id,
-                                               const char             *actor_id,
-                                               GnalkWindow           *self);
-static void on_participant_demote_requested (GnalkParticipantsList *list,
-                                              gint64                  attendee_id,
-                                              const char             *actor_id,
-                                              GnalkWindow           *self);
-static void on_participant_remove_requested (GnalkParticipantsList *list,
-                                              gint64                  attendee_id,
-                                              const char             *actor_id,
-                                              GnalkWindow           *self);
 
 static void
 on_conversation_info_requested (GnalkConversationHeader *header G_GNUC_UNUSED,
@@ -734,13 +713,13 @@ on_conversation_info_requested (GnalkConversationHeader *header G_GNUC_UNUSED,
   /* Connect participant action signals - use same handlers as participants list
      since they don't use the first parameter */
   g_signal_connect (dialog, "chat-requested",
-                    G_CALLBACK (on_participant_chat_requested), self);
+                    G_CALLBACK (gnalk_window_on_participant_chat_requested), self);
   g_signal_connect (dialog, "promote-requested",
-                    G_CALLBACK (on_participant_promote_requested), self);
+                    G_CALLBACK (gnalk_window_on_participant_promote_requested), self);
   g_signal_connect (dialog, "demote-requested",
-                    G_CALLBACK (on_participant_demote_requested), self);
+                    G_CALLBACK (gnalk_window_on_participant_demote_requested), self);
   g_signal_connect (dialog, "remove-requested",
-                    G_CALLBACK (on_participant_remove_requested), self);
+                    G_CALLBACK (gnalk_window_on_participant_remove_requested), self);
 
   adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (self));
 
@@ -891,11 +870,11 @@ on_msg_list_item_setup (GtkListItemFactory *factory,
   GnalkMessageRow *row = gnalk_message_row_new ();
 
   /* Connect signals */
-  g_signal_connect (row, "reaction-requested", G_CALLBACK (on_reaction_requested), self);
-  g_signal_connect (row, "quote-requested", G_CALLBACK (on_quote_requested), self);
-  g_signal_connect (row, "edit-requested", G_CALLBACK (on_edit_requested), self);
-  g_signal_connect (row, "delete-requested", G_CALLBACK (on_delete_requested), self);
-  g_signal_connect (row, "scroll-to-message-requested", G_CALLBACK (on_scroll_to_message_requested), self);
+  g_signal_connect (row, "reaction-requested", G_CALLBACK (gnalk_window_on_reaction_requested), self);
+  g_signal_connect (row, "quote-requested", G_CALLBACK (gnalk_window_on_quote_requested), self);
+  g_signal_connect (row, "edit-requested", G_CALLBACK (gnalk_window_on_edit_requested), self);
+  g_signal_connect (row, "delete-requested", G_CALLBACK (gnalk_window_on_delete_requested), self);
+  g_signal_connect (row, "scroll-to-message-requested", G_CALLBACK (gnalk_window_on_scroll_to_message_requested), self);
   g_signal_connect (row, "file-clicked", G_CALLBACK (gnalk_window_on_file_clicked), self);
 
   gtk_list_item_set_child (item, GTK_WIDGET (row));
@@ -1278,317 +1257,8 @@ on_message_input_text_changed (GnalkMessageInput *input,
     }
 }
 
-/* ========== Controller Signal Handlers ========== */
-
-/* Called when participant controller detects server has different data */
-void
-gnalk_window_on_participant_controller_changed (GnalkParticipantController *controller G_GNUC_UNUSED,
-                                    const char                  *room_token,
-                                    GnalkWindow                *self)
-{
-  g_debug ("Window: Participants changed for %s", room_token);
-
-  /* Only update if this is the current room */
-  if (!self->current_room || g_strcmp0 (room_token, self->current_room->room_token) != 0)
-    return;
-
-  /* Reload participants from database */
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  GnalkDatabase *db = gnalk_application_get_database (app);
-  gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
-  const char *my_user_id = NULL;
-  if (self->active_session)
-    {
-      GnalkAccount *account = gnalk_session_get_account (self->active_session);
-      my_user_id = gnalk_account_get_user_id (account);
-    }
-
-  g_debug ("on_participant_controller_changed: room=%s, account_id=%ld", room_token, (long)account_id);
-
-  if (!db || account_id <= 0)
-    {
-      g_warning ("on_participant_controller_changed: skipping, db=%p, account_id=%ld", (void*)db, (long)account_id);
-      return;
-    }
-
-  JsonArray *participants = gnalk_database_load_participants (db, account_id, room_token);
-  if (!participants)
-    {
-      g_warning ("on_participant_controller_changed: no participants loaded from DB");
-      return;
-    }
-
-  guint n_participants = json_array_get_length (participants);
-  g_debug ("on_participant_controller_changed: loaded %u participants", n_participants);
-
-  /* For 1:1 conversations, update room call icon for the other participant */
-  for (guint i = 0; i < n_participants; i++)
-    {
-      JsonObject *participant = json_array_get_object_element (participants, i);
-      const char *actor_id = json_object_get_string_member_with_default (participant, "actorId", "");
-      gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
-
-      if (self->current_room->room_type == 1 && actor_id && *actor_id &&
-          g_strcmp0 (actor_id, my_user_id) != 0)
-        gnalk_window_update_room_call_icon (self, 1, in_call);
-    }
-
-  /* Get current user's participant type from conversation data */
-  gint my_participant_type = 3;  /* Default to regular user */
-  guint n_convs = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
-  for (guint i = 0; i < n_convs; i++)
-    {
-      GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
-      const char *token = gnalk_conversation_data_get_token (conv);
-      if (g_strcmp0 (token, self->current_room->room_token) == 0)
-        {
-          my_participant_type = gnalk_conversation_data_get_participant_type (conv);
-          g_object_unref (conv);
-          break;
-        }
-      g_object_unref (conv);
-    }
-
-  /* Delegate to the participants list component */
-  GnalkSignaling *signaling = self->active_session
-    ? gnalk_session_get_signaling (self->active_session) : NULL;
-  gnalk_participants_list_set_participants (self->participants_list, participants,
-                                              self->avatar_cache, signaling,
-                                              my_user_id, my_participant_type,
-                                              self->current_room->room_type);
-
-  /* For group rooms with participants, respect user preference and sync toggle */
-  if (self->current_room->room_type != 1 && n_participants > 0)
-    {
-      GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-      GSettings *settings = gnalk_application_get_settings (app);
-      gboolean show_participants = g_settings_get_boolean (settings, "show-participants");
-      gnalk_participants_list_set_visible (self->participants_list, show_participants);
-      gnalk_window_block_participants_toggle (self);
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->participants_toggle_button), show_participants);
-      gnalk_window_unblock_participants_toggle (self);
-    }
-  else
-    gnalk_participants_list_hide (self->participants_list);
-
-  /* Update mosaic background with participant avatars */
-  gnalk_window_update_mosaic_background (self, participants);
-
-  json_array_unref (participants);
-}
-
-/* ============ Participant List Signal Handlers ============ */
-
-typedef struct {
-  GnalkWindow *window;
-  char *actor_id;
-} Create1to1Data;
-
-static void
-create_1to1_data_free (Create1to1Data *data)
-{
-  g_free (data->actor_id);
-  g_free (data);
-}
-
-static void
-on_create_1to1_response (GnalkHttpClient *client G_GNUC_UNUSED,
-                          JsonNode         *response,
-                          GError           *error,
-                          gpointer          user_data)
-{
-  Create1to1Data *data = user_data;
-  GnalkWindow *self = data->window;
-
-  if (error)
-    {
-      g_warning ("Failed to create 1-to-1 conversation: %s", error->message);
-      AdwToast *toast = adw_toast_new ("Failed to start chat");
-      adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (self->toast_overlay), toast);
-      create_1to1_data_free (data);
-      return;
-    }
-
-  if (!response)
-    {
-      create_1to1_data_free (data);
-      return;
-    }
-
-  /* Parse response to get the room token */
-  JsonObject *root = json_node_get_object (response);
-  JsonObject *ocs = json_object_get_object_member (root, "ocs");
-  if (!ocs)
-    {
-      create_1to1_data_free (data);
-      return;
-    }
-
-  JsonObject *room_data = json_object_get_object_member (ocs, "data");
-  if (!room_data)
-    {
-      create_1to1_data_free (data);
-      return;
-    }
-
-  const char *token = json_object_get_string_member_with_default (room_data, "token", NULL);
-  if (token && *token)
-    {
-      /* Add the new conversation to the store so it can be opened properly */
-      GnalkConversationData *conv = gnalk_conversation_data_new_from_json (room_data, self->active_session);
-      if (conv)
-        {
-          /* Insert at position 0 (will be sorted properly on next refresh) */
-          g_list_store_insert (self->conversations_store, 0, conv);
-          g_object_unref (conv);
-        }
-
-      /* Navigate to the new conversation */
-      gnalk_window_open_room (self, token);
-    }
-
-  create_1to1_data_free (data);
-}
-
-static void
-on_participant_chat_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
-                                const char             *actor_id,
-                                GnalkWindow           *self)
-{
-  if (!actor_id || !*actor_id || !self->http_client)
-    return;
-
-  g_message ("Creating 1-to-1 conversation with %s", actor_id);
-
-  Create1to1Data *data = g_new0 (Create1to1Data, 1);
-  data->window = self;
-  data->actor_id = g_strdup (actor_id);
-
-  /* Create 1-to-1 conversation: roomType=1, invite=actorId */
-  gnalk_http_client_create_conversation (self->http_client, 1, actor_id, NULL,
-                                           on_create_1to1_response, data);
-}
-
-typedef struct {
-  GnalkWindow *window;
-  gint64 attendee_id;
-  char *actor_id;
-  char *action;  /* "promote", "demote", or "remove" */
-} ModeratorActionData;
-
-static void
-moderator_action_data_free (ModeratorActionData *data)
-{
-  g_free (data->actor_id);
-  g_free (data->action);
-  g_free (data);
-}
-
-static void
-on_moderator_action_response (GnalkHttpClient *client G_GNUC_UNUSED,
-                               JsonNode         *response G_GNUC_UNUSED,
-                               GError           *error,
-                               gpointer          user_data)
-{
-  ModeratorActionData *data = user_data;
-  GnalkWindow *self = data->window;
-
-  if (error)
-    {
-      g_warning ("Moderator action '%s' failed: %s", data->action, error->message);
-      g_autofree char *msg = g_strdup_printf ("Failed to %s", data->action);
-      AdwToast *toast = adw_toast_new (msg);
-      adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (self->toast_overlay), toast);
-    }
-  else
-    {
-      /* Show success toast */
-      const char *msg = NULL;
-      if (g_strcmp0 (data->action, "promote") == 0)
-        msg = "Promoted to moderator";
-      else if (g_strcmp0 (data->action, "demote") == 0)
-        msg = "Demoted from moderator";
-      else if (g_strcmp0 (data->action, "remove") == 0)
-        msg = "Removed from conversation";
-      else
-        msg = "Action completed";
-
-      AdwToast *toast = adw_toast_new (msg);
-      adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (self->toast_overlay), toast);
-
-      /* Refresh participants list */
-      if (self->participant_controller)
-        gnalk_participant_controller_refresh (self->participant_controller);
-    }
-
-  moderator_action_data_free (data);
-}
-
-static void
-on_participant_promote_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
-                                   gint64                  attendee_id,
-                                   const char             *actor_id,
-                                   GnalkWindow           *self)
-{
-  if (!self->http_client || !self->current_room)
-    return;
-
-  g_message ("Promoting participant %s (attendee %" G_GINT64_FORMAT ") to moderator",
-             actor_id ? actor_id : "(unknown)", attendee_id);
-
-  ModeratorActionData *data = g_new0 (ModeratorActionData, 1);
-  data->window = self;
-  data->attendee_id = attendee_id;
-  data->actor_id = g_strdup (actor_id);
-  data->action = g_strdup ("promote");
-
-  gnalk_http_client_promote_moderator (self->http_client, self->current_room->room_token,
-                                         attendee_id, on_moderator_action_response, data);
-}
-
-static void
-on_participant_demote_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
-                                  gint64                  attendee_id,
-                                  const char             *actor_id,
-                                  GnalkWindow           *self)
-{
-  if (!self->http_client || !self->current_room)
-    return;
-
-  g_message ("Demoting participant %s (attendee %" G_GINT64_FORMAT ") from moderator",
-             actor_id ? actor_id : "(unknown)", attendee_id);
-
-  ModeratorActionData *data = g_new0 (ModeratorActionData, 1);
-  data->window = self;
-  data->attendee_id = attendee_id;
-  data->actor_id = g_strdup (actor_id);
-  data->action = g_strdup ("demote");
-
-  gnalk_http_client_demote_moderator (self->http_client, self->current_room->room_token,
-                                        attendee_id, on_moderator_action_response, data);
-}
-
-static void
-on_participant_remove_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
-                                  gint64                  attendee_id,
-                                  const char             *actor_id,
-                                  GnalkWindow           *self)
-{
-  if (!self->http_client || !self->current_room)
-    return;
-
-  g_message ("Removing participant %s (attendee %" G_GINT64_FORMAT ") from room",
-             actor_id ? actor_id : "(unknown)", attendee_id);
-
-  ModeratorActionData *data = g_new0 (ModeratorActionData, 1);
-  data->window = self;
-  data->attendee_id = attendee_id;
-  data->actor_id = g_strdup (actor_id);
-  data->action = g_strdup ("remove");
-
-  gnalk_http_client_remove_attendee (self->http_client, self->current_room->room_token,
-                                       attendee_id, on_moderator_action_response, data);
-}
+/* Participant controller changed handler and participant action handlers
+ * have been moved to gnalk-window-message-actions.c */
 
 /* ============ Message Controller Signal Handlers ============ */
 
@@ -1871,253 +1541,9 @@ on_new_conversation_created (GnalkNewConversationDialog *dialog G_GNUC_UNUSED,
  * show_offline_main_view, on_login_view_connect_clicked, login_set_connecting, login_show_error)
  * have been moved to gnalk-window-login.c */
 
-static void
-on_reaction_requested (GnalkMessageRow *row G_GNUC_UNUSED,
-                       gint64            message_id,
-                       const char       *emoji,
-                       gpointer          user_data)
-{
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  if (!self->message_controller || !self->current_room)
-    return;
-
-  /* Add reaction via controller - signal handler will update UI on success */
-  gnalk_message_controller_set_room (self->message_controller, self->current_room->room_token);
-  gnalk_message_controller_add_reaction (self->message_controller, message_id, emoji);
-}
-
-static gboolean
-add_highlight_class_idle (gpointer user_data)
-{
-  GtkWidget *widget = GTK_WIDGET (user_data);
-  if (GTK_IS_WIDGET (widget))
-    gtk_widget_add_css_class (widget, "message-highlight");
-  return G_SOURCE_REMOVE;
-}
-
-static void
-find_and_highlight_row (GtkWidget *widget, gpointer user_data)
-{
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  if (self->current_room->highlight_message_id <= 0)
-    return;
-
-  if (GNALK_IS_MESSAGE_ROW (widget))
-    {
-      GnalkMessageRow *row = GNALK_MESSAGE_ROW (widget);
-      gint64 row_id = gnalk_message_row_get_id (row);
-      if (row_id == self->current_room->highlight_message_id)
-        {
-          /* Remove class and re-add after a frame to restart animation */
-          gtk_widget_remove_css_class (widget, "message-highlight");
-          g_timeout_add (50, add_highlight_class_idle, widget);
-          self->current_room->highlight_message_id = 0;  /* Found it, stop searching */
-        }
-    }
-}
-
-static void
-iterate_children (GtkWidget *widget, gpointer user_data)
-{
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  if (self->current_room->highlight_message_id <= 0)
-    return;
-
-  find_and_highlight_row (widget, user_data);
-
-  /* Recurse into children */
-  GtkWidget *child = gtk_widget_get_first_child (widget);
-  while (child && self->current_room->highlight_message_id > 0)
-    {
-      iterate_children (child, user_data);
-      child = gtk_widget_get_next_sibling (child);
-    }
-}
-
-static gboolean
-apply_highlight_timeout (gpointer user_data)
-{
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  if (self->current_room->highlight_message_id <= 0)
-    return G_SOURCE_REMOVE;
-
-  /* Recursively search for the message row in the widget tree */
-  iterate_children (GTK_WIDGET (gnalk_message_view_get_list_view (self->message_view)), self);
-
-  self->current_room->highlight_message_id = 0;
-  self->highlight_clear_timer_id = 0;
-  return G_SOURCE_REMOVE;
-}
-
-static void
-on_scroll_to_message_requested (GnalkMessageRow *row,
-                                gint64            message_id,
-                                gpointer          user_data)
-{
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  if (!self->messages_store || message_id <= 0)
-    return;
-
-  /* Find the message index by ID */
-  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
-  for (guint i = 0; i < n_items; i++)
-    {
-      GnalkMessageData *msg_data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
-      if (msg_data && gnalk_message_data_get_id (msg_data) == message_id)
-        {
-          /* Store target for highlighting */
-          self->current_room->highlight_message_id = message_id;
-
-          /* Scroll to this position with focus */
-          gtk_list_view_scroll_to (gnalk_message_view_get_list_view (self->message_view), i,
-                                   GTK_LIST_SCROLL_FOCUS, NULL);
-
-          /* Apply highlight after scroll animation completes */
-          if (self->highlight_clear_timer_id)
-            g_source_remove (self->highlight_clear_timer_id);
-          self->highlight_clear_timer_id = g_timeout_add (100, apply_highlight_timeout, self);
-
-          g_object_unref (msg_data);
-          return;
-        }
-      if (msg_data)
-        g_object_unref (msg_data);
-    }
-}
-
-static void
-on_quote_preview_scroll_requested (GnalkConversationActions *actions,
-                                   gint64                     message_id,
-                                   GnalkWindow              *self)
-{
-  (void) actions;
-  on_scroll_to_message_requested (NULL, message_id, self);
-}
-
-static void
-on_quote_closed (GnalkConversationActions *actions,
-                 gboolean                   was_editing,
-                 GnalkWindow              *self)
-{
-  (void) actions;
-
-  /* If we were editing, clear the entry as well */
-  if (was_editing)
-    gnalk_message_input_clear (self->message_input);
-
-  self->current_room->reply_to_message_id = 0;
-  self->current_room->edit_message_id = 0;
-  gnalk_conversation_actions_clear_quote (self->conversation_actions);
-}
-
-/* File attachment, media capture, and file download functions
- * have been moved to gnalk-window-file-handling.c */
-
-static void
-on_quote_preview_image_loaded (GnalkAvatarCache *cache,
-                               GdkTexture        *texture,
-                               gpointer           user_data)
-{
-  (void) cache;
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  gnalk_conversation_actions_set_quote_image (self->conversation_actions, texture);
-}
-
-static void
-on_quote_requested (GnalkMessageRow *row,
-                    gint64            message_id,
-                    const char       *author_name,
-                    const char       *message_text,
-                    gpointer          user_data)
-{
-  (void) row;
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  self->current_room->reply_to_message_id = message_id;
-
-  gnalk_conversation_actions_set_reply (self->conversation_actions, message_id, author_name, message_text);
-
-  /* Look up the message in the store to check for file preview */
-  if (self->messages_store && self->avatar_cache)
-    {
-      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
-      for (guint i = 0; i < n_items; i++)
-        {
-          GnalkMessageData *msg_data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
-          if (msg_data && gnalk_message_data_get_id (msg_data) == message_id)
-            {
-              JsonObject *params = gnalk_message_data_get_message_parameters (msg_data);
-              if (params && json_object_has_member (params, "file"))
-                {
-                  JsonNode *file_node = json_object_get_member (params, "file");
-                  if (file_node && JSON_NODE_HOLDS_OBJECT (file_node))
-                    {
-                      JsonObject *file = json_node_get_object (file_node);
-                      const char *file_id = json_object_get_string_member_with_default (file, "id", NULL);
-                      const char *preview_avail = json_object_get_string_member_with_default (file, "preview-available", "no");
-
-                      if (file_id && g_strcmp0 (preview_avail, "yes") == 0)
-                        {
-                          gnalk_avatar_cache_get_file_preview (self->avatar_cache, file_id, 96, 96,
-                                                                on_quote_preview_image_loaded, self);
-                        }
-                    }
-                }
-              g_object_unref (msg_data);
-              break;
-            }
-          if (msg_data)
-            g_object_unref (msg_data);
-        }
-    }
-
-  gnalk_message_input_grab_focus (self->message_input);
-}
-
-static void
-on_edit_requested (GnalkMessageRow *row,
-                   gint64            message_id,
-                   const char       *message_text,
-                   gpointer          user_data)
-{
-  (void) row;
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  /* Set edit mode - clear any reply in progress */
-  self->current_room->edit_message_id = message_id;
-  self->current_room->reply_to_message_id = 0;
-
-  /* Show edit indicator using conversation_actions */
-  gnalk_conversation_actions_set_edit (self->conversation_actions, message_id, message_text);
-
-  /* Put the message text in the entry for editing */
-  gnalk_message_input_set_text (self->message_input, message_text);
-  gnalk_message_input_grab_focus (self->message_input);
-}
-
-static void
-on_delete_requested (GnalkMessageRow *row G_GNUC_UNUSED,
-                     gint64            message_id,
-                     gpointer          user_data)
-{
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  if (!self->current_room || message_id <= 0)
-    return;
-
-  /* Delete message via controller */
-  gnalk_message_controller_set_room (self->message_controller, self->current_room->room_token);
-  gnalk_message_controller_delete_message (self->message_controller, message_id);
-}
-
-/* File download pipeline, image gallery, and file click handlers
- * have been moved to gnalk-window-file-handling.c */
+/* Message row action handlers, scroll-to-message highlight helpers,
+ * and participant action handlers have been moved to
+ * gnalk-window-message-actions.c */
 
 static void
 gnalk_window_dispose (GObject *object)
@@ -2580,13 +2006,13 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect (self->video_call_button, "clicked", G_CALLBACK (on_video_call_clicked), self);
   g_signal_connect (self->audio_call_button, "clicked", G_CALLBACK (on_audio_call_clicked), self);
   g_signal_connect (self->participants_toggle_button, "toggled", G_CALLBACK (gnalk_window_on_participants_toggled), self);
-  g_signal_connect (self->participants_list, "chat-requested", G_CALLBACK (on_participant_chat_requested), self);
-  g_signal_connect (self->participants_list, "promote-requested", G_CALLBACK (on_participant_promote_requested), self);
-  g_signal_connect (self->participants_list, "demote-requested", G_CALLBACK (on_participant_demote_requested), self);
-  g_signal_connect (self->participants_list, "remove-requested", G_CALLBACK (on_participant_remove_requested), self);
-  g_signal_connect (self->conversation_actions, "quote-closed", G_CALLBACK (on_quote_closed), self);
+  g_signal_connect (self->participants_list, "chat-requested", G_CALLBACK (gnalk_window_on_participant_chat_requested), self);
+  g_signal_connect (self->participants_list, "promote-requested", G_CALLBACK (gnalk_window_on_participant_promote_requested), self);
+  g_signal_connect (self->participants_list, "demote-requested", G_CALLBACK (gnalk_window_on_participant_demote_requested), self);
+  g_signal_connect (self->participants_list, "remove-requested", G_CALLBACK (gnalk_window_on_participant_remove_requested), self);
+  g_signal_connect (self->conversation_actions, "quote-closed", G_CALLBACK (gnalk_window_on_quote_closed), self);
   g_signal_connect (self->conversation_actions, "attachment-closed", G_CALLBACK (gnalk_window_on_attachment_closed), self);
-  g_signal_connect (self->conversation_actions, "scroll-to-message-requested", G_CALLBACK (on_quote_preview_scroll_requested), self);
+  g_signal_connect (self->conversation_actions, "scroll-to-message-requested", G_CALLBACK (gnalk_window_on_quote_preview_scroll_requested), self);
   g_signal_connect (self->user_status_menu, "status-changed", G_CALLBACK (on_user_status_changed), self);
   /* Signaling handlers are connected in switch_to_session after getting signaling from session */
   g_signal_connect (self->incoming_call_banner, "accept-call-requested", G_CALLBACK (on_incoming_call_accept_requested), self);

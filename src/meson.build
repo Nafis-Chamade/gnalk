@@ -68,6 +68,7 @@ ui_sources = [
   'ui/gnalk-window-room-switch.c',
   'ui/gnalk-window-account-session.c',
   'ui/gnalk-window-file-handling.c',
+  'ui/gnalk-window-message-actions.c',
   'ui/gnalk-room-tab-manager.c',
   'ui/gnalk-conversation-row.c',
   'ui/gnalk-conversation-sidebar.c',
