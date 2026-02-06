@@ -622,6 +622,54 @@ gnalk_window_update_room_call_icon (GnalkWindow *self,
     }
 }
 
+/* Handler for ConversationData "updated" signal — keeps chat header and
+ * participants list in sync with the conversation list's user status. */
+static void
+on_current_room_conv_data_updated (GnalkConversationData *conv_data,
+                                   GnalkWindow           *self)
+{
+  if (!self->current_room)
+    return;
+
+  const char *user_status = gnalk_conversation_data_get_user_status (conv_data);
+  gint room_type = self->current_room->room_type;
+
+  /* Update header status icon (only meaningful for 1:1 rooms) */
+  gnalk_window_update_room_status_icon (self, room_type, user_status);
+
+  /* For 1:1 rooms, also update the participant's status in the list.
+   * In the conversations API, "name" is the other user's ID for 1:1 rooms. */
+  if (room_type == 1)
+    {
+      const char *other_user_id = gnalk_conversation_data_get_name (conv_data);
+      if (other_user_id && *other_user_id)
+        gnalk_participants_list_update_participant_status (self->participants_list, other_user_id, user_status);
+    }
+}
+
+void
+gnalk_window_track_conv_data_for_status (GnalkWindow           *self,
+                                          GnalkConversationData *conv_data)
+{
+  /* Disconnect previous handler */
+  if (self->current_room_conv_data && self->conv_data_updated_handler_id > 0)
+    {
+      g_signal_handler_disconnect (self->current_room_conv_data,
+                                   self->conv_data_updated_handler_id);
+    }
+  self->current_room_conv_data = NULL;
+  self->conv_data_updated_handler_id = 0;
+
+  if (!conv_data)
+    return;
+
+  /* Connect to the new ConversationData's "updated" signal */
+  self->current_room_conv_data = conv_data;
+  self->conv_data_updated_handler_id =
+    g_signal_connect (conv_data, "updated",
+                      G_CALLBACK (on_current_room_conv_data_updated), self);
+}
+
 void
 gnalk_window_start_call (GnalkWindow *self,
                          gboolean      with_video)
@@ -1046,15 +1094,46 @@ attempt_autologin_idle (gpointer user_data)
 
 /* Room join response and avatar loading are now in gnalk-window-room-switch.c */
 
-/* Handler for call state changes (relayed from Signaling via Session) */
+/* Handler for individual participant call state change (from ParticipantController) */
 void
-gnalk_window_on_session_call_state_changed (GnalkSession *session G_GNUC_UNUSED,
-                                            const char    *actor_id,
-                                            gint64         in_call,
-                                            GnalkWindow  *self)
+gnalk_window_on_participant_call_changed (GnalkParticipantController *controller G_GNUC_UNUSED,
+                                            const char                  *room_token,
+                                            const char                  *actor_id,
+                                            gint64                       in_call,
+                                            GnalkWindow                *self)
 {
-  /* Delegate to the participants list component */
+  /* Only update if this is the current room */
+  if (!self->current_room || g_strcmp0 (room_token, self->current_room->room_token) != 0)
+    return;
+
   gnalk_participants_list_update_call_state (self->participants_list, actor_id, in_call);
+
+  /* For 1:1 rooms, update header call icon in real time for the other participant */
+  if (self->current_room->room_type == 1)
+    {
+      GnalkAccount *account = self->active_session
+        ? gnalk_session_get_account (self->active_session) : NULL;
+      const char *my_user_id = account ? gnalk_account_get_user_id (account) : NULL;
+      if (my_user_id && g_strcmp0 (actor_id, my_user_id) != 0)
+        gnalk_window_update_room_call_icon (self, 1, in_call);
+    }
+}
+
+/* Handler for all call states cleared (from ParticipantController) */
+void
+gnalk_window_on_all_call_states_cleared (GnalkParticipantController *controller G_GNUC_UNUSED,
+                                            const char                  *room_token,
+                                            GnalkWindow                *self)
+{
+  /* Only update if this is the current room */
+  if (!self->current_room || g_strcmp0 (room_token, self->current_room->room_token) != 0)
+    return;
+
+  gnalk_participants_list_clear_all_call_states (self->participants_list);
+
+  /* For 1:1 rooms, clear header call icon */
+  if (self->current_room->room_type == 1)
+    gnalk_window_update_room_call_icon (self, 1, 0);
 }
 
 /* Room switch functions are now in gnalk-window-room-switch.c:
@@ -1594,6 +1673,9 @@ gnalk_window_dispose (GObject *object)
       if (app)
         gnalk_application_set_active_room (app, NULL);
     }
+
+  /* Disconnect from ConversationData status tracking */
+  gnalk_window_track_conv_data_for_status (self, NULL);
 
   /* Disconnect from session and controller signals BEFORE widgets are destroyed.
    * This prevents signal callbacks from accessing destroyed widgets. */

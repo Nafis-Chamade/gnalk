@@ -3,7 +3,6 @@
 #include <gtk/gtk.h>
 #include <json-glib/json-glib.h>
 #include "gnalk-avatar-cache.h"
-#include "gnalk-signaling.h"
 
 G_BEGIN_DECLS
 
@@ -15,7 +14,6 @@ GnalkParticipantsList *gnalk_participants_list_new (void);
 void gnalk_participants_list_set_participants (GnalkParticipantsList *self,
                                                  JsonArray              *participants,
                                                  GnalkAvatarCache      *cache,
-                                                 GnalkSignaling        *signaling,
                                                  const char             *my_user_id,
                                                  gint                    my_participant_type,
                                                  gint                    room_type);
@@ -26,6 +24,12 @@ void gnalk_participants_list_set_online (GnalkParticipantsList *self,
 void gnalk_participants_list_update_call_state (GnalkParticipantsList *self,
                                                   const char             *actor_id,
                                                   gint64                  in_call);
+
+void gnalk_participants_list_clear_all_call_states (GnalkParticipantsList *self);
+
+void gnalk_participants_list_update_participant_status (GnalkParticipantsList *self,
+                                                          const char             *actor_id,
+                                                          const char             *status);
 
 void gnalk_participants_list_clear (GnalkParticipantsList *self);
 

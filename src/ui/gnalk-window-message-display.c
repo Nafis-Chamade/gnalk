@@ -153,11 +153,9 @@ gnalk_window_on_processor_call_state_left (GnalkMessageProcessor *proc G_GNUC_UN
                                              const char             *actor_id,
                                              GnalkWindow            *self)
 {
-  GnalkSignaling *signaling = self->active_session
-    ? gnalk_session_get_signaling (self->active_session) : NULL;
-  if (signaling)
-    gnalk_signaling_set_call_state (signaling, actor_id, 0);
-  gnalk_participants_list_update_call_state (self->participants_list, actor_id, 0);
+  /* Route through PC (DB→signal→UI automatic) */
+  if (self->participant_controller)
+    gnalk_participant_controller_update_call_state (self->participant_controller, actor_id, 0);
   gnalk_incoming_call_banner_clear_responded (self->incoming_call_banner, actor_id);
 }
 
@@ -165,11 +163,9 @@ void
 gnalk_window_on_processor_call_ended (GnalkMessageProcessor *proc G_GNUC_UNUSED,
                                         GnalkWindow            *self)
 {
-  GnalkSignaling *signaling = self->active_session
-    ? gnalk_session_get_signaling (self->active_session) : NULL;
-  if (signaling)
-    gnalk_signaling_clear_call_states (signaling);
-  gnalk_participants_list_clear (self->participants_list);
+  /* Route through PC (DB→signal→UI, icons hidden without destroying list) */
+  if (self->participant_controller)
+    gnalk_participant_controller_clear_all_call_states (self->participant_controller);
   gnalk_incoming_call_banner_clear_all_responded (self->incoming_call_banner);
 }
 

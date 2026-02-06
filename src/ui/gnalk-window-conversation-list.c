@@ -283,6 +283,28 @@ load_conversations_from_db_finish (GObject      *source_object,
 
   g_message ("Loaded %u conversations from database (changes: %s)", n_cached, has_changes ? "yes" : "no");
 
+  /* Push user status from 1:1 conversations to the participant list.
+   * The conversations API (20s) has fresher status than the participants API (60s),
+   * so we overlay the 1:1 status onto matching participants in any visible group room. */
+  if (has_changes && self->participants_list && self->current_room)
+    {
+      guint n_convs_for_status = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+      for (guint i = 0; i < n_convs_for_status; i++)
+        {
+          GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
+          if (conv && !gnalk_conversation_data_is_section_header (conv) &&
+              gnalk_conversation_data_get_room_type (conv) == 1)
+            {
+              const char *status = gnalk_conversation_data_get_user_status (conv);
+              const char *other_user = gnalk_conversation_data_get_name (conv);
+              if (other_user && *other_user && status && *status)
+                gnalk_participants_list_update_participant_status (self->participants_list, other_user, status);
+            }
+          if (conv)
+            g_object_unref (conv);
+        }
+    }
+
   /* Force GTK to re-bind items since update_from_data modifies data in-place
    * but doesn't emit property notifications. This ensures widgets refresh. */
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));

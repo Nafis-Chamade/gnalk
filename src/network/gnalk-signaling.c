@@ -30,7 +30,6 @@ struct _GnalkSignaling
   gint64          last_activity_time;   /* Monotonic time of last received message */
 
   GHashTable     *participants;      /* session_id -> display_name */
-  GHashTable     *call_states;       /* actor_id -> in_call flags (GINT_TO_POINTER) */
   GHashTable     *session_to_actor;  /* session_id -> actor_id */
 
   GnalkSignalingMessageCallback message_callback;
@@ -93,7 +92,6 @@ gnalk_signaling_finalize (GObject *object)
   g_clear_object (&self->pending_ws_msg);
   g_clear_object (&self->session);
   g_clear_pointer (&self->participants, g_hash_table_unref);
-  g_clear_pointer (&self->call_states, g_hash_table_unref);
   g_clear_pointer (&self->session_to_actor, g_hash_table_unref);
   g_free (self->server_url);
   g_free (self->backend_url);
@@ -235,7 +233,6 @@ gnalk_signaling_init (GnalkSignaling *self)
 {
   self->session = soup_session_new ();
   self->participants = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
-  self->call_states = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   self->session_to_actor = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 }
 
@@ -419,21 +416,9 @@ on_ws_message (SoupWebsocketConnection *ws G_GNUC_UNUSED,
                                                              g_strdup (sess_id),
                                                              g_strdup (actor_id));
 
-                                      /* Track call state for all participants */
-                                      gint64 old_state = GPOINTER_TO_INT (g_hash_table_lookup (self->call_states, actor_id));
-                                      if (old_state != in_call)
-                                        {
-                                          if (in_call > 0)
-                                            g_hash_table_insert (self->call_states,
-                                                                 g_strdup (actor_id),
-                                                                 GINT_TO_POINTER ((gint) in_call));
-                                          else
-                                            g_hash_table_remove (self->call_states, actor_id);
-
-                                          /* Emit call state changed signal */
-                                          g_signal_emit (self, signals[SIGNAL_CALL_STATE_CHANGED], 0,
-                                                         actor_id, in_call);
-                                        }
+                                      /* Emit call state changed — dedup is done by PC via DB */
+                                      g_signal_emit (self, signals[SIGNAL_CALL_STATE_CHANGED], 0,
+                                                     actor_id, in_call);
 
                                       /* Also emit incoming call signal for others with inCall > 0 */
                                       if (sess_id && in_call > 0)
@@ -464,19 +449,11 @@ on_ws_message (SoupWebsocketConnection *ws G_GNUC_UNUSED,
                                 {
                                   g_hash_table_remove (self->participants, sess_id);
 
-                                  /* Clear call state for this participant */
+                                  /* Emit call-state-changed(0) for leaving participant — PC dedup via DB */
                                   const char *actor_id = g_hash_table_lookup (self->session_to_actor, sess_id);
                                   if (actor_id)
-                                    {
-                                      gint64 old_state = GPOINTER_TO_INT (g_hash_table_lookup (self->call_states, actor_id));
-                                      if (old_state > 0)
-                                        {
-                                          g_hash_table_remove (self->call_states, actor_id);
-                                          /* Emit call state changed signal with in_call=0 */
-                                          g_signal_emit (self, signals[SIGNAL_CALL_STATE_CHANGED], 0,
-                                                         actor_id, (gint64) 0);
-                                        }
-                                    }
+                                    g_signal_emit (self, signals[SIGNAL_CALL_STATE_CHANGED], 0,
+                                                   actor_id, (gint64) 0);
                                   g_hash_table_remove (self->session_to_actor, sess_id);
                                 }
                             }
@@ -1062,46 +1039,6 @@ gnalk_signaling_get_display_name_for_session (GnalkSignaling *self,
     return NULL;
 
   return g_hash_table_lookup (self->participants, session_id);
-}
-
-gint64
-gnalk_signaling_get_call_state (GnalkSignaling *self,
-                                  const char      *actor_id)
-{
-  g_return_val_if_fail (GNALK_IS_SIGNALING (self), 0);
-
-  if (!actor_id)
-    return 0;
-
-  return GPOINTER_TO_INT (g_hash_table_lookup (self->call_states, actor_id));
-}
-
-void
-gnalk_signaling_clear_call_states (GnalkSignaling *self)
-{
-  g_return_if_fail (GNALK_IS_SIGNALING (self));
-
-  g_hash_table_remove_all (self->call_states);
-}
-
-void
-gnalk_signaling_set_call_state (GnalkSignaling *self,
-                                  const char      *actor_id,
-                                  gint64           in_call)
-{
-  g_return_if_fail (GNALK_IS_SIGNALING (self));
-  g_return_if_fail (actor_id != NULL);
-
-  if (in_call > 0)
-    {
-      g_hash_table_insert (self->call_states,
-                           g_strdup (actor_id),
-                           GINT_TO_POINTER ((gint) in_call));
-    }
-  else
-    {
-      g_hash_table_remove (self->call_states, actor_id);
-    }
 }
 
 void

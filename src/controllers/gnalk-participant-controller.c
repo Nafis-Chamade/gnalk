@@ -22,6 +22,8 @@ G_DEFINE_FINAL_TYPE (GnalkParticipantController, gnalk_participant_controller, G
 
 enum {
   SIGNAL_PARTICIPANTS_CHANGED,
+  SIGNAL_PARTICIPANT_CALL_CHANGED,
+  SIGNAL_ALL_CALL_STATES_CLEARED,
   SIGNAL_ERROR,
   N_SIGNALS
 };
@@ -72,6 +74,24 @@ gnalk_participant_controller_class_init (GnalkParticipantControllerClass *klass)
 
   signals[SIGNAL_PARTICIPANTS_CHANGED] =
     g_signal_new ("participants-changed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_STRING);  /* room_token */
+
+  signals[SIGNAL_PARTICIPANT_CALL_CHANGED] =
+    g_signal_new ("participant-call-changed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 3,
+                  G_TYPE_STRING,   /* room_token */
+                  G_TYPE_STRING,   /* actor_id */
+                  G_TYPE_INT64);   /* in_call */
+
+  signals[SIGNAL_ALL_CALL_STATES_CLEARED] =
+    g_signal_new ("all-call-states-cleared",
                   G_TYPE_FROM_CLASS (klass),
                   G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL,
@@ -150,10 +170,12 @@ serialize_participants (JsonArray *participants)
       const char *actor_id = json_object_get_string_member_with_default (p, "actorId", "");
       gint64 in_call = json_object_get_int_member_with_default (p, "inCall", 0);
       const char *display_name = json_object_get_string_member_with_default (p, "displayName", "");
-      gint64 participant_type = json_object_get_int_member_with_default (p, "participantType", 0);
+      const char *status = json_object_get_string_member_with_default (p, "status", "");
 
-      g_string_append_printf (str, "%s:%ld:%s:%ld;",
-                              actor_id, (long) in_call, display_name, (long) participant_type);
+      /* Only compare fields that are stored in DB (actorId, inCall, displayName, status).
+       * participantType is NOT stored, so including it would always detect a change. */
+      g_string_append_printf (str, "%s:%ld:%s:%s;",
+                              actor_id, (long) in_call, display_name, status);
     }
 
   return g_string_free (g_steal_pointer (&str), FALSE);
@@ -492,4 +514,43 @@ gnalk_participant_controller_remove_attendee (GnalkParticipantController *self,
 
   gnalk_http_client_remove_attendee (self->http_client, room_token,
                                      attendee_id, on_moderator_action_response, cb_data);
+}
+
+/* ============ Call State Updates ============ */
+
+void
+gnalk_participant_controller_update_call_state (GnalkParticipantController *self,
+                                                   const char                   *actor_id,
+                                                   gint64                        in_call)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANT_CONTROLLER (self));
+  g_return_if_fail (actor_id != NULL);
+
+  if (!self->active_room_token || !self->database || self->account_id <= 0)
+    return;
+
+  gboolean updated = gnalk_database_update_participant_call_state (self->database,
+                                                                      self->account_id,
+                                                                      self->active_room_token,
+                                                                      actor_id,
+                                                                      in_call);
+  if (updated)
+    g_signal_emit (self, signals[SIGNAL_PARTICIPANT_CALL_CHANGED], 0,
+                   self->active_room_token, actor_id, in_call);
+}
+
+void
+gnalk_participant_controller_clear_all_call_states (GnalkParticipantController *self)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANT_CONTROLLER (self));
+
+  if (!self->active_room_token || !self->database || self->account_id <= 0)
+    return;
+
+  gnalk_database_clear_room_call_states (self->database,
+                                            self->account_id,
+                                            self->active_room_token);
+
+  g_signal_emit (self, signals[SIGNAL_ALL_CALL_STATES_CLEARED], 0,
+                 self->active_room_token);
 }

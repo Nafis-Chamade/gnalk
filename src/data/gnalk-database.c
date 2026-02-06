@@ -1580,3 +1580,56 @@ gnalk_database_reset_participants_status (GnalkDatabase *self,
       sqlite3_finalize (stmt);
     }
 }
+
+gboolean
+gnalk_database_update_participant_call_state (GnalkDatabase *self,
+                                                gint64          account_id,
+                                                const char     *conversation_token,
+                                                const char     *actor_id,
+                                                gint64          in_call)
+{
+  g_return_val_if_fail (GNALK_IS_DATABASE (self), FALSE);
+  g_return_val_if_fail (self->db != NULL, FALSE);
+  g_return_val_if_fail (conversation_token != NULL, FALSE);
+  g_return_val_if_fail (actor_id != NULL, FALSE);
+
+  sqlite3_stmt *stmt;
+  const char *sql = "UPDATE participants SET in_call = ? "
+                     "WHERE account_id = ? AND conversation_token = ? AND actor_id = ?";
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_int64 (stmt, 1, in_call);
+      sqlite3_bind_int64 (stmt, 2, account_id);
+      sqlite3_bind_text (stmt, 3, conversation_token, -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 4, actor_id, -1, SQLITE_STATIC);
+      sqlite3_step (stmt);
+      int changes = sqlite3_changes (self->db);
+      sqlite3_finalize (stmt);
+      return changes > 0;
+    }
+
+  return FALSE;
+}
+
+void
+gnalk_database_clear_room_call_states (GnalkDatabase *self,
+                                          gint64          account_id,
+                                          const char     *conversation_token)
+{
+  g_return_if_fail (GNALK_IS_DATABASE (self));
+  g_return_if_fail (self->db != NULL);
+  g_return_if_fail (conversation_token != NULL);
+
+  sqlite3_stmt *stmt;
+  const char *sql = "UPDATE participants SET in_call = 0 "
+                     "WHERE account_id = ? AND conversation_token = ? AND in_call != 0";
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_int64 (stmt, 1, account_id);
+      sqlite3_bind_text (stmt, 2, conversation_token, -1, SQLITE_STATIC);
+      sqlite3_step (stmt);
+      sqlite3_finalize (stmt);
+    }
+}

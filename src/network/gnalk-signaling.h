@@ -49,15 +49,6 @@ void gnalk_signaling_send_typing (GnalkSignaling *self,
 const char *gnalk_signaling_get_display_name_for_session (GnalkSignaling *self,
                                                             const char      *session_id);
 
-gint64 gnalk_signaling_get_call_state (GnalkSignaling *self,
-                                         const char      *actor_id);
-
-void gnalk_signaling_clear_call_states (GnalkSignaling *self);
-
-void gnalk_signaling_set_call_state (GnalkSignaling *self,
-                                       const char      *actor_id,
-                                       gint64           in_call);
-
 /* Update incall status via signaling WebSocket.
  * This tells the MCU we're ready to receive streams.
  * flags: 0=not in call, 1=audio, 3=audio+video, 7=audio+video+screenshare */

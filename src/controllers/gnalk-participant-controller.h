@@ -23,6 +23,8 @@ G_DECLARE_FINAL_TYPE (GnalkParticipantController, gnalk_participant_controller, 
  *
  * Signals:
  * - "participants-changed" (const char *room_token): Server returned different data than cache
+ * - "participant-call-changed" (const char *room_token, const char *actor_id, gint64 in_call): Single participant call state changed
+ * - "all-call-states-cleared" (const char *room_token): All call states cleared for room
  * - "error" (const char *message): An error occurred
  */
 
@@ -120,5 +122,27 @@ void gnalk_participant_controller_demote_moderator (GnalkParticipantController *
 void gnalk_participant_controller_remove_attendee (GnalkParticipantController *self,
                                                    const char                 *room_token,
                                                    gint64                      attendee_id);
+
+/**
+ * gnalk_participant_controller_update_call_state:
+ * @self: The controller
+ * @actor_id: The actor ID whose call state changed
+ * @in_call: The new in_call flags
+ *
+ * Updates a single participant's call state in the DB and emits
+ * "participant-call-changed" if the row existed.
+ */
+void gnalk_participant_controller_update_call_state (GnalkParticipantController *self,
+                                                        const char                   *actor_id,
+                                                        gint64                        in_call);
+
+/**
+ * gnalk_participant_controller_clear_all_call_states:
+ * @self: The controller
+ *
+ * Clears all call states (sets in_call=0) for the active room
+ * and emits "all-call-states-cleared".
+ */
+void gnalk_participant_controller_clear_all_call_states (GnalkParticipantController *self);
 
 G_END_DECLS

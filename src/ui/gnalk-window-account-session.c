@@ -42,8 +42,6 @@ connect_session_signals (GnalkWindow  *self,
                     G_CALLBACK (gnalk_window_on_session_signaling_ready), self);
 
   /* Relayed signaling signals (Session absorbs Signaling) */
-  g_signal_connect (session, "call-state-changed",
-                    G_CALLBACK (gnalk_window_on_session_call_state_changed), self);
   g_signal_connect (session, "call-ended",
                     G_CALLBACK (gnalk_window_on_session_call_ended), self);
   g_signal_connect (session, "room-disinvited",
@@ -137,6 +135,10 @@ connect_controller_signals (GnalkWindow  *self,
     {
       g_signal_connect (pc, "participants-changed",
                         G_CALLBACK (gnalk_window_on_participant_controller_changed), self);
+      g_signal_connect (pc, "participant-call-changed",
+                        G_CALLBACK (gnalk_window_on_participant_call_changed), self);
+      g_signal_connect (pc, "all-call-states-cleared",
+                        G_CALLBACK (gnalk_window_on_all_call_states_cleared), self);
     }
 }
 

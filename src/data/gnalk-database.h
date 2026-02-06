@@ -161,5 +161,13 @@ void gnalk_database_delete_participants (GnalkDatabase *self,
                                            const char *conversation_token);
 void gnalk_database_reset_participants_status (GnalkDatabase *self,
                                                  gint64 account_id);
+gboolean gnalk_database_update_participant_call_state (GnalkDatabase *self,
+                                                          gint64          account_id,
+                                                          const char     *conversation_token,
+                                                          const char     *actor_id,
+                                                          gint64          in_call);
+void gnalk_database_clear_room_call_states (GnalkDatabase *self,
+                                               gint64          account_id,
+                                               const char     *conversation_token);
 
 G_END_DECLS

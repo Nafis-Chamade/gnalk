@@ -226,9 +226,12 @@ gnalk_incoming_call_banner_hide (GnalkIncomingCallBanner *self)
   gtk_revealer_set_reveal_child (GTK_REVEALER (self->revealer), FALSE);
   self->has_incoming_call = FALSE;
 
-  /* Remember who we responded to */
-  g_free (self->responded_caller_id);
-  self->responded_caller_id = g_steal_pointer (&self->caller_id);
+  /* Remember who we responded to (only if we had an active caller) */
+  if (self->caller_id)
+    {
+      g_free (self->responded_caller_id);
+      self->responded_caller_id = g_steal_pointer (&self->caller_id);
+    }
 
   g_clear_pointer (&self->room_token, g_free);
   g_clear_pointer (&self->room_name, g_free);

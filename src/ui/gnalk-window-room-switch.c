@@ -212,13 +212,6 @@ gnalk_window_update_mosaic_background (GnalkWindow *self, JsonArray *participant
 void
 gnalk_window_load_participants (GnalkWindow *self, const char *token)
 {
-  /* Clear call states from previous room */
-  {
-    GnalkSignaling *signaling = self->active_session
-      ? gnalk_session_get_signaling (self->active_session) : NULL;
-    if (signaling)
-      gnalk_signaling_clear_call_states (signaling);
-  }
   gnalk_conversation_header_set_call_active (self->conversation_header, FALSE);
 
   /* Hide participants bar for 1:1 conversations */
@@ -367,6 +360,9 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
 
       adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
 
+      /* Track ConversationData for live user status updates */
+      gnalk_window_track_conv_data_for_status (self, conv_data);
+
       /* Load participants (can happen in parallel) */
       gnalk_window_load_participants (self, token);
     }
@@ -453,6 +449,9 @@ gnalk_window_on_content_page_hiding (AdwNavigationPage *page,
 
   /* Disconnect the model from the view */
   gtk_no_selection_set_model (self->messages_selection, NULL);
+
+  /* Disconnect ConversationData status tracking */
+  gnalk_window_track_conv_data_for_status (self, NULL);
 
   /* Sync Window state from controller */
   self->current_room = NULL;

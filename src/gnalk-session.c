@@ -89,7 +89,6 @@ enum {
   SIGNAL_SIGNALING_READY,
   SIGNAL_INCOMING_CALL,
   SIGNAL_TYPING,
-  SIGNAL_CALL_STATE_CHANGED,
   SIGNAL_CALL_ENDED,
   SIGNAL_ROOM_DISINVITED,
   SIGNAL_ROOM_MESSAGES_SYNCED,
@@ -240,11 +239,6 @@ gnalk_session_class_init (GnalkSessionClass *klass)
                   0, NULL, NULL, NULL, G_TYPE_NONE, 4,
                   G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
 
-  signals[SIGNAL_CALL_STATE_CHANGED] =
-    g_signal_new ("call-state-changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 2,
-                  G_TYPE_STRING, G_TYPE_INT64);
-
   signals[SIGNAL_CALL_ENDED] =
     g_signal_new ("call-ended", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL, G_TYPE_NONE, 0);
@@ -377,13 +371,22 @@ on_signaling_call_state_changed (GnalkSignaling *signaling G_GNUC_UNUSED,
                                  gint64           in_call,
                                  GnalkSession   *self)
 {
-  g_signal_emit (self, signals[SIGNAL_CALL_STATE_CHANGED], 0, actor_id, in_call);
+  /* Route to ParticipantController (DB→signal→UI) instead of relaying */
+  if (self->participant_controller)
+    gnalk_participant_controller_update_call_state (self->participant_controller, actor_id, in_call);
 }
 
 static void
 on_signaling_call_ended (GnalkSignaling *signaling G_GNUC_UNUSED,
                          GnalkSession   *self)
 {
+  /* Clear all call states via PC (DB→signal→UI), then emit call-ended for banner */
+  if (self->participant_controller)
+    {
+      gnalk_participant_controller_clear_all_call_states (self->participant_controller);
+      /* Refresh participants to get updated online status (busy → online) */
+      gnalk_participant_controller_refresh (self->participant_controller);
+    }
   g_signal_emit (self, signals[SIGNAL_CALL_ENDED], 0);
 }
 

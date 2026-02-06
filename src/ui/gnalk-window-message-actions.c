@@ -77,10 +77,8 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
     }
 
   /* Delegate to the participants list component */
-  GnalkSignaling *signaling = self->active_session
-    ? gnalk_session_get_signaling (self->active_session) : NULL;
   gnalk_participants_list_set_participants (self->participants_list, participants,
-                                              self->avatar_cache, signaling,
+                                              self->avatar_cache,
                                               my_user_id, my_participant_type,
                                               self->current_room->room_type);
 

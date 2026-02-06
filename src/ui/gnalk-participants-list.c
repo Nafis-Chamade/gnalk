@@ -40,6 +40,9 @@ enum
 
 static guint signals[N_SIGNALS];
 
+/* Forward declarations */
+static void update_participant_status_icon (GtkWidget *item, const char *status);
+
 /* Update call icon for a participant item */
 static void
 update_participant_call_icon (GtkWidget *item, gint64 in_call)
@@ -152,36 +155,7 @@ create_participant_item (GnalkParticipantsList *self,
   gtk_widget_set_valign (status_icon, GTK_ALIGN_END);
   gtk_widget_add_css_class (status_icon, "status-indicator");
 
-  if (status && *status)
-    {
-      if (g_strcmp0 (status, "online") == 0)
-        {
-          gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-available-symbolic");
-          gtk_widget_add_css_class (status_icon, "status-online");
-          gtk_widget_set_visible (status_icon, TRUE);
-        }
-      else if (g_strcmp0 (status, "away") == 0)
-        {
-          gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-away-symbolic");
-          gtk_widget_add_css_class (status_icon, "status-away");
-          gtk_widget_set_visible (status_icon, TRUE);
-        }
-      else if (g_strcmp0 (status, "dnd") == 0 || g_strcmp0 (status, "busy") == 0)
-        {
-          gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-busy-symbolic");
-          gtk_widget_add_css_class (status_icon, "status-dnd");
-          gtk_widget_set_visible (status_icon, TRUE);
-        }
-      else
-        {
-          gtk_widget_set_visible (status_icon, FALSE);
-        }
-    }
-  else
-    {
-      gtk_widget_set_visible (status_icon, FALSE);
-    }
-
+  gtk_widget_set_visible (status_icon, FALSE);  /* will be set by update_participant_status_icon */
   gtk_overlay_add_overlay (GTK_OVERLAY (overlay), status_icon);
 
   /* Call state indicator (top-left) */
@@ -212,6 +186,9 @@ create_participant_item (GnalkParticipantsList *self,
   g_object_set_data (G_OBJECT (box), "status-icon", status_icon);
   g_object_set_data (G_OBJECT (box), "name-label", label);
 
+  /* Set initial status now that status-icon is stored on the widget */
+  update_participant_status_icon (box, status);
+
   /* Load avatar asynchronously with weak reference to handle widget destruction */
   if (cache && user_id && *user_id)
     {
@@ -223,55 +200,47 @@ create_participant_item (GnalkParticipantsList *self,
   return box;
 }
 
-/* Update an existing participant item with new data */
+/* Update the status icon on an existing participant item */
 static void
-update_participant_item (GtkWidget  *item,
-                         const char *display_name,
-                         const char *status)
+update_participant_status_icon (GtkWidget *item, const char *status)
 {
-  /* Update name label */
-  GtkWidget *label = g_object_get_data (G_OBJECT (item), "name-label");
-  if (label)
-    gtk_label_set_text (GTK_LABEL (label), display_name ? display_name : "");
-
-  /* Update status indicator */
   GtkWidget *status_icon = g_object_get_data (G_OBJECT (item), "status-icon");
-  if (status_icon)
-    {
-      /* Remove previous status classes */
-      gtk_widget_remove_css_class (status_icon, "status-online");
-      gtk_widget_remove_css_class (status_icon, "status-away");
-      gtk_widget_remove_css_class (status_icon, "status-dnd");
+  if (!status_icon)
+    return;
 
-      if (status && *status)
+  /* Remove previous status classes */
+  gtk_widget_remove_css_class (status_icon, "status-online");
+  gtk_widget_remove_css_class (status_icon, "status-away");
+  gtk_widget_remove_css_class (status_icon, "status-dnd");
+
+  if (status && *status)
+    {
+      if (g_strcmp0 (status, "online") == 0)
         {
-          if (g_strcmp0 (status, "online") == 0)
-            {
-              gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-available-symbolic");
-              gtk_widget_add_css_class (status_icon, "status-online");
-              gtk_widget_set_visible (status_icon, TRUE);
-            }
-          else if (g_strcmp0 (status, "away") == 0)
-            {
-              gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-away-symbolic");
-              gtk_widget_add_css_class (status_icon, "status-away");
-              gtk_widget_set_visible (status_icon, TRUE);
-            }
-          else if (g_strcmp0 (status, "dnd") == 0 || g_strcmp0 (status, "busy") == 0)
-            {
-              gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-busy-symbolic");
-              gtk_widget_add_css_class (status_icon, "status-dnd");
-              gtk_widget_set_visible (status_icon, TRUE);
-            }
-          else
-            {
-              gtk_widget_set_visible (status_icon, FALSE);
-            }
+          gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-available-symbolic");
+          gtk_widget_add_css_class (status_icon, "status-online");
+          gtk_widget_set_visible (status_icon, TRUE);
+        }
+      else if (g_strcmp0 (status, "away") == 0)
+        {
+          gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-away-symbolic");
+          gtk_widget_add_css_class (status_icon, "status-away");
+          gtk_widget_set_visible (status_icon, TRUE);
+        }
+      else if (g_strcmp0 (status, "dnd") == 0 || g_strcmp0 (status, "busy") == 0)
+        {
+          gtk_image_set_from_icon_name (GTK_IMAGE (status_icon), "user-busy-symbolic");
+          gtk_widget_add_css_class (status_icon, "status-dnd");
+          gtk_widget_set_visible (status_icon, TRUE);
         }
       else
         {
           gtk_widget_set_visible (status_icon, FALSE);
         }
+    }
+  else
+    {
+      gtk_widget_set_visible (status_icon, FALSE);
     }
 }
 
@@ -601,7 +570,6 @@ void
 gnalk_participants_list_set_participants (GnalkParticipantsList *self,
                                             JsonArray              *participants,
                                             GnalkAvatarCache      *cache,
-                                            GnalkSignaling        *signaling,
                                             const char             *my_user_id,
                                             gint                    my_participant_type,
                                             gint                    room_type)
@@ -621,19 +589,7 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
 
   guint n_participants = json_array_get_length (participants);
 
-  /* First pass: initialize call states from participants API */
-  for (guint i = 0; i < n_participants; i++)
-    {
-      JsonObject *participant = json_array_get_object_element (participants, i);
-      const char *actor_id = json_object_get_string_member_with_default (participant, "actorId", "");
-      gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
-
-      /* Initialize call state in signaling */
-      if (actor_id && *actor_id && signaling)
-        gnalk_signaling_set_call_state (signaling, actor_id, in_call);
-    }
-
-  /* Second pass: collect participants for sorting (skip guests) */
+  /* Collect participants for sorting (skip guests) */
   GPtrArray *participant_list = g_ptr_array_new ();
   for (guint i = 0; i < n_participants; i++)
     {
@@ -650,7 +606,7 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
   /* Sort: online first, then alphabetically by name */
   g_ptr_array_sort (participant_list, (GCompareFunc) compare_participants_by_status_and_name);
 
-  /* Third pass: create participant items in sorted order */
+  /* Create participant items in sorted order */
   for (guint i = 0; i < participant_list->len; i++)
     {
       JsonObject *participant = g_ptr_array_index (participant_list, i);
@@ -659,8 +615,12 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
       const char *status = json_object_get_string_member_with_default (participant, "status", "");
       gint64 attendee_id = json_object_get_int_member_with_default (participant, "attendeeId", 0);
       gint participant_type = (gint) json_object_get_int_member_with_default (participant, "participantType", 3);
+      gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
 
       GtkWidget *item = create_participant_item (self, actor_id, display_name, status, cache);
+
+      /* Set call icon from JSON data directly */
+      update_participant_call_icon (item, in_call);
 
       /* Store additional data for context menu */
       g_object_set_data (G_OBJECT (item), "attendee-id", GINT_TO_POINTER ((gint) attendee_id));
@@ -684,19 +644,6 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
     }
 
   g_ptr_array_free (participant_list, TRUE);
-
-  /* Fourth pass: update call icons */
-  GtkWidget *child = gtk_widget_get_first_child (self->participants_box);
-  while (child)
-    {
-      const char *item_user_id = g_object_get_data (G_OBJECT (child), "user-id");
-      if (item_user_id && signaling)
-        {
-          gint64 in_call = gnalk_signaling_get_call_state (signaling, item_user_id);
-          update_participant_call_icon (child, in_call);
-        }
-      child = gtk_widget_get_next_sibling (child);
-    }
 }
 
 void
@@ -718,6 +665,42 @@ gnalk_participants_list_update_call_state (GnalkParticipantsList *self,
           update_participant_call_icon (child, in_call);
           break;
         }
+      child = gtk_widget_get_next_sibling (child);
+    }
+}
+
+void
+gnalk_participants_list_update_participant_status (GnalkParticipantsList *self,
+                                                     const char             *actor_id,
+                                                     const char             *status)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANTS_LIST (self));
+
+  if (!actor_id)
+    return;
+
+  GtkWidget *child = gtk_widget_get_first_child (self->participants_box);
+  while (child)
+    {
+      const char *item_user_id = g_object_get_data (G_OBJECT (child), "user-id");
+      if (item_user_id && g_strcmp0 (item_user_id, actor_id) == 0)
+        {
+          update_participant_status_icon (child, status);
+          break;
+        }
+      child = gtk_widget_get_next_sibling (child);
+    }
+}
+
+void
+gnalk_participants_list_clear_all_call_states (GnalkParticipantsList *self)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANTS_LIST (self));
+
+  GtkWidget *child = gtk_widget_get_first_child (self->participants_box);
+  while (child)
+    {
+      update_participant_call_icon (child, 0);
       child = gtk_widget_get_next_sibling (child);
     }
 }

@@ -176,6 +176,10 @@ struct _GnalkWindow
   gboolean conv_load_in_progress;     /* Whether an async DB load is running */
   gboolean conv_load_pending;         /* Reload requested while load was in progress */
 
+  /* Current room's ConversationData tracking (for live user status updates) */
+  GnalkConversationData *current_room_conv_data;  /* unowned, for signal tracking */
+  gulong conv_data_updated_handler_id;
+
   /* Unread message tracking (IDs are in current_room state) */
   guint   mark_read_debounce_id;     /* Debounce timer to wait for list to settle */
   guint   mark_read_timer_id;        /* Timer for delayed mark-as-read (glow time) */
@@ -350,6 +354,7 @@ void gnalk_window_start_call                     (GnalkWindow *self, gboolean wi
 void gnalk_window_update_call_button_state      (GnalkWindow *self);
 void gnalk_window_update_room_status_icon       (GnalkWindow *self, gint room_type, const char *user_status);
 void gnalk_window_update_room_call_icon         (GnalkWindow *self, gint room_type, gint64 in_call);
+void gnalk_window_track_conv_data_for_status    (GnalkWindow *self, GnalkConversationData *conv_data);
 void gnalk_window_block_participants_toggle     (GnalkWindow *self);
 void gnalk_window_unblock_participants_toggle   (GnalkWindow *self);
 
@@ -381,9 +386,12 @@ void gnalk_window_on_session_typing                   (GnalkSession *session, co
 void gnalk_window_on_session_signaling_ready          (GnalkSession *session, GnalkWindow *self);
 
 /* Relayed signaling signals (now via Session facade) */
-void gnalk_window_on_session_call_state_changed       (GnalkSession *session, const char *actor_id, gint64 in_call, GnalkWindow *self);
 void gnalk_window_on_session_call_ended               (GnalkSession *session, GnalkWindow *self);
 void gnalk_window_on_session_room_disinvited          (GnalkSession *session, const char *room_token, GnalkWindow *self);
+
+/* Participant controller call state signals */
+void gnalk_window_on_participant_call_changed         (GnalkParticipantController *controller, const char *room_token, const char *actor_id, gint64 in_call, GnalkWindow *self);
+void gnalk_window_on_all_call_states_cleared          (GnalkParticipantController *controller, const char *room_token, GnalkWindow *self);
 
 /* Relayed sync coordinator signals (now via Session facade) */
 void gnalk_window_on_session_room_messages_synced     (GnalkSession *session, const char *room_token, guint count, GnalkWindow *self);
