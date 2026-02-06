@@ -55,6 +55,7 @@ utils_sources = [
   'utils/gnalk-markdown.c',
   'utils/gnalk-goa.c',
   'utils/gnalk-background-generator.c',
+  'utils/gnalk-async-op.c',
 ]
 
 ui_sources = [

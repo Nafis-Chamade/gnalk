@@ -82,7 +82,7 @@ on_room_avatar_loaded (GnalkAvatarCache *cache,
 
 /* Context for collecting avatars asynchronously */
 typedef struct {
-  GnalkWindow *window;
+  GWeakRef     window_ref;    /* Weak reference to GnalkWindow */
   GPtrArray   *textures;      /* Participant avatars */
   GdkTexture  *room_avatar;   /* Room avatar (nullable) */
   guint        pending;
@@ -92,12 +92,18 @@ typedef struct {
 static void
 mosaic_context_finish (MosaicContext *ctx)
 {
-  if ((ctx->textures->len > 0 || ctx->room_avatar) &&
-      ctx->window && ctx->window->message_view)
-    gnalk_message_view_set_mosaic_avatars (ctx->window->message_view,
-                                            ctx->textures,
-                                            ctx->room_avatar);
+  GnalkWindow *window = g_weak_ref_get (&ctx->window_ref);
 
+  if (window)
+    {
+      if ((ctx->textures->len > 0 || ctx->room_avatar) && window->message_view)
+        gnalk_message_view_set_mosaic_avatars (window->message_view,
+                                                ctx->textures,
+                                                ctx->room_avatar);
+      g_object_unref (window);
+    }
+
+  g_weak_ref_clear (&ctx->window_ref);
   g_ptr_array_unref (ctx->textures);
   g_clear_object (&ctx->room_avatar);
   g_free (ctx);
@@ -170,7 +176,7 @@ gnalk_window_update_mosaic_background (GnalkWindow *self, JsonArray *participant
 
   /* Create context for async avatar collection */
   MosaicContext *ctx = g_new0 (MosaicContext, 1);
-  ctx->window = self;
+  g_weak_ref_init (&ctx->window_ref, self);
   ctx->textures = g_ptr_array_new_with_free_func (g_object_unref);
   ctx->room_avatar = NULL;
   ctx->pending = valid_count + 1;  /* +1 for room avatar */
@@ -207,7 +213,12 @@ void
 gnalk_window_load_participants (GnalkWindow *self, const char *token)
 {
   /* Clear call states from previous room */
-  gnalk_signaling_clear_call_states (self->signaling);
+  {
+    GnalkSignaling *signaling = self->active_session
+      ? gnalk_session_get_signaling (self->active_session) : NULL;
+    if (signaling)
+      gnalk_signaling_clear_call_states (signaling);
+  }
   gnalk_conversation_header_set_call_active (self->conversation_header, FALSE);
 
   /* Hide participants bar for 1:1 conversations */

@@ -20,16 +20,6 @@
 #include <json-glib/json-glib.h>
 #include <glib/gi18n.h>
 
-/* ============ Message sorting (delegates to processor) ============ */
-
-gint
-gnalk_window_compare_messages_by_id (gconstpointer a,
-                                       gconstpointer b,
-                                       gpointer      user_data)
-{
-  return gnalk_message_processor_compare_by_id (a, b, user_data);
-}
-
 /* ============ Clear/refresh messages ============ */
 
 /* Clear messages by disconnecting model first to avoid GTK internal state issues */
@@ -161,7 +151,10 @@ gnalk_window_on_processor_call_state_left (GnalkMessageProcessor *proc G_GNUC_UN
                                              const char             *actor_id,
                                              GnalkWindow            *self)
 {
-  gnalk_signaling_set_call_state (self->signaling, actor_id, 0);
+  GnalkSignaling *signaling = self->active_session
+    ? gnalk_session_get_signaling (self->active_session) : NULL;
+  if (signaling)
+    gnalk_signaling_set_call_state (signaling, actor_id, 0);
   gnalk_participants_list_update_call_state (self->participants_list, actor_id, 0);
   gnalk_incoming_call_banner_clear_responded (self->incoming_call_banner, actor_id);
 }
@@ -170,7 +163,10 @@ void
 gnalk_window_on_processor_call_ended (GnalkMessageProcessor *proc G_GNUC_UNUSED,
                                         GnalkWindow            *self)
 {
-  gnalk_signaling_clear_call_states (self->signaling);
+  GnalkSignaling *signaling = self->active_session
+    ? gnalk_session_get_signaling (self->active_session) : NULL;
+  if (signaling)
+    gnalk_signaling_clear_call_states (signaling);
   gnalk_participants_list_clear (self->participants_list);
   gnalk_incoming_call_banner_clear_all_responded (self->incoming_call_banner);
 }

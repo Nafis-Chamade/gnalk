@@ -3,12 +3,15 @@
  * Account and session management functionality extracted from gnalk-window.c.
  * Handles switching between sessions, session manager signal handlers,
  * and connecting/disconnecting session signals.
+ *
+ * Phase 6: Session is the single facade for the Window.
+ * Window connects ONLY to Session signals. Session relays Signaling,
+ * SyncCoordinator, and provides MC/CC/PC via getters.
  */
 
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
 #include "gnalk-database.h"
-#include "gnalk-conversation-data.h"
 #include <glib/gi18n.h>
 
 /* ============ Session Signal Connection Helpers ============ */
@@ -37,6 +40,18 @@ connect_session_signals (GnalkWindow  *self,
                     G_CALLBACK (gnalk_window_on_session_typing), self);
   g_signal_connect (session, "signaling-ready",
                     G_CALLBACK (gnalk_window_on_session_signaling_ready), self);
+
+  /* Relayed signaling signals (Session absorbs Signaling) */
+  g_signal_connect (session, "call-state-changed",
+                    G_CALLBACK (gnalk_window_on_session_call_state_changed), self);
+  g_signal_connect (session, "call-ended",
+                    G_CALLBACK (gnalk_window_on_session_call_ended), self);
+  g_signal_connect (session, "room-disinvited",
+                    G_CALLBACK (gnalk_window_on_session_room_disinvited), self);
+
+  /* Relayed sync coordinator signal */
+  g_signal_connect (session, "room-messages-synced",
+                    G_CALLBACK (gnalk_window_on_session_room_messages_synced), self);
 }
 
 static void
@@ -49,22 +64,92 @@ disconnect_session_signals (GnalkWindow  *self G_GNUC_UNUSED,
   g_signal_handlers_disconnect_by_data (session, self);
 }
 
+/* Disconnect MC/CC/PC signal handlers (cached from old session) */
+static void
+disconnect_controller_signals (GnalkWindow *self)
+{
+  if (self->message_controller)
+    {
+      g_signal_handlers_disconnect_by_data (self->message_controller, self);
+      self->message_controller = NULL;
+    }
+  if (self->conversation_controller)
+    {
+      g_signal_handlers_disconnect_by_data (self->conversation_controller, self);
+      self->conversation_controller = NULL;
+    }
+  if (self->participant_controller)
+    {
+      g_signal_handlers_disconnect_by_data (self->participant_controller, self);
+      self->participant_controller = NULL;
+    }
+}
+
+/* Connect signals to controllers owned by session */
+static void
+connect_controller_signals (GnalkWindow  *self,
+                            GnalkSession *session)
+{
+  /* Message controller */
+  GnalkMessageController *mc = gnalk_session_get_message_controller (session);
+  self->message_controller = mc;
+  if (mc)
+    {
+      g_signal_connect (mc, "message-sent",
+                        G_CALLBACK (gnalk_window_on_message_controller_sent), self);
+      g_signal_connect (mc, "message-send-failed",
+                        G_CALLBACK (gnalk_window_on_message_controller_send_failed), self);
+      g_signal_connect (mc, "message-edited",
+                        G_CALLBACK (gnalk_window_on_message_controller_edited), self);
+      g_signal_connect (mc, "message-deleted",
+                        G_CALLBACK (gnalk_window_on_message_controller_deleted), self);
+      g_signal_connect (mc, "reaction-added",
+                        G_CALLBACK (gnalk_window_on_message_controller_reaction_added), self);
+      g_signal_connect (mc, "upload-completed",
+                        G_CALLBACK (gnalk_window_on_message_controller_upload_completed), self);
+      g_signal_connect (mc, "upload-failed",
+                        G_CALLBACK (gnalk_window_on_message_controller_upload_failed), self);
+      g_signal_connect (mc, "messages-loaded",
+                        G_CALLBACK (gnalk_window_on_message_controller_messages_loaded), self);
+      g_signal_connect (mc, "poll-response",
+                        G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
+      g_signal_connect (mc, "older-messages-loaded",
+                        G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
+    }
+
+  /* Conversation controller */
+  GnalkConversationController *cc = gnalk_session_get_conversation_controller (session);
+  self->conversation_controller = cc;
+  if (cc)
+    {
+      g_signal_connect (cc, "conversation-created",
+                        G_CALLBACK (gnalk_window_on_conversation_controller_created), self);
+      g_signal_connect (cc, "conversation-left",
+                        G_CALLBACK (gnalk_window_on_conversation_controller_left), self);
+      g_signal_connect (cc, "conversation-deleted",
+                        G_CALLBACK (gnalk_window_on_conversation_controller_deleted), self);
+    }
+
+  /* Participant controller */
+  GnalkParticipantController *pc = gnalk_session_get_participant_controller (session);
+  self->participant_controller = pc;
+  if (pc)
+    {
+      g_signal_connect (pc, "participants-changed",
+                        G_CALLBACK (gnalk_window_on_participant_controller_changed), self);
+    }
+}
+
 /* ============ Main Session Switch Function ============ */
 
 void
 gnalk_window_switch_to_session (GnalkWindow  *self,
                                 GnalkSession *session)
 {
-  /* Disconnect from old sync coordinator signals */
-  if (self->connected_sync_coordinator)
-    {
-      g_signal_handlers_disconnect_by_data (self->connected_sync_coordinator, self);
-      self->connected_sync_coordinator = NULL;
-    }
-
-  /* Disconnect from old session */
+  /* Disconnect from old session and controllers */
   if (self->active_session)
     disconnect_session_signals (self, self->active_session);
+  disconnect_controller_signals (self);
 
   self->active_session = session;
 
@@ -88,59 +173,10 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
 
   /* Update internal references to session's components */
   self->http_client = gnalk_session_get_http_client (session);
-
-  /* Disconnect from old signaling before switching */
-  if (self->signaling)
-    g_signal_handlers_disconnect_by_data (self->signaling, self);
-
-  self->signaling = gnalk_session_get_signaling (session);
   self->sync_manager = gnalk_session_get_sync_manager (session);
 
-  /* Connect to session's sync coordinator for message/conversation update signals */
-  GnalkSyncCoordinator *coordinator = gnalk_session_get_sync_coordinator (session);
-  if (coordinator)
-    {
-      g_signal_connect_object (coordinator, "room-messages-synced",
-                               G_CALLBACK (gnalk_window_on_sync_coordinator_room_messages_synced), self,
-                               G_CONNECT_DEFAULT);
-      /* conversations-synced reload now handled by DataRepository::data-changed */
-      self->connected_sync_coordinator = coordinator;
-      g_debug ("Window: Connected to session's sync coordinator signals");
-    }
-
-  /* Connect window handlers to session's signaling */
-  if (self->signaling)
-    {
-      g_signal_connect (self->signaling, "typing",
-                        G_CALLBACK (gnalk_window_on_signaling_typing), self);
-      g_signal_connect (self->signaling, "incoming-call",
-                        G_CALLBACK (gnalk_window_on_signaling_incoming_call), self);
-      g_signal_connect (self->signaling, "call-state-changed",
-                        G_CALLBACK (gnalk_window_on_signaling_call_state_changed), self);
-      g_signal_connect (self->signaling, "call-ended",
-                        G_CALLBACK (gnalk_window_on_signaling_call_ended), self);
-      g_signal_connect (self->signaling, "room-disinvited",
-                        G_CALLBACK (gnalk_window_on_signaling_room_disinvited), self);
-    }
-
-  /* Recreate components that depend on http_client */
-  g_clear_object (&self->message_controller);
-  self->message_controller = gnalk_message_controller_new (self->http_client);
-
-  /* Set up repository integration for MessageController */
-  {
-    GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-    if (app)
-      {
-        GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
-        gint64 account_id = gnalk_session_get_account_id (session);
-        /* Get user_id from session's account, not application (multi-account fix) */
-        GnalkAccount *account = gnalk_session_get_account (session);
-        const char *user_id = gnalk_account_get_user_id (account);
-        gnalk_message_controller_set_repository (self->message_controller, repo, account_id);
-        gnalk_message_controller_set_current_user (self->message_controller, user_id);
-      }
-  }
+  /* Connect to session's controllers */
+  connect_controller_signals (self, session);
 
   /* Update processor dependencies for new session */
   {
@@ -149,37 +185,15 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
     gnalk_message_processor_set_current_user (self->message_processor, user_id);
     gnalk_message_processor_set_message_controller (self->message_processor, self->message_controller);
 
-    GnalkApplication *app2 = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-    if (app2)
+    GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+    if (app)
       {
-        GnalkDatabase *db = gnalk_application_get_database (app2);
+        GnalkDatabase *db = gnalk_application_get_database (app);
         gint64 aid = gnalk_session_get_account_id (session);
         gnalk_message_processor_set_database (self->message_processor, db);
         gnalk_message_processor_set_account_id (self->message_processor, aid);
       }
   }
-
-  /* Reconnect message controller signals */
-  g_signal_connect (self->message_controller, "message-sent",
-                    G_CALLBACK (gnalk_window_on_message_controller_sent), self);
-  g_signal_connect (self->message_controller, "message-send-failed",
-                    G_CALLBACK (gnalk_window_on_message_controller_send_failed), self);
-  g_signal_connect (self->message_controller, "message-edited",
-                    G_CALLBACK (gnalk_window_on_message_controller_edited), self);
-  g_signal_connect (self->message_controller, "message-deleted",
-                    G_CALLBACK (gnalk_window_on_message_controller_deleted), self);
-  g_signal_connect (self->message_controller, "reaction-added",
-                    G_CALLBACK (gnalk_window_on_message_controller_reaction_added), self);
-  g_signal_connect (self->message_controller, "upload-completed",
-                    G_CALLBACK (gnalk_window_on_message_controller_upload_completed), self);
-  g_signal_connect (self->message_controller, "upload-failed",
-                    G_CALLBACK (gnalk_window_on_message_controller_upload_failed), self);
-  g_signal_connect (self->message_controller, "messages-loaded",
-                    G_CALLBACK (gnalk_window_on_message_controller_messages_loaded), self);
-  g_signal_connect (self->message_controller, "poll-response",
-                    G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
-  g_signal_connect (self->message_controller, "older-messages-loaded",
-                    G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
 
   /* Close the current room via the controller before clearing tabs.
    * This backgrounds the tab, saves messages, leaves signaling/HTTP,
@@ -209,44 +223,7 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   gint64 account_id = gnalk_session_get_account_id (session);
   self->avatar_cache = gnalk_avatar_cache_new (self->http_client, account_id);
 
-  /* Recreate conversation controller with new http_client and account */
-  if (self->conversation_controller)
-    g_signal_handlers_disconnect_by_data (self->conversation_controller, self);
-  g_clear_object (&self->conversation_controller);
-  {
-    GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-    GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
-    gint64 account_id = gnalk_session_get_account_id (session);
-
-    g_debug ("switch_to_session: recreating conversation_controller with account_id=%ld", (long)account_id);
-    self->conversation_controller = gnalk_conversation_controller_new (repo, self->http_client);
-    gnalk_conversation_controller_set_account_id (self->conversation_controller, account_id);
-    /* Note: conversations-updated and new-messages-detected removed - SyncCoordinator handles sync */
-    g_signal_connect (self->conversation_controller, "conversation-created",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_created), self);
-    g_signal_connect (self->conversation_controller, "conversation-left",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_left), self);
-    g_signal_connect (self->conversation_controller, "conversation-deleted",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_deleted), self);
-  }
-
-  /* Recreate participant controller with new http_client and account */
-  if (self->participant_controller)
-    g_signal_handlers_disconnect_by_data (self->participant_controller, self);
-  g_clear_object (&self->participant_controller);
-  {
-    GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-    GnalkDatabase *db = gnalk_application_get_database (app);
-    gint64 account_id = gnalk_session_get_account_id (session);
-
-    g_debug ("switch_to_session: recreating participant_controller with account_id=%ld", (long)account_id);
-    self->participant_controller = gnalk_participant_controller_new (db, self->http_client);
-    gnalk_participant_controller_set_account_id (self->participant_controller, account_id);
-    g_signal_connect (self->participant_controller, "participants-changed",
-                      G_CALLBACK (gnalk_window_on_participant_controller_changed), self);
-  }
-
-  /* Update room controller with new session and recreated controllers */
+  /* Update room controller with new session and controllers from session */
   if (self->room_controller)
     {
       gnalk_room_controller_set_session (self->room_controller, session);
@@ -403,15 +380,6 @@ gnalk_window_on_session_manager_any_state_changed (GnalkSessionManager *manager 
   gnalk_window_on_session_state_changed (session, old_state, new_state, self);
 }
 
-/* No-op: DataRepository::data-changed handles conversation list reloads.
- * Kept as handler stub for signal compatibility. */
-void
-gnalk_window_on_session_manager_conversations_changed (GnalkSessionManager *manager G_GNUC_UNUSED,
-                                                        GnalkSession        *session G_GNUC_UNUSED,
-                                                        GnalkWindow         *self G_GNUC_UNUSED)
-{
-}
-
 /* ============ Session Disconnect Helper (for dispose) ============ */
 
 void
@@ -420,6 +388,7 @@ gnalk_window_disconnect_active_session (GnalkWindow *self)
   if (self->active_session)
     {
       disconnect_session_signals (self, self->active_session);
+      disconnect_controller_signals (self);
       self->active_session = NULL;
     }
 }

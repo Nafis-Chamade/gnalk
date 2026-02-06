@@ -13,6 +13,9 @@
 #include "gnalk-conversation-data.h"
 #include "gnalk-data-repository.h"
 #include "gnalk-notification-service.h"
+#include "gnalk-message-controller.h"
+#include "gnalk-conversation-controller.h"
+#include "gnalk-participant-controller.h"
 
 G_BEGIN_DECLS
 
@@ -143,10 +146,13 @@ void gnalk_session_send_file (GnalkSession *self,
                                 const char    *reference_id);
 
 /* Internal component access (for call window, etc.) */
-GnalkHttpClient      *gnalk_session_get_http_client      (GnalkSession *self);
-GnalkSignaling       *gnalk_session_get_signaling        (GnalkSession *self);
-GnalkSyncManager     *gnalk_session_get_sync_manager     (GnalkSession *self);
-GnalkSyncCoordinator *gnalk_session_get_sync_coordinator (GnalkSession *self);
+GnalkHttpClient             *gnalk_session_get_http_client             (GnalkSession *self);
+GnalkSignaling              *gnalk_session_get_signaling               (GnalkSession *self);
+GnalkSyncManager            *gnalk_session_get_sync_manager            (GnalkSession *self);
+GnalkSyncCoordinator        *gnalk_session_get_sync_coordinator        (GnalkSession *self);
+GnalkMessageController      *gnalk_session_get_message_controller      (GnalkSession *self);
+GnalkConversationController *gnalk_session_get_conversation_controller (GnalkSession *self);
+GnalkParticipantController  *gnalk_session_get_participant_controller  (GnalkSession *self);
 
 /* Signaling settings (set after auth, used for connecting signaling) */
 void gnalk_session_set_signaling_settings (GnalkSession *self,

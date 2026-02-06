@@ -104,11 +104,11 @@ struct _GnalkWindow
 
   GnalkHttpClient      *http_client;
   GnalkAvatarCache     *avatar_cache;
-  GnalkSignaling       *signaling;
   GnalkWebrtc          *webrtc;
   GnalkPushClient      *push_client;
   GnalkSyncManager     *sync_manager;
-  GnalkMessageController *message_controller;
+  /* Cached from active session (not owned - Session manages lifecycle) */
+  GnalkMessageController      *message_controller;
   GnalkConversationController *conversation_controller;
   GnalkParticipantController  *participant_controller;
   GnalkRoomController         *room_controller;
@@ -129,7 +129,6 @@ struct _GnalkWindow
 
   GnalkMessageDisplayMode message_display_mode;  /* Bubbles (narrow) or aligned (wide) */
   char   *user_name;
-  guint   poll_timeout_id;
   guint   typing_send_timer_id;  /* Timer for throttling typing messages */
   gboolean has_active_room;
 
@@ -138,7 +137,6 @@ struct _GnalkWindow
   gboolean had_connection_error;     /* Had a connection error (for banner/toast) */
   gboolean initial_auth_done;        /* First auth attempt completed */
   gboolean initial_conversations_loaded;  /* First conversation list load done */
-  GnalkSyncCoordinator *connected_sync_coordinator;  /* Current session's coordinator, signals connected */
   gboolean was_active;               /* Previous window active state (to detect app switch vs popover) */
 
   GnalkCallWindow *active_call_window;  /* Currently active call window, if any */
@@ -197,7 +195,6 @@ enum {
 
 /* ============ Login functions (gnalk-window-login.c) ============ */
 
-void gnalk_window_login_init         (GnalkWindow *self);
 void gnalk_window_start_login        (GnalkWindow *self);
 void gnalk_window_start_guest_login  (GnalkWindow *self);
 void gnalk_window_show_login_view    (GnalkWindow *self);
@@ -225,10 +222,6 @@ void gnalk_window_on_session_manager_any_state_changed (GnalkSessionManager *man
                                                          int old_state,
                                                          int new_state,
                                                          GnalkWindow *self);
-void gnalk_window_on_session_manager_conversations_changed (GnalkSessionManager *manager,
-                                                             GnalkSession *session,
-                                                             GnalkWindow *self);
-
 /* ============ Read status functions (gnalk-window-read-status.c) ============ */
 
 void gnalk_window_clear_read_status_tracking           (GnalkWindow *self);
@@ -252,7 +245,6 @@ void gnalk_window_on_message_input_send_requested          (GnalkMessageInput *i
 
 /* ============ Message display functions (gnalk-window-message-display.c) ============ */
 
-gint gnalk_window_compare_messages_by_id (gconstpointer a, gconstpointer b, gpointer user_data);
 void gnalk_window_clear_messages_store       (GnalkWindow *self);
 void gnalk_window_update_messages_is_own     (GnalkWindow *self);
 void gnalk_window_load_messages_from_db      (GnalkWindow *self, const char *room_token);
@@ -371,15 +363,7 @@ void gnalk_window_on_conv_favorite_toggled     (GnalkConversationRow *row, const
 /* Session disconnect helper for dispose */
 void gnalk_window_disconnect_active_session (GnalkWindow *self);
 
-/* ============ Sync coordinator signal handlers (gnalk-window.c) ============ */
-
-/* Used by gnalk-window-account-session.c when connecting to session's coordinator */
-void gnalk_window_on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator,
-                                                           const char           *room_token,
-                                                           guint                 count,
-                                                           gpointer              user_data);
-void gnalk_window_on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator,
-                                                           gpointer              user_data);
+/* Sync coordinator handlers removed - Session relays sync signals */
 
 /* ============ Session signal handlers (gnalk-window.c, called from account-session.c) ============ */
 
@@ -394,12 +378,13 @@ void gnalk_window_on_session_incoming_call            (GnalkSession *session, co
 void gnalk_window_on_session_typing                   (GnalkSession *session, const char *room_token, const char *session_id, const char *display_name, gboolean is_typing, GnalkWindow *self);
 void gnalk_window_on_session_signaling_ready          (GnalkSession *session, GnalkWindow *self);
 
-/* Signaling signals */
-void gnalk_window_on_signaling_typing                 (GnalkSignaling *signaling, const char *session_id, const char *display_name, gboolean is_typing, GnalkWindow *self);
-void gnalk_window_on_signaling_incoming_call          (GnalkSignaling *signaling, const char *session_id, const char *actor_id, gint64 in_call_flags, GnalkWindow *self);
-void gnalk_window_on_signaling_call_state_changed     (GnalkSignaling *signaling, const char *actor_id, gint64 in_call, GnalkWindow *self);
-void gnalk_window_on_signaling_call_ended             (GnalkSignaling *signaling, GnalkWindow *self);
-void gnalk_window_on_signaling_room_disinvited        (GnalkSignaling *signaling, const char *room_token, GnalkWindow *self);
+/* Relayed signaling signals (now via Session facade) */
+void gnalk_window_on_session_call_state_changed       (GnalkSession *session, const char *actor_id, gint64 in_call, GnalkWindow *self);
+void gnalk_window_on_session_call_ended               (GnalkSession *session, GnalkWindow *self);
+void gnalk_window_on_session_room_disinvited          (GnalkSession *session, const char *room_token, GnalkWindow *self);
+
+/* Relayed sync coordinator signals (now via Session facade) */
+void gnalk_window_on_session_room_messages_synced     (GnalkSession *session, const char *room_token, guint count, GnalkWindow *self);
 
 /* Message controller signals */
 void gnalk_window_on_message_controller_sent          (GnalkMessageController *controller, const char *reference_id, gint64 message_id, gint64 timestamp, GnalkWindow *self);

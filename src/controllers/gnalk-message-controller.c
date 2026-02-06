@@ -1,5 +1,6 @@
 #include "gnalk-message-controller.h"
 #include "gnalk-message-data.h"
+#include "gnalk-async-op.h"
 #include <glib/gi18n.h>
 
 struct _GnalkMessageController
@@ -60,28 +61,7 @@ static void on_edit_response (GnalkHttpClient *client, JsonNode *response, GErro
 static void on_delete_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_reaction_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 
-/* Callback data structures */
-typedef struct {
-  GnalkMessageController *controller;
-  guint                    generation;
-} MessageResponseData;
-
-typedef struct {
-  GnalkMessageController *controller;
-  char                    *reference_id;
-} SendMessageData;
-
-typedef struct {
-  GnalkMessageController *controller;
-  gint64                   message_id;
-} EditDeleteData;
-
-typedef struct {
-  GnalkMessageController *controller;
-  gint64                   message_id;
-  char                    *emoji;
-} ReactionData;
-
+/* FileUploadData: uses its own GWeakRef pattern (multi-step chain with many fields) */
 typedef struct {
   GWeakRef                 controller_ref;  /* weak ref to avoid use-after-free */
   char                    *remote_path;
@@ -426,31 +406,27 @@ on_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
                       GError           *error,
                       gpointer          user_data)
 {
-  MessageResponseData *cb_data = user_data;
-  guint expected_generation = cb_data->generation;
+  GnalkAsyncOp *op = user_data;
 
-  /* Check for cancellation BEFORE accessing controller - the controller may have
-   * been destroyed if the request was cancelled during window/controller teardown */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_slice_free (MessageResponseData, cb_data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = cb_data->controller;
-  g_slice_free (MessageResponseData, cb_data);
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
 
   if (error)
     {
       g_warning ("Failed to get messages: %s", error->message);
-      return;
-    }
-
-  /* Discard stale response */
-  if (expected_generation != self->generation)
-    {
-      g_debug ("Discarding stale message response (gen %u vs current %u)",
-               expected_generation, self->generation);
       return;
     }
 
@@ -470,9 +446,7 @@ gnalk_message_controller_load_messages (GnalkMessageController *self)
   g_return_if_fail (self->http_client != NULL);
   g_return_if_fail (self->room_token != NULL);
 
-  MessageResponseData *cb_data = g_slice_new (MessageResponseData);
-  cb_data->controller = self;
-  cb_data->generation = self->generation;
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation, NULL, 0);
 
   gnalk_http_client_get_messages (self->http_client,
                                     self->room_token,
@@ -480,7 +454,7 @@ gnalk_message_controller_load_messages (GnalkMessageController *self)
                                     FALSE,
                                     0,  /* timeout (unused for lookIntoFuture=FALSE) */
                                     on_messages_response,
-                                    cb_data);
+                                    op);
 }
 
 static void
@@ -489,28 +463,27 @@ on_new_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
                           GError           *error,
                           gpointer          user_data)
 {
-  MessageResponseData *cb_data = user_data;
-  guint expected_generation = cb_data->generation;
+  GnalkAsyncOp *op = user_data;
 
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_slice_free (MessageResponseData, cb_data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = cb_data->controller;
-  g_slice_free (MessageResponseData, cb_data);
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
 
   if (error)
     {
       g_warning ("Failed to get new messages: %s", error->message);
-      return;
-    }
-
-  if (expected_generation != self->generation)
-    {
-      g_debug ("Discarding stale new messages response (gen %u vs current %u)",
-               expected_generation, self->generation);
       return;
     }
 
@@ -548,9 +521,7 @@ gnalk_message_controller_load_new_messages (GnalkMessageController *self,
 
   self->last_known_message_id = since_id;
 
-  MessageResponseData *cb_data = g_slice_new (MessageResponseData);
-  cb_data->controller = self;
-  cb_data->generation = self->generation;
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation, NULL, 0);
 
   /* Use lookIntoFuture=TRUE to get messages after the given ID */
   gnalk_http_client_get_messages (self->http_client,
@@ -559,7 +530,7 @@ gnalk_message_controller_load_new_messages (GnalkMessageController *self,
                                     TRUE,
                                     0,  /* timeout=0 for non-blocking request */
                                     on_new_messages_response,
-                                    cb_data);
+                                    op);
 }
 
 /* ============ Older Messages (History) ============ */
@@ -570,30 +541,37 @@ on_older_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
                             GError           *error,
                             gpointer          user_data)
 {
-  MessageResponseData *cb_data = user_data;
-  guint expected_generation = cb_data->generation;
+  GnalkAsyncOp *op = user_data;
 
-  /* Check for cancellation BEFORE accessing controller - the controller may have
-   * been destroyed if the request was cancelled during window/controller teardown */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_slice_free (MessageResponseData, cb_data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = cb_data->controller;
-  g_slice_free (MessageResponseData, cb_data);
+  /* Always clear loading_older if owner is alive, even for stale responses */
+  GObject *owner_check = gnalk_async_op_get_owner (op);
+  if (owner_check)
+    {
+      GNALK_MESSAGE_CONTROLLER (owner_check)->loading_older = FALSE;
+      g_object_unref (owner_check);
+    }
 
-  self->loading_older = FALSE;
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
 
   if (error)
     {
       g_warning ("Failed to get older messages: %s", error->message);
       return;
     }
-
-  if (expected_generation != self->generation)
-    return;
 
   JsonArray *messages = extract_messages_array (response);
   if (messages)
@@ -626,9 +604,7 @@ gnalk_message_controller_load_older_messages (GnalkMessageController *self,
 
   self->loading_older = TRUE;
 
-  MessageResponseData *cb_data = g_slice_new (MessageResponseData);
-  cb_data->controller = self;
-  cb_data->generation = self->generation;
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation, NULL, 0);
 
   /* Use look_into_future=FALSE to get messages before the given ID */
   gnalk_http_client_get_messages (self->http_client,
@@ -637,7 +613,7 @@ gnalk_message_controller_load_older_messages (GnalkMessageController *self,
                                     FALSE,  /* look_into_future=FALSE means get older */
                                     0,      /* timeout (unused for lookIntoFuture=FALSE) */
                                     on_older_messages_response,
-                                    cb_data);
+                                    op);
 }
 
 /* ============ Long Polling ============ */
@@ -661,19 +637,23 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
                   GError           *error,
                   gpointer          user_data)
 {
-  MessageResponseData *cb_data = user_data;
-  guint expected_generation = cb_data->generation;
+  GnalkAsyncOp *op = user_data;
 
-  /* Check for cancellation BEFORE accessing controller - the controller may have
-   * been destroyed if the request was cancelled during window/controller teardown */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_slice_free (MessageResponseData, cb_data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = cb_data->controller;
-  g_slice_free (MessageResponseData, cb_data);
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
 
   if (error)
     {
@@ -683,9 +663,6 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
         self->poll_retry_timeout_id = g_timeout_add_seconds (5, poll_retry_timeout, self);
       return;
     }
-
-  if (expected_generation != self->generation)
-    return;
 
   JsonArray *messages = extract_messages_array (response);
   if (messages)
@@ -771,9 +748,7 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
    * (don't call start_polling which would return early since polling=TRUE) */
   if (self->polling && self->room_token)
     {
-      MessageResponseData *poll_data = g_slice_new (MessageResponseData);
-      poll_data->controller = self;
-      poll_data->generation = self->generation;
+      GnalkAsyncOp *poll_op = gnalk_async_op_new (G_OBJECT (self), &self->generation, NULL, 0);
 
       gnalk_http_client_get_messages (self->http_client,
                                         self->room_token,
@@ -781,7 +756,7 @@ on_poll_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                         TRUE,  /* long poll */
                                         30,    /* 30 second timeout */
                                         on_poll_response,
-                                        poll_data);
+                                        poll_op);
     }
 }
 
@@ -802,9 +777,7 @@ gnalk_message_controller_start_polling (GnalkMessageController *self,
   self->polling = TRUE;
   self->last_known_message_id = last_known_id;
 
-  MessageResponseData *cb_data = g_slice_new (MessageResponseData);
-  cb_data->controller = self;
-  cb_data->generation = self->generation;
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation, NULL, 0);
 
   if (last_known_id == 0)
     {
@@ -815,7 +788,7 @@ gnalk_message_controller_start_polling (GnalkMessageController *self,
                                         FALSE,  /* lookIntoFuture=FALSE to get recent messages */
                                         0,      /* no timeout for non-polling request */
                                         on_initial_messages_response,
-                                        cb_data);
+                                        op);
     }
   else
     {
@@ -826,7 +799,7 @@ gnalk_message_controller_start_polling (GnalkMessageController *self,
                                         TRUE,  /* wait (long poll) */
                                         30,    /* 30 second timeout */
                                         on_poll_response,
-                                        cb_data);
+                                        op);
     }
 }
 
@@ -836,27 +809,27 @@ on_initial_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                GError           *error,
                                gpointer          user_data)
 {
-  MessageResponseData *cb_data = user_data;
-  guint expected_generation = cb_data->generation;
+  GnalkAsyncOp *op = user_data;
 
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_slice_free (MessageResponseData, cb_data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = cb_data->controller;
-  g_slice_free (MessageResponseData, cb_data);
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
 
   if (error)
     {
       g_warning ("Failed to get initial messages: %s", error->message);
-      return;
-    }
-
-  if (expected_generation != self->generation)
-    {
-      g_debug ("Discarding stale initial messages response");
       return;
     }
 
@@ -882,9 +855,7 @@ on_initial_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
         {
           self->last_known_message_id = highest_id;
 
-          MessageResponseData *poll_data = g_slice_new (MessageResponseData);
-          poll_data->controller = self;
-          poll_data->generation = self->generation;
+          GnalkAsyncOp *poll_op = gnalk_async_op_new (G_OBJECT (self), &self->generation, NULL, 0);
 
           gnalk_http_client_get_messages (self->http_client,
                                             self->room_token,
@@ -892,7 +863,7 @@ on_initial_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                             TRUE,  /* long poll */
                                             30,
                                             on_poll_response,
-                                            poll_data);
+                                            poll_op);
         }
     }
 }
@@ -928,25 +899,30 @@ on_send_response (GnalkHttpClient *client G_GNUC_UNUSED,
                   GError           *error,
                   gpointer          user_data)
 {
-  SendMessageData *data = user_data;
+  GnalkAsyncOp *op = user_data;
 
-  /* Check for cancellation BEFORE accessing controller */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_free (data->reference_id);
-      g_free (data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = data->controller;
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  if (!owner)
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  const char *reference_id = op->context_data;
 
   if (error)
     {
       g_warning ("Failed to send message: %s", error->message);
       g_signal_emit (self, signals[SIGNAL_MESSAGE_SEND_FAILED], 0,
-                     data->reference_id, error->message);
-      g_free (data->reference_id);
-      g_free (data);
+                     reference_id, error->message);
+      gnalk_async_op_free (op);
       return;
     }
 
@@ -1014,8 +990,7 @@ on_send_response (GnalkHttpClient *client G_GNUC_UNUSED,
         }
     }
 
-  g_free (data->reference_id);
-  g_free (data);
+  gnalk_async_op_free (op);
 }
 
 void
@@ -1029,9 +1004,7 @@ gnalk_message_controller_send_message (GnalkMessageController *self,
   g_return_if_fail (self->room_token != NULL);
   g_return_if_fail (message != NULL && *message);
 
-  SendMessageData *data = g_new0 (SendMessageData, 1);
-  data->controller = self;
-  data->reference_id = g_strdup (reference_id);
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), NULL, reference_id, 0);
 
   gnalk_http_client_send_message (self->http_client,
                                     self->room_token,
@@ -1039,7 +1012,7 @@ gnalk_message_controller_send_message (GnalkMessageController *self,
                                     reply_to,
                                     reference_id,
                                     on_send_response,
-                                    data);
+                                    op);
 }
 
 /* ============ Edit Message ============ */
@@ -1050,18 +1023,24 @@ on_edit_response (GnalkHttpClient *client G_GNUC_UNUSED,
                   GError           *error,
                   gpointer          user_data)
 {
-  EditDeleteData *data = user_data;
-  gint64 message_id = data->message_id;
+  GnalkAsyncOp *op = user_data;
 
-  /* Check for cancellation BEFORE accessing controller */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_free (data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = data->controller;
-  g_free (data);
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  if (!owner)
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gint64 message_id = op->context_id;
+  gnalk_async_op_free (op);
 
   if (error)
     {
@@ -1084,16 +1063,14 @@ gnalk_message_controller_edit_message (GnalkMessageController *self,
   g_return_if_fail (self->room_token != NULL);
   g_return_if_fail (new_text != NULL && *new_text);
 
-  EditDeleteData *data = g_new0 (EditDeleteData, 1);
-  data->controller = self;
-  data->message_id = message_id;
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), NULL, NULL, message_id);
 
   gnalk_http_client_edit_message (self->http_client,
                                     self->room_token,
                                     message_id,
                                     new_text,
                                     on_edit_response,
-                                    data);
+                                    op);
 }
 
 /* ============ Delete Message ============ */
@@ -1104,18 +1081,24 @@ on_delete_response (GnalkHttpClient *client G_GNUC_UNUSED,
                     GError           *error,
                     gpointer          user_data)
 {
-  EditDeleteData *data = user_data;
-  gint64 message_id = data->message_id;
+  GnalkAsyncOp *op = user_data;
 
-  /* Check for cancellation BEFORE accessing controller */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_free (data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = data->controller;
-  g_free (data);
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  if (!owner)
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gint64 message_id = op->context_id;
+  gnalk_async_op_free (op);
 
   if (error)
     {
@@ -1136,15 +1119,13 @@ gnalk_message_controller_delete_message (GnalkMessageController *self,
   g_return_if_fail (self->http_client != NULL);
   g_return_if_fail (self->room_token != NULL);
 
-  EditDeleteData *data = g_new0 (EditDeleteData, 1);
-  data->controller = self;
-  data->message_id = message_id;
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), NULL, NULL, message_id);
 
   gnalk_http_client_delete_message (self->http_client,
                                       self->room_token,
                                       message_id,
                                       on_delete_response,
-                                      data);
+                                      op);
 }
 
 /* ============ Reactions ============ */
@@ -1155,19 +1136,24 @@ on_reaction_response (GnalkHttpClient *client G_GNUC_UNUSED,
                       GError           *error,
                       gpointer          user_data)
 {
-  ReactionData *data = user_data;
-  gint64 message_id = data->message_id;
-  char *emoji = data->emoji;
+  GnalkAsyncOp *op = user_data;
 
-  /* Check for cancellation BEFORE accessing controller */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      g_free (emoji);
-      g_free (data);
+      gnalk_async_op_free (op);
       return;
     }
 
-  GnalkMessageController *self = data->controller;
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  if (!owner)
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gint64 message_id = op->context_id;
+  const char *emoji = op->context_data;
 
   if (error)
     {
@@ -1180,8 +1166,7 @@ on_reaction_response (GnalkHttpClient *client G_GNUC_UNUSED,
       g_signal_emit (self, signals[SIGNAL_REACTION_ADDED], 0, message_id, emoji);
     }
 
-  g_free (emoji);
-  g_free (data);
+  gnalk_async_op_free (op);
 }
 
 void
@@ -1194,17 +1179,14 @@ gnalk_message_controller_add_reaction (GnalkMessageController *self,
   g_return_if_fail (self->room_token != NULL);
   g_return_if_fail (emoji != NULL && *emoji);
 
-  ReactionData *data = g_new0 (ReactionData, 1);
-  data->controller = self;
-  data->message_id = message_id;
-  data->emoji = g_strdup (emoji);
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), NULL, emoji, message_id);
 
   gnalk_http_client_add_reaction (self->http_client,
                                     self->room_token,
                                     message_id,
                                     emoji,
                                     on_reaction_response,
-                                    data);
+                                    op);
 }
 
 /* ============ File Upload ============ */

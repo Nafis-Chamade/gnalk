@@ -2,6 +2,10 @@
 #include "gnalk-application.h"
 #include "gnalk-push-client.h"
 #include "gnalk-sync-coordinator.h"
+#include "gnalk-async-op.h"
+#include "gnalk-message-controller.h"
+#include "gnalk-conversation-controller.h"
+#include "gnalk-participant-controller.h"
 
 struct _GnalkSession
 {
@@ -16,10 +20,13 @@ struct _GnalkSession
   GnalkNetworkMonitor *network_monitor;
 
   /* Owned components */
-  GnalkHttpClient      *http_client;
-  GnalkSignaling       *signaling;
-  GnalkSyncManager     *sync_manager;
-  GnalkSyncCoordinator *sync_coordinator;
+  GnalkHttpClient             *http_client;
+  GnalkSignaling              *signaling;
+  GnalkSyncManager            *sync_manager;
+  GnalkSyncCoordinator        *sync_coordinator;
+  GnalkMessageController      *message_controller;
+  GnalkConversationController *conversation_controller;
+  GnalkParticipantController  *participant_controller;
 
   /* Shared resources for sync coordinator (not owned) */
   GnalkDataRepository      *data_repository;
@@ -50,8 +57,6 @@ struct _GnalkSession
   char *current_room_token;
   char *current_session_id;
   gboolean signaling_room_confirmed;
-  guint room_join_generation;
-
   /* Conversations */
   GListStore *conversations;
   int total_unread;
@@ -63,6 +68,10 @@ struct _GnalkSession
   gulong signaling_connection_lost_handler_id;
   gulong signaling_typing_handler_id;
   gulong signaling_incoming_call_handler_id;
+  gulong signaling_call_state_changed_handler_id;
+  gulong signaling_call_ended_handler_id;
+  gulong signaling_room_disinvited_handler_id;
+  gulong sync_room_messages_synced_handler_id;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkSession, gnalk_session, G_TYPE_OBJECT)
@@ -80,6 +89,10 @@ enum {
   SIGNAL_SIGNALING_READY,
   SIGNAL_INCOMING_CALL,
   SIGNAL_TYPING,
+  SIGNAL_CALL_STATE_CHANGED,
+  SIGNAL_CALL_ENDED,
+  SIGNAL_ROOM_DISINVITED,
+  SIGNAL_ROOM_MESSAGES_SYNCED,
   N_SIGNALS
 };
 
@@ -148,6 +161,9 @@ gnalk_session_finalize (GObject *object)
   g_clear_object (&self->signaling);
   g_clear_object (&self->sync_manager);
   g_clear_object (&self->sync_coordinator);
+  g_clear_object (&self->message_controller);
+  g_clear_object (&self->conversation_controller);
+  g_clear_object (&self->participant_controller);
   g_clear_object (&self->conversations);
   g_clear_object (&self->account);
   g_clear_object (&self->database);
@@ -223,6 +239,24 @@ gnalk_session_class_init (GnalkSessionClass *klass)
     g_signal_new ("typing", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL, G_TYPE_NONE, 4,
                   G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
+
+  signals[SIGNAL_CALL_STATE_CHANGED] =
+    g_signal_new ("call-state-changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL, G_TYPE_NONE, 2,
+                  G_TYPE_STRING, G_TYPE_INT64);
+
+  signals[SIGNAL_CALL_ENDED] =
+    g_signal_new ("call-ended", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+
+  signals[SIGNAL_ROOM_DISINVITED] =
+    g_signal_new ("room-disinvited", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+
+  signals[SIGNAL_ROOM_MESSAGES_SYNCED] =
+    g_signal_new ("room-messages-synced", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL, G_TYPE_NONE, 2,
+                  G_TYPE_STRING, G_TYPE_UINT);
 }
 
 static void
@@ -336,6 +370,79 @@ on_signaling_incoming_call (GnalkSignaling *signaling G_GNUC_UNUSED,
     }
 }
 
+/* Relay handlers for signaling signals */
+static void
+on_signaling_call_state_changed (GnalkSignaling *signaling G_GNUC_UNUSED,
+                                 const char      *actor_id,
+                                 gint64           in_call,
+                                 GnalkSession   *self)
+{
+  g_signal_emit (self, signals[SIGNAL_CALL_STATE_CHANGED], 0, actor_id, in_call);
+}
+
+static void
+on_signaling_call_ended (GnalkSignaling *signaling G_GNUC_UNUSED,
+                         GnalkSession   *self)
+{
+  g_signal_emit (self, signals[SIGNAL_CALL_ENDED], 0);
+}
+
+static void
+on_signaling_room_disinvited (GnalkSignaling *signaling G_GNUC_UNUSED,
+                              const char      *room_token,
+                              GnalkSession   *self)
+{
+  g_signal_emit (self, signals[SIGNAL_ROOM_DISINVITED], 0, room_token);
+}
+
+/* Relay handler for sync coordinator */
+static void
+on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
+                                         const char            *room_token,
+                                         guint                  count,
+                                         GnalkSession         *self)
+{
+  g_signal_emit (self, signals[SIGNAL_ROOM_MESSAGES_SYNCED], 0, room_token, count);
+}
+
+/* Helper to create controllers and connect to signaling relay signals */
+static void
+setup_controllers_and_relays (GnalkSession *self)
+{
+  /* Create controllers */
+  self->message_controller = gnalk_message_controller_new (self->http_client);
+  if (self->data_repository)
+    gnalk_message_controller_set_repository (self->message_controller,
+                                             self->data_repository,
+                                             gnalk_account_get_id (self->account));
+  gnalk_message_controller_set_current_user (self->message_controller,
+                                             gnalk_account_get_user_id (self->account));
+
+  if (self->data_repository)
+    {
+      self->conversation_controller = gnalk_conversation_controller_new (self->data_repository,
+                                                                         self->http_client);
+      gnalk_conversation_controller_set_account_id (self->conversation_controller,
+                                                    gnalk_account_get_id (self->account));
+    }
+
+  self->participant_controller = gnalk_participant_controller_new (self->database,
+                                                                   self->http_client);
+  gnalk_participant_controller_set_account_id (self->participant_controller,
+                                              gnalk_account_get_id (self->account));
+
+  /* Connect to remaining signaling signals for relay */
+  self->signaling_call_state_changed_handler_id =
+    g_signal_connect (self->signaling, "call-state-changed",
+                      G_CALLBACK (on_signaling_call_state_changed), self);
+  self->signaling_call_ended_handler_id =
+    g_signal_connect (self->signaling, "call-ended",
+                      G_CALLBACK (on_signaling_call_ended), self);
+  self->signaling_room_disinvited_handler_id =
+    g_signal_connect (self->signaling, "room-disinvited",
+                      G_CALLBACK (on_signaling_room_disinvited), self);
+}
+
 /* Constructor */
 GnalkSession *
 gnalk_session_new (GnalkAccount             *account,
@@ -383,6 +490,9 @@ gnalk_session_new (GnalkAccount             *account,
   self->network_changed_handler_id =
     g_signal_connect (network_monitor, "network-changed",
                       G_CALLBACK (on_network_changed), self);
+
+  /* Create controllers and relay remaining signaling signals */
+  setup_controllers_and_relays (self);
 
   /* Load cached conversations */
   GListStore *cached = gnalk_database_load_conversations (database,
@@ -462,6 +572,9 @@ gnalk_session_new_guest (const char               *server_url,
     g_signal_connect (network_monitor, "network-changed",
                       G_CALLBACK (on_network_changed), self);
 
+  /* Create controllers and relay remaining signaling signals */
+  setup_controllers_and_relays (self);
+
   /* Guest sessions don't load cached conversations - they only have one room */
 
   return self;
@@ -495,6 +608,10 @@ set_state (GnalkSession *self, GnalkSessionState new_state)
         {
           self->sync_coordinator = gnalk_sync_coordinator_new (self->data_repository,
                                                                self->notification_service);
+          /* Connect relay for room-messages-synced */
+          self->sync_room_messages_synced_handler_id =
+            g_signal_connect (self->sync_coordinator, "room-messages-synced",
+                              G_CALLBACK (on_sync_coordinator_room_messages_synced), self);
         }
 
       /* Configure and start sync coordinator */
@@ -1332,7 +1449,21 @@ on_room_join_response (GnalkHttpClient *client G_GNUC_UNUSED,
                        GError           *error,
                        gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+
+  if (!owner)
+    return;
+
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {
@@ -1413,8 +1544,9 @@ gnalk_session_join_room (GnalkSession *self,
         {
           g_message ("Session %s: Doing HTTP join for room %s to get session_id",
                      gnalk_account_get_user_id (self->account), room_token);
+          GnalkAsyncOp *join_op = gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0);
           gnalk_http_client_join_room (self->http_client, room_token,
-                                       on_room_join_response, self);
+                                       on_room_join_response, join_op);
         }
       return;
     }
@@ -1423,7 +1555,6 @@ gnalk_session_join_room (GnalkSession *self,
   if (self->current_room_token)
     gnalk_session_leave_room (self);
 
-  self->room_join_generation++;
   g_free (self->current_room_token);
   self->current_room_token = g_strdup (room_token);
   g_clear_pointer (&self->current_session_id, g_free);  /* Clear old session_id */
@@ -1436,10 +1567,11 @@ gnalk_session_join_room (GnalkSession *self,
       return;
     }
 
+  GnalkAsyncOp *join_op = gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0);
   gnalk_http_client_join_room (self->http_client,
                                  room_token,
                                  on_room_join_response,
-                                 self);
+                                 join_op);
 }
 
 void
@@ -1575,6 +1707,27 @@ gnalk_session_get_sync_coordinator (GnalkSession *self)
 {
   g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
   return self->sync_coordinator;
+}
+
+GnalkMessageController *
+gnalk_session_get_message_controller (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
+  return self->message_controller;
+}
+
+GnalkConversationController *
+gnalk_session_get_conversation_controller (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
+  return self->conversation_controller;
+}
+
+GnalkParticipantController *
+gnalk_session_get_participant_controller (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
+  return self->participant_controller;
 }
 
 void

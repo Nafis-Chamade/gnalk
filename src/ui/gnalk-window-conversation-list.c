@@ -275,27 +275,17 @@ load_conversations_from_db_finish (GObject      *source_object,
 
   g_object_unref (cached);
 
-  /* Only sort if something changed - avoids UI flicker on unchanged data */
+  /* Sort if something changed - avoids unnecessary work on unchanged data */
   if (has_changes || is_initial_load)
-    {
-      g_list_store_sort (self->conversations_store, gnalk_window_compare_conversations_by_activity, NULL);
-      g_message ("Loaded %u conversations from database (changes: %s)", n_cached, has_changes ? "yes" : "no");
+    g_list_store_sort (self->conversations_store, gnalk_window_compare_conversations_by_activity, NULL);
 
-      /* Force GTK to re-bind items since update_from_data modifies data in-place
-       * but doesn't emit property notifications. This ensures widgets refresh. */
-      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
-      if (n_items > 0)
-        g_list_model_items_changed (G_LIST_MODEL (self->conversations_store), 0, n_items, n_items);
-    }
-  else
-    {
-      g_message ("Conversation list unchanged (%u items), forcing refresh anyway", n_cached);
-      /* Force refresh even when no changes detected - the in-place update
-       * comparison might miss some changes, and forcing a refresh is cheap */
-      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
-      if (n_items > 0)
-        g_list_model_items_changed (G_LIST_MODEL (self->conversations_store), 0, n_items, n_items);
-    }
+  g_message ("Loaded %u conversations from database (changes: %s)", n_cached, has_changes ? "yes" : "no");
+
+  /* Force GTK to re-bind items since update_from_data modifies data in-place
+   * but doesn't emit property notifications. This ensures widgets refresh. */
+  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+  if (n_items > 0)
+    g_list_model_items_changed (G_LIST_MODEL (self->conversations_store), 0, n_items, n_items);
 
   /* Scroll to top only on initial load - preserves scroll position on refresh */
   if (is_initial_load)

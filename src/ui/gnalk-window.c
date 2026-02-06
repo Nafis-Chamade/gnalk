@@ -51,76 +51,20 @@ G_DEFINE_FINAL_TYPE (GnalkWindow, gnalk_window, ADW_TYPE_APPLICATION_WINDOW)
 /* Property specs - exported for use in gnalk-window-login.c */
 GParamSpec *gnalk_window_properties[GNALK_WINDOW_N_PROPS];
 
-/* Login functions are in gnalk-window-login.c - declarations in gnalk-window-private.h */
-
 static void on_set_status_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
-
-/* Session management functions are in gnalk-window-account-session.c:
- * - gnalk_window_switch_to_session()
- * - gnalk_window_on_session_manager_active_changed()
- * - gnalk_window_on_session_manager_any_state_changed()
- * - gnalk_window_on_session_manager_conversations_changed()
- * - gnalk_window_disconnect_active_session()
- */
 
 /* AppState signal handlers (new async startup architecture) */
 static void on_app_state_loading_changed (GnalkAppState *app_state, gboolean is_loading, GnalkWindow *self);
 
-/* Session signal handlers - connected by gnalk-window-account-session.c, implemented here.
- * Declarations are in gnalk-window-private.h for use by account-session.c */
-
-/* Signaling signal handlers - connected by gnalk-window-account-session.c, implemented here.
- * Declarations are in gnalk-window-private.h for use by account-session.c */
-
-/* Message controller signal handlers - connected by gnalk-window-account-session.c, implemented here.
- * Declarations are in gnalk-window-private.h for use by account-session.c */
-/* Messages loaded, poll response, older messages handlers are in gnalk-window-message-display.c */
-
-/* Conversation controller signal handlers - now in gnalk-window-conversation-list.c */
-
-/* Participant controller signal handlers - connected by gnalk-window-account-session.c, implemented here.
- * Declarations are in gnalk-window-private.h for use by account-session.c */
-
-/* load_messages_from_db is now gnalk_window_load_messages_from_db in gnalk-window-message-display.c */
-/* load_conversations_from_db is now declared in gnalk-window-private.h as gnalk_window_load_conversations_from_db */
-/* maybe_restore_last_room is now gnalk_window_maybe_restore_last_room (declared in private.h, called from conversation-list.c) */
-/* save_messages_to_db is now gnalk_window_save_messages_to_db in gnalk-window-message-display.c */
-/* gnalk_window_compare_conversations_by_activity is now gnalk_window_gnalk_window_compare_conversations_by_activity in gnalk-window-conversation-list.c */
-/* update_call_button_state is now gnalk_window_update_call_button_state - see below */
-/* update_read_status is now gnalk_window_update_read_status in gnalk-window-read-status.c */
 static void on_reaction_requested (GnalkMessageRow *row, gint64 message_id, const char *emoji, gpointer user_data);
 static void on_file_clicked (GnalkMessageRow *row, const char *file_id, const char *file_mimetype, const char *file_link, const char *file_name, const char *file_path, gpointer user_data);
 static void on_quote_requested (GnalkMessageRow *row, gint64 message_id, const char *author_name, const char *message_text, gpointer user_data);
 static void on_edit_requested (GnalkMessageRow *row, gint64 message_id, const char *message_text, gpointer user_data);
 static void on_delete_requested (GnalkMessageRow *row, gint64 message_id, gpointer user_data);
 static void on_scroll_to_message_requested (GnalkMessageRow *row, gint64 message_id, gpointer user_data);
-/* load_older_messages is now gnalk_window_load_older_messages in gnalk-window-message-display.c */
-/* on_content_page_hiding moved to gnalk-window-room-switch.c */
 static void on_call_window_destroy (GtkWidget *widget, GnalkWindow *self);
-/* clear_attachments is now gnalk_window_clear_attachments in gnalk-window-message-composer.c */
 static void on_new_conversation_clicked (GnalkConversationSidebar *sidebar, GnalkWindow *self);
 static void on_new_conversation_created (GnalkNewConversationDialog *dialog, const char *room_token, GnalkWindow *self);
-/* compare_messages_by_id_for_store is now gnalk_window_compare_messages_by_id in gnalk-window-message-display.c */
-
-/* Unread message handling */
-/* mark_messages_read_up_to is now gnalk_window_mark_messages_read_up_to in gnalk-window-read-status.c */
-/* on_scroll_to_bottom_clicked_for_unread is now gnalk_window_on_scroll_to_bottom_clicked_for_unread in gnalk-window-read-status.c */
-
-/* clear_messages_store is now gnalk_window_clear_messages_store in gnalk-window-message-display.c */
-/* clear_search_results_store is now gnalk_window_clear_search_results in gnalk-window-conversation-list.c */
-/* generate_reference_id is now gnalk_window_generate_reference_id in gnalk-window-message-composer.c */
-
-/* ============ Read Status Tracking ============
- *
- * Read status functions have been moved to gnalk-window-read-status.c:
- * - gnalk_window_update_read_status()
- * - gnalk_window_mark_messages_read_up_to()
- * - gnalk_window_track_bound_unread_row()
- * - gnalk_window_untrack_bound_unread_row()
- * - gnalk_window_on_message_scroll_changed()
- * - gnalk_window_on_scroll_to_bottom_clicked_for_unread()
- */
-
 static void
 gnalk_window_get_property (GObject    *object,
                              guint       prop_id,
@@ -210,18 +154,6 @@ on_network_changed (GnalkNetworkMonitor *monitor G_GNUC_UNUSED,
 
   self->was_offline = !is_online;
 }
-
-/* ============ Session Signal Handlers (New Multi-Account Architecture) ============
- *
- * Session management functions moved to gnalk-window-account-session.c:
- * - connect_session_signals()
- * - disconnect_session_signals()
- * - gnalk_window_switch_to_session()
- * - gnalk_window_on_session_manager_active_changed()
- * - gnalk_window_on_session_manager_any_state_changed()
- * - gnalk_window_on_session_manager_conversations_changed()
- * - gnalk_window_disconnect_active_session()
- */
 
 /* AppState loading changed - show/hide spinner during async startup */
 static void
@@ -474,6 +406,14 @@ gnalk_window_on_session_incoming_call (GnalkSession *session G_GNUC_UNUSED,
 {
   g_message ("Window: incoming call in room %s from %s", room_token, caller_id);
 
+  /* Don't show incoming call if we're already in a call */
+  if (self->active_call_window)
+    return;
+
+  /* Only show incoming call for the current room */
+  if (!self->current_room)
+    return;
+
   /* Show incoming call banner using caller_id as the display name */
   gnalk_incoming_call_banner_show_call (self->incoming_call_banner, room_token, caller_id);
 }
@@ -636,10 +576,8 @@ gnalk_window_update_call_button_state (GnalkWindow *self)
     }
   else
     {
-      /* Fallback to direct check */
-      gboolean has_room = self->has_active_room && self->current_room != NULL;
-      gboolean signaling_connected = self->signaling && gnalk_signaling_is_connected (self->signaling);
-      can_call = has_room && signaling_connected;
+      /* No session - can't call */
+      can_call = FALSE;
     }
 
   gtk_widget_set_sensitive (self->audio_call_button, can_call);
@@ -692,10 +630,11 @@ static void
 start_call (GnalkWindow *self,
             gboolean      with_video)
 {
-  if (!self->current_room)
+  if (!self->current_room || !self->active_session)
     return;
 
-  if (!gnalk_signaling_is_connected (self->signaling))
+  GnalkSignaling *signaling = gnalk_session_get_signaling (self->active_session);
+  if (!signaling || !gnalk_signaling_is_connected (signaling))
     {
       g_warning ("Cannot start call: signaling not connected");
       return;
@@ -724,7 +663,7 @@ start_call (GnalkWindow *self,
                                  self->current_room->session_id,
                                  self->http_client,
                                  self->webrtc,
-                                 self->signaling,
+                                 signaling,
                                  self->avatar_cache,
                                  with_video);
 
@@ -861,13 +800,6 @@ on_audio_call_clicked (GtkButton    *button,
   start_call (self, FALSE);
 }
 
-/* Search functions moved to gnalk-window-conversation-list.c:
- * - on_sidebar_search_changed
- * - on_search_contacts_response
- * - on_sidebar_search_result_selected
- * - find_existing_conversation_for_user
- */
-
 static gint
 compare_messages_by_id_for_store (gconstpointer a,
                                   gconstpointer b,
@@ -918,11 +850,6 @@ gnalk_window_on_conv_favorite_toggled (GnalkConversationRow *row G_GNUC_UNUSED,
   if (self->conversation_controller)
     gnalk_conversation_controller_set_favorite (self->conversation_controller, token, favorite);
 }
-
-/* Conversation list factory callbacks moved to gnalk-window-conversation-list.c:
- * - on_conv_list_item_setup/bind/unbind
- * - update_conversation_active_states
- */
 
 /* Update all bound message rows with new display mode.
  * Iterates through the tracked bound rows hash table to update each visible row. */
@@ -1105,8 +1032,6 @@ on_msg_list_item_unbind (GtkListItemFactory *factory,
     }
 }
 
-/* Search results list factory callbacks moved to gnalk-window-conversation-list.c */
-
 static void
 on_message_view_load_older_requested (GnalkMessageView *view,
                                        gpointer           user_data)
@@ -1122,8 +1047,6 @@ on_message_view_load_older_requested (GnalkMessageView *view,
       gnalk_window_load_older_messages (self);
     }
 }
-
-/* on_content_page_hiding is now gnalk_window_on_content_page_hiding in gnalk-window-room-switch.c */
 
 static gboolean
 attempt_autologin_idle (gpointer user_data)
@@ -1150,15 +1073,13 @@ attempt_autologin_idle (gpointer user_data)
 
 /* Room join response and avatar loading are now in gnalk-window-room-switch.c */
 
-/* Handler for call state changes from signaling */
+/* Handler for call state changes (relayed from Signaling via Session) */
 void
-gnalk_window_on_signaling_call_state_changed (GnalkSignaling *signaling,
-                       const char      *actor_id,
-                       gint64           in_call,
-                       GnalkWindow    *self)
+gnalk_window_on_session_call_state_changed (GnalkSession *session G_GNUC_UNUSED,
+                                            const char    *actor_id,
+                                            gint64         in_call,
+                                            GnalkWindow  *self)
 {
-  (void) signaling;
-
   /* Delegate to the participants list component */
   gnalk_participants_list_update_call_state (self->participants_list, actor_id, in_call);
 }
@@ -1218,17 +1139,17 @@ on_call_window_destroy (GtkWidget    *widget,
 }
 
 void
-gnalk_window_on_signaling_call_ended (GnalkSignaling *signaling G_GNUC_UNUSED,
-                         GnalkWindow    *self)
+gnalk_window_on_session_call_ended (GnalkSession *session G_GNUC_UNUSED,
+                                    GnalkWindow  *self)
 {
   /* Hide incoming call banner when call ends for all */
   hide_incoming_call (self);
 }
 
 void
-gnalk_window_on_signaling_room_disinvited (GnalkSignaling *signaling G_GNUC_UNUSED,
-                              const char      *room_token,
-                              GnalkWindow    *self)
+gnalk_window_on_session_room_disinvited (GnalkSession *session G_GNUC_UNUSED,
+                                         const char    *room_token,
+                                         GnalkWindow  *self)
 {
   g_message ("Window: received disinvite from room %s", room_token);
 
@@ -1239,31 +1160,6 @@ gnalk_window_on_signaling_room_disinvited (GnalkSignaling *signaling G_GNUC_UNUS
       g_message ("Window: clearing current room state due to disinvite");
       self->current_room = NULL;
     }
-}
-
-void
-gnalk_window_on_signaling_incoming_call (GnalkSignaling *signaling,
-                  const char      *session_id,
-                  const char      *actor_id,
-                  gint64           in_call_flags,
-                  GnalkWindow    *self)
-{
-  (void) signaling;
-  (void) session_id;
-  (void) in_call_flags;
-
-  /* Don't show incoming call if we're already in a call */
-  if (self->active_call_window)
-    return;
-
-  /* Only show incoming call for the current room */
-  if (!self->current_room)
-    return;
-
-  /* Show the incoming call banner - it handles dedup and state internally */
-  gnalk_incoming_call_banner_show_call (self->incoming_call_banner,
-                                          self->current_room->room_token,
-                                          actor_id);
 }
 
 static void
@@ -1279,10 +1175,11 @@ on_incoming_call_accept_requested (GnalkIncomingCallBanner *banner,
   hide_incoming_call (self);
 
   /* Start the call - reuse the existing call button logic */
-  if (!self->current_room)
+  if (!self->current_room || !self->active_session)
     return;
 
-  if (!gnalk_signaling_is_connected (self->signaling))
+  GnalkSignaling *signaling = gnalk_session_get_signaling (self->active_session);
+  if (!signaling || !gnalk_signaling_is_connected (signaling))
     {
       g_warning ("Cannot start call: signaling not connected");
       return;
@@ -1297,7 +1194,7 @@ on_incoming_call_accept_requested (GnalkIncomingCallBanner *banner,
                                  self->current_room->session_id,
                                  self->http_client,
                                  self->webrtc,
-                                 self->signaling,
+                                 signaling,
                                  self->avatar_cache,
                                  TRUE);
 
@@ -1323,28 +1220,21 @@ on_incoming_call_refuse_requested (GnalkIncomingCallBanner *banner,
 
 #define TYPING_RESEND_TIMEOUT_SEC 10
 
-void
-gnalk_window_on_signaling_typing (GnalkSignaling *signaling,
-                     const char      *session_id,
-                     const char      *display_name,
-                     gboolean         is_typing,
-                     GnalkWindow    *self)
-{
-  (void) signaling;
-  gnalk_typing_indicator_set_typing (self->typing_indicator, session_id, display_name, is_typing);
-}
-
 static gboolean
 on_typing_send_timer (gpointer user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  GnalkSignaling *signaling = self->active_session
+    ? gnalk_session_get_signaling (self->active_session) : NULL;
 
   /* Check if still typing (text not empty) */
   const char *text = gnalk_message_input_get_text (self->message_input);
   if (text && *text)
     {
       /* Resend typing message */
-      gnalk_signaling_send_typing (self->signaling, TRUE);
+      if (signaling)
+        gnalk_signaling_send_typing (signaling, TRUE);
       return G_SOURCE_CONTINUE;
     }
   else
@@ -1352,7 +1242,8 @@ on_typing_send_timer (gpointer user_data)
       /* Stop typing */
       self->current_room->is_typing = FALSE;
       self->typing_send_timer_id = 0;
-      gnalk_signaling_send_typing (self->signaling, FALSE);
+      if (signaling)
+        gnalk_signaling_send_typing (signaling, FALSE);
       return G_SOURCE_REMOVE;
     }
 }
@@ -1365,11 +1256,15 @@ on_message_input_text_changed (GnalkMessageInput *input,
   (void) input;
   gboolean has_text = text && *text;
 
+  GnalkSignaling *signaling = self->active_session
+    ? gnalk_session_get_signaling (self->active_session) : NULL;
+
   if (has_text && !self->current_room->is_typing)
     {
       /* Started typing */
       self->current_room->is_typing = TRUE;
-      gnalk_signaling_send_typing (self->signaling, TRUE);
+      if (signaling)
+        gnalk_signaling_send_typing (signaling, TRUE);
 
       /* Start timer to resend every 10 seconds */
       if (self->typing_send_timer_id == 0)
@@ -1381,7 +1276,8 @@ on_message_input_text_changed (GnalkMessageInput *input,
     {
       /* Stopped typing */
       self->current_room->is_typing = FALSE;
-      gnalk_signaling_send_typing (self->signaling, FALSE);
+      if (signaling)
+        gnalk_signaling_send_typing (signaling, FALSE);
 
       if (self->typing_send_timer_id > 0)
         {
@@ -1392,14 +1288,6 @@ on_message_input_text_changed (GnalkMessageInput *input,
 }
 
 /* ========== Controller Signal Handlers ========== */
-
-/* Conversation controller signal handlers moved to gnalk-window-conversation-list.c:
- * - gnalk_window_on_conversation_controller_updated
- * - gnalk_window_on_conversation_controller_created
- * - gnalk_window_on_conversation_controller_left
- * - gnalk_window_on_conversation_controller_deleted
- * - gnalk_window_on_conversation_controller_new_messages
- */
 
 /* Called when participant controller detects server has different data */
 void
@@ -1471,8 +1359,10 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
     }
 
   /* Delegate to the participants list component */
+  GnalkSignaling *signaling = self->active_session
+    ? gnalk_session_get_signaling (self->active_session) : NULL;
   gnalk_participants_list_set_participants (self->participants_list, participants,
-                                              self->avatar_cache, self->signaling,
+                                              self->avatar_cache, signaling,
                                               my_user_id, my_participant_type,
                                               self->current_room->room_type);
 
@@ -1708,20 +1598,6 @@ on_participant_remove_requested (GnalkParticipantsList *list G_GNUC_UNUSED,
   gnalk_http_client_remove_attendee (self->http_client, self->current_room->room_token,
                                        attendee_id, on_moderator_action_response, data);
 }
-
-/* ============ Login handlers ============ */
-
-/* Login view helper wrappers are now in gnalk-window-login.c:
- * - gnalk_window_login_show_error()
- * - gnalk_window_login_set_connecting()
- */
-
-/* NOTE: LoginController signal handlers have been removed.
- * Login is now handled by Session/SessionManager.
- * - on_session_state_changed handles state transitions
- * - on_session_auth_failed handles auth failures
- * - on_session_conversations_updated handles conversation loading
- */
 
 /* ============ Message Controller Signal Handlers ============ */
 
@@ -1975,11 +1851,6 @@ gnalk_window_on_message_controller_upload_failed (GnalkMessageController *contro
   gnalk_window_clear_attachments (self);
 }
 
-/* process_messages_array, on_message_controller_messages_loaded, on_message_controller_poll_response,
- * on_message_controller_older_messages_loaded are now in gnalk-window-message-display.c */
-
-/* on_login_view_connect_clicked is now in gnalk-window-login.c */
-
 static void
 on_new_conversation_clicked (GnalkConversationSidebar *sidebar G_GNUC_UNUSED,
                              GnalkWindow              *self)
@@ -2154,8 +2025,6 @@ on_quote_closed (GnalkConversationActions *actions,
 }
 
 /* ============ File Attachment Functions ============ */
-
-/* clear_attachments moved to gnalk-window-message-composer.c as gnalk_window_clear_attachments */
 
 static void
 on_attachment_closed (GnalkConversationActions *actions,
@@ -3036,8 +2905,12 @@ gnalk_window_dispose (GObject *object)
       if (self->participant_controller)
         gnalk_participant_controller_set_active_room (self->participant_controller, NULL, 0);
 
-      if (self->signaling)
-        gnalk_signaling_leave_room (self->signaling, self->current_room->room_token);
+      if (self->active_session)
+        {
+          GnalkSignaling *signaling = gnalk_session_get_signaling (self->active_session);
+          if (signaling)
+            gnalk_signaling_leave_room (signaling, self->current_room->room_token);
+        }
 
       if (self->http_client)
         gnalk_http_client_leave_room (self->http_client, self->current_room->room_token, NULL, NULL);
@@ -3048,17 +2921,8 @@ gnalk_window_dispose (GObject *object)
         gnalk_application_set_active_room (app, NULL);
     }
 
-  /* Disconnect from signaling BEFORE widgets are destroyed.
-   * Signaling is owned by session and survives window close. */
-  if (self->signaling)
-    {
-      g_signal_handlers_disconnect_by_data (self->signaling, self);
-      self->signaling = NULL;
-    }
-
-  /* Disconnect from session signals BEFORE widgets are destroyed.
+  /* Disconnect from session and controller signals BEFORE widgets are destroyed.
    * This prevents signal callbacks from accessing destroyed widgets. */
-  /* Disconnect session signals - now handled by account-session.c */
   gnalk_window_disconnect_active_session (self);
 
   /* Disconnect from session_manager signals */
@@ -3087,9 +2951,10 @@ gnalk_window_finalize (GObject *object)
 {
   GnalkWindow *self = GNALK_WINDOW (object);
 
-  /* Clean up controllers (timers are managed by controllers) */
-  g_clear_object (&self->conversation_controller);
-  g_clear_object (&self->participant_controller);
+  /* MC/CC/PC are cached from session - not owned, just clear pointers */
+  self->message_controller = NULL;
+  self->conversation_controller = NULL;
+  self->participant_controller = NULL;
 
   if (self->typing_send_timer_id > 0)
     {
@@ -3125,15 +2990,15 @@ gnalk_window_finalize (GObject *object)
   g_clear_pointer (&self->bound_message_rows, g_hash_table_unref);
   g_clear_pointer (&self->visible_unread_ids, g_array_unref);
 
-  /* signaling/sync_manager are borrowed from session.
+  /* sync_manager is borrowed from session.
    * http_client and push_client are borrowed from application. Just clear references. */
   self->http_client = NULL;
   self->push_client = NULL;
+  self->sync_manager = NULL;
 
   /* These are always owned by the window */
   g_clear_object (&self->avatar_cache);
   g_clear_object (&self->webrtc);
-  g_clear_object (&self->message_controller);
   g_clear_object (&self->conversations_store);
   g_clear_object (&self->messages_store);
   g_clear_object (&self->search_results_store);
@@ -3200,17 +3065,14 @@ on_window_is_active_changed (GObject    *object,
   self->was_active = is_active;
 }
 
-/* Sync coordinator notification - refresh messages when room synced.
- * Connected by gnalk-window-account-session.c to the active session's coordinator. */
+/* Room messages synced notification - relayed from SyncCoordinator via Session. */
 void
-gnalk_window_on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
-                                                       const char           *room_token,
-                                                       guint                 count,
-                                                       gpointer              user_data)
+gnalk_window_on_session_room_messages_synced (GnalkSession *session G_GNUC_UNUSED,
+                                              const char    *room_token,
+                                              guint          count,
+                                              GnalkWindow  *self)
 {
-  GnalkWindow *self = GNALK_WINDOW (user_data);
-
-  g_message ("SyncCoordinator: room %s synced (%u messages)", room_token, count);
+  g_message ("Session: room %s synced (%u messages)", room_token, count);
 
   /* Conversation list reload is handled by DataRepository::data-changed (debounced) */
 
@@ -3218,24 +3080,15 @@ gnalk_window_on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coo
    * Only background rooms need their tabs refreshed when switched to. */
   if (self->current_room && g_strcmp0 (room_token, self->current_room->room_token) == 0)
     {
-      g_debug ("SyncCoordinator: active room %s synced, polling handles updates", room_token);
+      g_debug ("Session: active room %s synced, polling handles updates", room_token);
       /* Don't reload - polling already handles incremental updates */
     }
   else if (self->tab_manager && gnalk_room_tab_manager_has_tab (self->tab_manager, room_token))
     {
       /* Room has a tab but is not the active room - the tab's store will be
        * refreshed from DB when the user switches to it. */
-      g_debug ("SyncCoordinator: room %s has background tab, will refresh on switch", room_token);
+      g_debug ("Session: room %s has background tab, will refresh on switch", room_token);
     }
-}
-
-/* Sync coordinator notification - previously triggered conversation list reload.
- * Now handled by DataRepository::data-changed (debounced). Kept as stub for signal. */
-void
-gnalk_window_on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
-                                                       gpointer              user_data G_GNUC_UNUSED)
-{
-  /* No-op: DataRepository::data-changed handles conversation list reloads */
 }
 
 static void
@@ -3386,63 +3239,16 @@ gnalk_window_init (GnalkWindow *self)
   gnalk_application_set_window_focused (GNALK_APPLICATION (app),
                                           gtk_window_is_active (GTK_WINDOW (self)));
 
-  /* Create message controller (will be recreated in switch_to_session with correct account) */
-  self->message_controller = gnalk_message_controller_new (self->http_client);
+  /* MC/CC/PC are now owned by Session - created + connected in switch_to_session
+   * via connect_controller_signals() in gnalk-window-account-session.c.
+   * Window caches non-owned pointers after session switch. */
 
-  /* Set up database integration for MessageController - placeholder until session switch.
-   * The message controller will be recreated with correct account in switch_to_session. */
+  /* Connect to DataRepository for background sync updates */
   {
     GnalkDataRepository *repo = gnalk_application_get_data_repository (GNALK_APPLICATION (app));
-    gnalk_message_controller_set_repository (self->message_controller, repo, 0);
-    gnalk_message_controller_set_current_user (self->message_controller, NULL);
-  }
-
-  g_signal_connect (self->message_controller, "message-sent",
-                    G_CALLBACK (gnalk_window_on_message_controller_sent), self);
-  g_signal_connect (self->message_controller, "message-send-failed",
-                    G_CALLBACK (gnalk_window_on_message_controller_send_failed), self);
-  g_signal_connect (self->message_controller, "message-edited",
-                    G_CALLBACK (gnalk_window_on_message_controller_edited), self);
-  g_signal_connect (self->message_controller, "message-deleted",
-                    G_CALLBACK (gnalk_window_on_message_controller_deleted), self);
-  g_signal_connect (self->message_controller, "reaction-added",
-                    G_CALLBACK (gnalk_window_on_message_controller_reaction_added), self);
-  g_signal_connect (self->message_controller, "upload-completed",
-                    G_CALLBACK (gnalk_window_on_message_controller_upload_completed), self);
-  g_signal_connect (self->message_controller, "upload-failed",
-                    G_CALLBACK (gnalk_window_on_message_controller_upload_failed), self);
-  g_signal_connect (self->message_controller, "messages-loaded",
-                    G_CALLBACK (gnalk_window_on_message_controller_messages_loaded), self);
-  g_signal_connect (self->message_controller, "poll-response",
-                    G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
-  g_signal_connect (self->message_controller, "older-messages-loaded",
-                    G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
-
-  /* Create conversation controller for CRUD operations (will be recreated in switch_to_session) */
-  {
-    GnalkDataRepository *repo = gnalk_application_get_data_repository (GNALK_APPLICATION (app));
-    self->conversation_controller = gnalk_conversation_controller_new (repo, self->http_client);
-    gnalk_conversation_controller_set_account_id (self->conversation_controller, 0);
-    /* Note: conversations-updated and new-messages-detected removed - SyncCoordinator handles sync */
-    g_signal_connect (self->conversation_controller, "conversation-created",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_created), self);
-    g_signal_connect (self->conversation_controller, "conversation-left",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_left), self);
-    g_signal_connect (self->conversation_controller, "conversation-deleted",
-                      G_CALLBACK (gnalk_window_on_conversation_controller_deleted), self);
-
-    /* Connect to DataRepository for background sync updates */
-    g_signal_connect (repo, "data-changed",
-                      G_CALLBACK (gnalk_window_on_data_repository_changed), self);
-  }
-
-  /* Create participant controller (will be recreated in switch_to_session with correct account) */
-  {
-    GnalkDatabase *db = gnalk_application_get_database (GNALK_APPLICATION (app));
-    self->participant_controller = gnalk_participant_controller_new (db, self->http_client);
-    gnalk_participant_controller_set_account_id (self->participant_controller, 0);
-    g_signal_connect (self->participant_controller, "participants-changed",
-                      G_CALLBACK (gnalk_window_on_participant_controller_changed), self);
+    if (repo)
+      g_signal_connect (repo, "data-changed",
+                        G_CALLBACK (gnalk_window_on_data_repository_changed), self);
   }
 
   self->conversations_store = g_list_store_new (GNALK_TYPE_CONVERSATION_DATA);
@@ -3456,12 +3262,11 @@ gnalk_window_init (GnalkWindow *self)
     gdouble height_mult = g_settings_get_double (settings, "background-tab-height-multiplier");
     self->tab_manager = gnalk_room_tab_manager_new ((guint) max_tabs, height_mult);
 
-    /* Create room controller for open/close orchestration */
+    /* Create room controller for open/close orchestration.
+     * MC/PC will be set when session switches (in switch_to_session). */
     self->room_controller = gnalk_room_controller_new (self->tab_manager,
                                                          self->conversations_store,
                                                          settings);
-    gnalk_room_controller_set_message_controller (self->room_controller, self->message_controller);
-    gnalk_room_controller_set_participant_controller (self->room_controller, self->participant_controller);
     gnalk_room_controller_set_scroll_state_func (self->room_controller,
                                                    gnalk_window_get_scroll_state, self);
 
@@ -3475,10 +3280,10 @@ gnalk_window_init (GnalkWindow *self)
                       G_CALLBACK (gnalk_window_on_room_controller_scroll_requested), self);
   }
 
-  /* Create message processor for data operations */
+  /* Create message processor for data operations.
+   * MC will be set when session switches (in switch_to_session). */
   self->message_processor = gnalk_message_processor_new ();
   gnalk_message_processor_set_conversations_store (self->message_processor, self->conversations_store);
-  gnalk_message_processor_set_message_controller (self->message_processor, self->message_controller);
   g_signal_connect (self->message_processor, "batch-insert-begin",
                     G_CALLBACK (gnalk_window_on_processor_batch_insert_begin), self);
   g_signal_connect (self->message_processor, "batch-insert-end",

@@ -38,9 +38,6 @@ struct _GnalkRoomController
   guint  debounce_timer_id;
   char  *pending_room_token;
 
-  /* Join state */
-  guint  room_join_generation;
-
   /* Scroll state callback (reads UI scroll info) */
   GnalkScrollStateFunc scroll_state_func;
   gpointer             scroll_state_data;
