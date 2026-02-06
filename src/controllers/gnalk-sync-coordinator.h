@@ -159,4 +159,15 @@ gboolean gnalk_sync_coordinator_is_syncing (GnalkSyncCoordinator *self);
  */
 gint64 gnalk_sync_coordinator_get_account_id (GnalkSyncCoordinator *self);
 
+/**
+ * gnalk_sync_coordinator_clear_active_call:
+ * @self: The sync coordinator
+ * @room_token: The room whose call state to clear
+ *
+ * Clears the tracked active call for a room, preventing re-notification
+ * after user interaction (accept/refuse).
+ */
+void gnalk_sync_coordinator_clear_active_call (GnalkSyncCoordinator *self,
+                                                const char            *room_token);
+
 G_END_DECLS

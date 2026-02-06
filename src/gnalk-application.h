@@ -7,6 +7,7 @@
 #include "gnalk-network-monitor.h"
 #include "gnalk-push-client.h"
 #include "gnalk-http-client.h"
+#include "gnalk-notification-service.h"
 
 G_BEGIN_DECLS
 
@@ -68,8 +69,9 @@ GnalkAccountManager *gnalk_application_get_account_manager (GnalkApplication *se
 GnalkSessionManager *gnalk_application_get_session_manager (GnalkApplication *self);
 
 /* Push client (moved from window for service mode support) */
-GnalkPushClient *gnalk_application_get_push_client    (GnalkApplication *self);
-GnalkHttpClient *gnalk_application_get_http_client    (GnalkApplication *self);
+GnalkPushClient          *gnalk_application_get_push_client          (GnalkApplication *self);
+GnalkHttpClient          *gnalk_application_get_http_client          (GnalkApplication *self);
+GnalkNotificationService *gnalk_application_get_notification_service (GnalkApplication *self);
 
 /* Window state for notification decisions */
 void gnalk_application_set_active_room   (GnalkApplication *self,

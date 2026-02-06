@@ -385,6 +385,14 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
 
       /* DataRepository::data-changed will reload conversation list when sync saves this room */
     }
+
+  /* If we navigated here to accept an incoming call, start it now */
+  if (self->pending_call_with_video >= 0)
+    {
+      gboolean with_video = (self->pending_call_with_video == 1);
+      self->pending_call_with_video = -1;
+      gnalk_window_start_call (self, with_video);
+    }
 }
 
 /**

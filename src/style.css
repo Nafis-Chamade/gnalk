@@ -479,15 +479,11 @@
   min-height: 1em;
 }
 
-/* Incoming call banner */
+/* Incoming call banner (full-width top bar) */
 .incoming-call-banner {
   background-color: alpha(@accent_bg_color, 0.15);
-  border-radius: 8px;
   padding: 8px;
-}
-
-.incoming-call-icon {
-  color: @accent_color;
+  border-bottom: 1px solid alpha(@accent_bg_color, 0.3);
 }
 
 .incoming-call-text {

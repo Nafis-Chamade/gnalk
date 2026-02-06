@@ -21,6 +21,14 @@ void gnalk_notification_service_notify_message (GnalkNotificationService *self,
 void gnalk_notification_service_withdraw (GnalkNotificationService *self,
                                             const char                *room_token);
 
+void gnalk_notification_service_notify_call (GnalkNotificationService *self,
+                                                const char                *room_token,
+                                                const char                *room_name,
+                                                const char                *caller_name);
+
+void gnalk_notification_service_withdraw_call (GnalkNotificationService *self,
+                                                  const char                *room_token);
+
 void gnalk_notification_service_withdraw_all (GnalkNotificationService *self);
 
 G_END_DECLS

@@ -114,6 +114,10 @@ on_open_room_action (GSimpleAction *action,
 
   g_message ("Action: open-room '%s'", room_token);
 
+  /* Withdraw any call notification for this room */
+  if (self->notification_service)
+    gnalk_notification_service_withdraw_call (self->notification_service, room_token);
+
   /* Store the room to open */
   g_free (self->pending_open_room);
   self->pending_open_room = g_strdup (room_token);
@@ -822,6 +826,13 @@ gnalk_application_get_http_client (GnalkApplication *self)
 {
   g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
   return self->http_client;
+}
+
+GnalkNotificationService *
+gnalk_application_get_notification_service (GnalkApplication *self)
+{
+  g_return_val_if_fail (GNALK_IS_APPLICATION (self), NULL);
+  return self->notification_service;
 }
 
 void

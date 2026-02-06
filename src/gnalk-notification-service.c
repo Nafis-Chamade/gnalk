@@ -242,6 +242,84 @@ gnalk_notification_service_withdraw (GnalkNotificationService *self,
 }
 
 void
+gnalk_notification_service_notify_call (GnalkNotificationService *self,
+                                           const char                *room_token,
+                                           const char                *room_name,
+                                           const char                *caller_name)
+{
+  g_return_if_fail (GNALK_IS_NOTIFICATION_SERVICE (self));
+  g_return_if_fail (room_token != NULL);
+
+  g_autofree char *notification_id = g_strdup_printf ("call-%s", room_token);
+  g_autofree char *hash_key = g_strdup_printf ("call-%s", room_token);
+
+  /* Track this notification (key distinct from message notifications) */
+  g_hash_table_insert (self->active_notifications,
+                       g_strdup (hash_key),
+                       g_strdup (notification_id));
+
+  const char *title = (room_name && *room_name) ? room_name : "Incoming call";
+  const char *body = caller_name ? caller_name : "Active call";
+
+#ifdef HAVE_LIBPORTAL
+  GVariantBuilder notification;
+  g_variant_builder_init (&notification, G_VARIANT_TYPE ("a{sv}"));
+
+  g_variant_builder_add (&notification, "{sv}", "title", g_variant_new_string (title));
+  g_variant_builder_add (&notification, "{sv}", "body", g_variant_new_string (body));
+  g_variant_builder_add (&notification, "{sv}", "priority", g_variant_new_string ("urgent"));
+
+  g_variant_builder_add (&notification, "{sv}", "default-action",
+                         g_variant_new_string ("app.open-room"));
+  g_variant_builder_add (&notification, "{sv}", "default-action-target",
+                         g_variant_new_string (room_token));
+
+  xdp_portal_add_notification (self->portal,
+                               notification_id,
+                               g_variant_builder_end (&notification),
+                               XDP_NOTIFICATION_FLAG_NONE,
+                               NULL,
+                               on_notification_sent,
+                               NULL);
+#else
+  GApplication *app = g_application_get_default ();
+  if (!app)
+    return;
+
+  g_autoptr(GNotification) notification = g_notification_new (title);
+  g_notification_set_body (notification, body);
+  g_notification_set_priority (notification, G_NOTIFICATION_PRIORITY_URGENT);
+  g_notification_set_default_action_and_target (notification, "app.open-room", "s", room_token);
+
+  g_application_send_notification (app, notification_id, notification);
+#endif
+}
+
+void
+gnalk_notification_service_withdraw_call (GnalkNotificationService *self,
+                                             const char                *room_token)
+{
+  g_return_if_fail (GNALK_IS_NOTIFICATION_SERVICE (self));
+  g_return_if_fail (room_token != NULL);
+
+  g_autofree char *hash_key = g_strdup_printf ("call-%s", room_token);
+
+  const char *notification_id = g_hash_table_lookup (self->active_notifications, hash_key);
+  if (!notification_id)
+    return;
+
+#ifdef HAVE_LIBPORTAL
+  xdp_portal_remove_notification (self->portal, notification_id);
+#else
+  GApplication *app = g_application_get_default ();
+  if (app)
+    g_application_withdraw_notification (app, notification_id);
+#endif
+
+  g_hash_table_remove (self->active_notifications, hash_key);
+}
+
+void
 gnalk_notification_service_withdraw_all (GnalkNotificationService *self)
 {
   g_return_if_fail (GNALK_IS_NOTIFICATION_SERVICE (self));

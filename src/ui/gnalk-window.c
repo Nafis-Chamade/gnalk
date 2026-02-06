@@ -394,12 +394,24 @@ gnalk_window_on_session_incoming_call (GnalkSession *session G_GNUC_UNUSED,
   if (self->active_call_window)
     return;
 
-  /* Only show incoming call for the current room */
-  if (!self->current_room)
-    return;
+  /* Look up room name from conversation list */
+  const char *room_name = NULL;
+  guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+  for (guint i = 0; i < n; i++)
+    {
+      GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
+      if (g_strcmp0 (gnalk_conversation_data_get_token (conv), room_token) == 0)
+        {
+          room_name = gnalk_conversation_data_get_title (conv);
+          g_object_unref (conv);
+          break;
+        }
+      g_object_unref (conv);
+    }
 
-  /* Show incoming call banner using caller_id as the display name */
-  gnalk_incoming_call_banner_show_call (self->incoming_call_banner, room_token, caller_id);
+  gnalk_incoming_call_banner_show_call (self->incoming_call_banner,
+                                         room_token, room_name, caller_id,
+                                         self->avatar_cache);
 }
 
 void
@@ -610,9 +622,9 @@ gnalk_window_update_room_call_icon (GnalkWindow *self,
     }
 }
 
-static void
-start_call (GnalkWindow *self,
-            gboolean      with_video)
+void
+gnalk_window_start_call (GnalkWindow *self,
+                         gboolean      with_video)
 {
   if (!self->current_room || !self->active_session)
     return;
@@ -751,14 +763,14 @@ static void
 on_video_call_clicked (GtkButton    *button,
                        GnalkWindow *self)
 {
-  start_call (self, TRUE);
+  gnalk_window_start_call (self, TRUE);
 }
 
 static void
 on_audio_call_clicked (GtkButton    *button,
                        GnalkWindow *self)
 {
-  start_call (self, FALSE);
+  gnalk_window_start_call (self, FALSE);
 }
 
 static gint
@@ -1111,46 +1123,59 @@ gnalk_window_on_session_room_disinvited (GnalkSession *session G_GNUC_UNUSED,
 }
 
 static void
-on_incoming_call_accept_requested (GnalkIncomingCallBanner *banner,
-                                    GnalkWindow             *self)
+accept_incoming_call (GnalkWindow *self,
+                      gboolean      with_video)
 {
-  (void) banner;
-
   if (!gnalk_incoming_call_banner_has_incoming_call (self->incoming_call_banner))
     return;
 
+  const char *call_room_token = gnalk_incoming_call_banner_get_room_token (self->incoming_call_banner);
+
+  /* Withdraw call desktop notification */
+  {
+    GnalkApplication *gnalk_app = GNALK_APPLICATION (g_application_get_default ());
+    gnalk_notification_service_withdraw_call (
+        gnalk_application_get_notification_service (gnalk_app), call_room_token);
+    if (self->active_session)
+      {
+        GnalkSyncCoordinator *coord = gnalk_session_get_sync_coordinator (self->active_session);
+        if (coord)
+          gnalk_sync_coordinator_clear_active_call (coord, call_room_token);
+      }
+  }
+
   /* Hide the banner */
+  g_autofree char *saved_token = g_strdup (call_room_token);
   hide_incoming_call (self);
 
-  /* Start the call - reuse the existing call button logic */
-  if (!self->current_room || !self->active_session)
-    return;
-
-  GnalkSignaling *signaling = gnalk_session_get_signaling (self->active_session);
-  if (!signaling || !gnalk_signaling_is_connected (signaling))
+  /* If already in the call's room, start immediately */
+  if (self->current_room &&
+      g_strcmp0 (self->current_room->room_token, saved_token) == 0)
     {
-      g_warning ("Cannot start call: signaling not connected");
+      gnalk_window_start_call (self, with_video);
       return;
     }
 
-  GtkApplication *app = gtk_window_get_application (GTK_WINDOW (self));
-  GnalkCallWindow *call_window = gnalk_call_window_new (app);
+  /* Otherwise navigate to that room; pending_call_with_video will trigger start_call
+   * once room_opened fires */
+  self->pending_call_with_video = with_video ? 1 : 0;
+  gnalk_window_open_room (self, saved_token);
+}
 
-  gnalk_call_window_start_call (call_window,
-                                 self->current_room->room_token,
-                                 self->current_room->room_name,
-                                 self->current_room->session_id,
-                                 self->http_client,
-                                 self->webrtc,
-                                 signaling,
-                                 self->avatar_cache,
-                                 TRUE);
+static void
+on_incoming_call_accept_audio (GnalkIncomingCallBanner *banner,
+                               GnalkWindow             *self)
+{
+  (void) banner;
+  accept_incoming_call (self, FALSE);
+}
 
-  /* Track active call window */
-  self->active_call_window = call_window;
-  g_signal_connect (call_window, "destroy", G_CALLBACK (on_call_window_destroy), self);
-
-  gtk_window_present (GTK_WINDOW (call_window));
+static void
+on_incoming_call_accept_video (GnalkIncomingCallBanner *banner,
+                               GnalkWindow             *self)
+{
+  (void) banner;
+  accept_incoming_call (self, TRUE);
 }
 
 static void
@@ -1158,6 +1183,20 @@ on_incoming_call_refuse_requested (GnalkIncomingCallBanner *banner,
                                     GnalkWindow             *self)
 {
   (void) banner;
+
+  /* Withdraw call desktop notification */
+  {
+    const char *call_room = gnalk_incoming_call_banner_get_room_token (self->incoming_call_banner);
+    GnalkApplication *gnalk_app = GNALK_APPLICATION (g_application_get_default ());
+    gnalk_notification_service_withdraw_call (
+        gnalk_application_get_notification_service (gnalk_app), call_room);
+    if (self->active_session)
+      {
+        GnalkSyncCoordinator *coord = gnalk_session_get_sync_coordinator (self->active_session);
+        if (coord)
+          gnalk_sync_coordinator_clear_active_call (coord, call_room);
+      }
+  }
 
   /* Just hide the banner - we don't need to do anything else
    * since we haven't actually joined the call yet */
@@ -1936,6 +1975,7 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect (self->message_processor, "state-synced",
                     G_CALLBACK (gnalk_window_on_processor_state_synced), self);
 
+  self->pending_call_with_video = -1;
   self->bound_unread_rows = g_hash_table_new (g_direct_hash, g_direct_equal);
   self->bound_conversation_rows = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   self->bound_message_rows = g_hash_table_new (g_direct_hash, g_direct_equal);
@@ -1993,7 +2033,8 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect (self->conversation_actions, "scroll-to-message-requested", G_CALLBACK (gnalk_window_on_quote_preview_scroll_requested), self);
   g_signal_connect (self->user_status_menu, "status-changed", G_CALLBACK (on_user_status_changed), self);
   /* Signaling handlers are connected in switch_to_session after getting signaling from session */
-  g_signal_connect (self->incoming_call_banner, "accept-call-requested", G_CALLBACK (on_incoming_call_accept_requested), self);
+  g_signal_connect (self->incoming_call_banner, "accept-audio-call-requested", G_CALLBACK (on_incoming_call_accept_audio), self);
+  g_signal_connect (self->incoming_call_banner, "accept-video-call-requested", G_CALLBACK (on_incoming_call_accept_video), self);
   g_signal_connect (self->incoming_call_banner, "refuse-call-requested", G_CALLBACK (on_incoming_call_refuse_requested), self);
 
   /* Clear messages when navigating back in compact mode (before view is hidden) */

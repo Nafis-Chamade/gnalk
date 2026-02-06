@@ -85,6 +85,9 @@
                       <object class="GnalkNetworkStatusBar" id="network_status_bar"/>
                     </child>
                     <child>
+                      <object class="GnalkIncomingCallBanner" id="incoming_call_banner"/>
+                    </child>
+                    <child>
                       <object class="AdwNavigationSplitView" id="split_view">
                         <property name="vexpand">true</property>
         <property name="min-sidebar-width">280</property>
@@ -167,9 +170,6 @@
                 <property name="content">
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
-                    <child>
-                      <object class="GnalkIncomingCallBanner" id="incoming_call_banner"/>
-                    </child>
                     <child>
                       <object class="GnalkParticipantsList" id="participants_list"/>
                     </child>

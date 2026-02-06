@@ -141,6 +141,7 @@ struct _GnalkWindow
   gboolean was_active;               /* Previous window active state (to detect app switch vs popover) */
 
   GnalkCallWindow *active_call_window;  /* Currently active call window, if any */
+  gint pending_call_with_video;  /* -1=none, 0=audio, 1=video */
 
   /* Search results data (UI managed by conversation_sidebar) */
   GListStore *search_results_store;
@@ -345,6 +346,7 @@ void gnalk_window_on_room_controller_scroll_requested    (GnalkRoomController *c
 
 /* ============ UI helper functions (gnalk-window.c, called from room-switch) ============ */
 
+void gnalk_window_start_call                     (GnalkWindow *self, gboolean with_video);
 void gnalk_window_update_call_button_state      (GnalkWindow *self);
 void gnalk_window_update_room_status_icon       (GnalkWindow *self, gint room_type, const char *user_status);
 void gnalk_window_update_room_call_icon         (GnalkWindow *self, gint room_type, gint64 in_call);

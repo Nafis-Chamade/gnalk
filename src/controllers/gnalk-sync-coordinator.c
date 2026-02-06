@@ -18,6 +18,9 @@ struct _GnalkSyncCoordinator
   char     *active_room_token;
   gboolean  window_focused;
 
+  GHashTable *active_calls;    /* room_token → gboolean (TRUE = active call) */
+  gboolean    calls_initialized;
+
   guint     periodic_timer_id;
   gboolean  periodic_enabled;
   gboolean  is_syncing;
@@ -69,6 +72,7 @@ typedef struct {
   char                 *room_token;
   char                 *room_name;    /* For notification display */
   gint64                last_known_id;
+  gint                  notification_level;
 } RoomSyncData;
 
 static void
@@ -197,9 +201,10 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
                                               data->room_token, msg_data);
           saved_count++;
 
-          /* Collect messages from others for notification */
+          /* Collect messages from others for notification (skip system messages) */
           const char *author_id = gnalk_message_data_get_author_id (msg_data);
-          if (g_strcmp0 (author_id, data->user_id) != 0)
+          const char *sys_msg = json_object_get_string_member_with_default (msg_obj, "systemMessage", "");
+          if (g_strcmp0 (author_id, data->user_id) != 0 && (!sys_msg || !*sys_msg))
             {
               const char *sender = json_object_get_string_member_with_default (
                   msg_obj, "actorDisplayName", "Someone");
@@ -215,7 +220,29 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
                 }
               notification_msg_count++;
 
-              /* TODO: Parse messageParameters for mention-user with our ID */
+              /* Check messageParameters for mentions (@all or direct @user) */
+              if (json_object_has_member (msg_obj, "messageParameters"))
+                {
+                  JsonObject *params = json_object_get_object_member (msg_obj, "messageParameters");
+                  if (params)
+                    {
+                      GList *members = json_object_get_members (params);
+                      for (GList *l = members; l; l = l->next)
+                        {
+                          if (!g_str_has_prefix (l->data, "mention-"))
+                            continue;
+                          JsonObject *param = json_object_get_object_member (params, l->data);
+                          if (!param) continue;
+                          const char *type = json_object_get_string_member_with_default (param, "type", "");
+                          if (g_strcmp0 (type, "call") == 0)
+                            { has_mention = TRUE; break; }
+                          if (g_strcmp0 (type, "user") == 0 &&
+                              g_strcmp0 (json_object_get_string_member_with_default (param, "id", ""), data->user_id) == 0)
+                            { has_mention = TRUE; break; }
+                        }
+                      g_list_free (members);
+                    }
+                }
             }
         }
 
@@ -271,9 +298,13 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
       g_signal_emit (self, signals[SIGNAL_ROOM_MESSAGES_SYNCED], 0,
                      data->room_token, saved_count);
 
-      /* Show notification if appropriate (not for initial sync when last_known_id was 0) */
+      /* Show notification if appropriate:
+       * - Not initial sync (last_known_id > 0)
+       * - notification_level: 0=default(always), 1=always, 2=mentions only, 3=never */
       if (notification_msg_count > 0 &&
           data->last_known_id > 0 &&
+          data->notification_level != 3 &&
+          (data->notification_level != 2 || has_mention) &&
           should_show_notification (self, data->room_token))
         {
           const char *display_name = data->room_name ? data->room_name : data->room_token;
@@ -315,7 +346,8 @@ sync_room_messages (GnalkSyncCoordinator *self,
                     const char           *user_id,
                     const char           *room_token,
                     const char           *room_name,
-                    gint64                db_last_id)
+                    gint64                db_last_id,
+                    gint                  notification_level)
 {
   RoomSyncData *sync_data = g_slice_new0 (RoomSyncData);
   sync_data->coordinator = self;
@@ -325,6 +357,7 @@ sync_room_messages (GnalkSyncCoordinator *self,
   sync_data->room_token = g_strdup (room_token);
   sync_data->room_name = g_strdup (room_name);
   sync_data->last_known_id = db_last_id;
+  sync_data->notification_level = notification_level;
 
   if (db_last_id == 0)
     {
@@ -421,6 +454,28 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
           has_changes = TRUE;
         }
 
+      gint notification_level = (gint) json_object_get_int_member_with_default (room, "notificationLevel", 0);
+
+      /* Check for active calls */
+      gboolean has_call = json_object_get_boolean_member_with_default (room, "hasCall", FALSE);
+      gboolean was_in_call = GPOINTER_TO_INT (g_hash_table_lookup (self->active_calls, token));
+      gint call_notif_level = (gint) json_object_get_int_member_with_default (room, "notificationCalls", 1);
+
+      if (has_call && !was_in_call)
+        {
+          g_hash_table_insert (self->active_calls, g_strdup (token), GINT_TO_POINTER (TRUE));
+          if (self->calls_initialized && call_notif_level != 0)
+            {
+              gnalk_notification_service_notify_call (self->notification_service,
+                                                     token, display_name, NULL);
+            }
+        }
+      else if (!has_call && was_in_call)
+        {
+          g_hash_table_remove (self->active_calls, token);
+          gnalk_notification_service_withdraw_call (self->notification_service, token);
+        }
+
       /* Skip the currently active room if window is focused
        * (MessageController handles it via long-polling) */
       if (self->window_focused &&
@@ -455,7 +510,8 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
 
               /* Sync messages for this room */
               sync_room_messages (self, http_client, account_id,
-                                  fetch_data->user_id, token, display_name, db_last_id);
+                                  fetch_data->user_id, token, display_name, db_last_id,
+                                  notification_level);
             }
         }
     }
@@ -483,6 +539,9 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
   /* Emit conversations-synced signal if data changed */
   if (has_changes)
     g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_SYNCED], 0);
+
+  if (!self->calls_initialized)
+    self->calls_initialized = TRUE;
 
   g_signal_emit (self, signals[SIGNAL_SYNC_FINISHED], 0, TRUE);
   conversation_fetch_data_free (fetch_data);
@@ -512,6 +571,7 @@ gnalk_sync_coordinator_finalize (GObject *object)
 
   g_free (self->user_id);
   g_free (self->active_room_token);
+  g_clear_pointer (&self->active_calls, g_hash_table_unref);
 
   G_OBJECT_CLASS (gnalk_sync_coordinator_parent_class)->finalize (object);
 }
@@ -615,6 +675,8 @@ gnalk_sync_coordinator_init (GnalkSyncCoordinator *self)
   self->window_focused = FALSE;  /* Assume not focused in service mode */
   self->periodic_enabled = FALSE;
   self->is_syncing = FALSE;
+  self->active_calls = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  self->calls_initialized = FALSE;
 }
 
 /* ============ Public API ============ */
@@ -713,7 +775,7 @@ gnalk_sync_coordinator_sync_room (GnalkSyncCoordinator *self,
       self->repository, self->account_id, room_token);
 
   sync_room_messages (self, self->http_client, self->account_id,
-                      self->user_id, room_token, NULL, db_last_id);
+                      self->user_id, room_token, NULL, db_last_id, 0);
 }
 
 void
@@ -776,4 +838,14 @@ gnalk_sync_coordinator_get_account_id (GnalkSyncCoordinator *self)
 {
   g_return_val_if_fail (GNALK_IS_SYNC_COORDINATOR (self), 0);
   return self->account_id;
+}
+
+void
+gnalk_sync_coordinator_clear_active_call (GnalkSyncCoordinator *self,
+                                           const char            *room_token)
+{
+  g_return_if_fail (GNALK_IS_SYNC_COORDINATOR (self));
+  g_return_if_fail (room_token != NULL);
+
+  g_hash_table_remove (self->active_calls, room_token);
 }

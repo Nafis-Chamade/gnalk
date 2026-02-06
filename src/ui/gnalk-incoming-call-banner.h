@@ -1,6 +1,7 @@
 #pragma once
 
 #include <gtk/gtk.h>
+#include "gnalk-avatar-cache.h"
 
 G_BEGIN_DECLS
 
@@ -11,11 +12,15 @@ GnalkIncomingCallBanner *gnalk_incoming_call_banner_new (void);
 
 void gnalk_incoming_call_banner_show_call (GnalkIncomingCallBanner *self,
                                              const char               *room_token,
-                                             const char               *caller_name);
+                                             const char               *room_name,
+                                             const char               *caller_name,
+                                             GnalkAvatarCache         *avatar_cache);
 
 void gnalk_incoming_call_banner_hide (GnalkIncomingCallBanner *self);
 
 const char *gnalk_incoming_call_banner_get_room_token (GnalkIncomingCallBanner *self);
+
+const char *gnalk_incoming_call_banner_get_room_name (GnalkIncomingCallBanner *self);
 
 const char *gnalk_incoming_call_banner_get_caller_id (GnalkIncomingCallBanner *self);
 
