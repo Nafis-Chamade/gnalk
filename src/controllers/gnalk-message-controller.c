@@ -1534,7 +1534,7 @@ gnalk_message_controller_load_context (GnalkMessageController *self,
   gnalk_http_client_get_message_context (self->http_client,
                                           self->room_token,
                                           message_id,
-                                          50,
+                                          30,
                                           on_context_response,
                                           op);
 }
