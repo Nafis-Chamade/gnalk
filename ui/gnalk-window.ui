@@ -158,6 +158,12 @@
                       </object>
                     </child>
                     <child type="end">
+                      <object class="GtkToggleButton" id="message_search_button">
+                        <property name="icon-name">system-search-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Search Messages</property>
+                      </object>
+                    </child>
+                    <child type="end">
                       <object class="GtkToggleButton" id="participants_toggle_button">
                         <property name="icon-name">system-users-symbolic</property>
                         <property name="active">true</property>
@@ -175,20 +181,36 @@
                     </child>
                     <child>
                       <object class="GtkBox">
-                        <property name="orientation">vertical</property>
+                        <property name="orientation">horizontal</property>
+                        <property name="vexpand">true</property>
                         <child>
-                          <object class="GnalkMessageView" id="message_view">
-                            <property name="vexpand">true</property>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="hexpand">true</property>
+                            <child>
+                              <object class="GnalkMessageView" id="message_view">
+                                <property name="vexpand">true</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GnalkTypingIndicator" id="typing_indicator"/>
+                            </child>
+                            <child>
+                              <object class="GnalkConversationActions" id="conversation_actions"/>
+                            </child>
+                            <child>
+                              <object class="GnalkMessageInput" id="message_input"/>
+                            </child>
                           </object>
                         </child>
                         <child>
-                          <object class="GnalkTypingIndicator" id="typing_indicator"/>
-                        </child>
-                        <child>
-                          <object class="GnalkConversationActions" id="conversation_actions"/>
-                        </child>
-                        <child>
-                          <object class="GnalkMessageInput" id="message_input"/>
+                          <object class="GtkRevealer" id="message_search_revealer">
+                            <property name="reveal-child">false</property>
+                            <property name="transition-type">slide-left</property>
+                            <child>
+                              <object class="GnalkMessageSearch" id="message_search"/>
+                            </child>
+                          </object>
                         </child>
                       </object>
                     </child>

@@ -195,6 +195,10 @@ gnalk_window_on_processor_state_synced (GnalkMessageProcessor *proc G_GNUC_UNUSE
       else
         gnalk_message_view_show_messages (self->message_view);
     }
+  else if (reason == GNALK_PROCESSOR_SYNC_CONTEXT_LOADED)
+    {
+      gnalk_message_view_show_messages (self->message_view);
+    }
 }
 
 /* ============ Message Controller Signal Handlers ============ */
@@ -276,4 +280,32 @@ gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController
                                                             GnalkWindow            *self)
 {
   gnalk_message_processor_process_older_from_server (self->message_processor, messages, has_more);
+}
+
+/* ============ Context mode handlers ============ */
+
+void
+gnalk_window_on_context_loaded (GnalkMessageController *mc G_GNUC_UNUSED,
+                                JsonArray              *messages,
+                                gint64                  target_id,
+                                GnalkWindow            *self)
+{
+  gnalk_message_processor_load_context (self->message_processor, messages, target_id);
+  gnalk_message_view_set_context_mode (self->message_view, TRUE);
+
+  /* Schedule highlight on the target message after scroll completes */
+  if (self->current_room && self->current_room->highlight_message_id > 0)
+    {
+      if (self->highlight_clear_timer_id)
+        g_source_remove (self->highlight_clear_timer_id);
+      self->highlight_clear_timer_id = g_timeout_add (200, gnalk_window_apply_highlight_timeout, self);
+    }
+}
+
+void
+gnalk_window_on_jump_to_present (GnalkMessageView *view G_GNUC_UNUSED,
+                                 GnalkWindow      *self)
+{
+  gnalk_message_processor_restore_live (self->message_processor);
+  gnalk_message_view_set_context_mode (self->message_view, FALSE);
 }

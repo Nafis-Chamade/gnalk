@@ -42,6 +42,7 @@
 #include "gnalk-sync-coordinator.h"
 #include "gnalk-room-controller.h"
 #include "gnalk-message-processor.h"
+#include "gnalk-message-search.h"
 #include "gnalk-conversation-info-dialog.h"
 #include <json-glib/json-glib.h>
 
@@ -152,6 +153,11 @@ struct _GnalkWindow
 
   /* Track bound message rows for display mode updates */
   GHashTable *bound_message_rows;  /* GtkWidget* -> GtkWidget* (self-keyed set) */
+
+  /* Message search panel */
+  GnalkMessageSearch *message_search;
+  GtkWidget *message_search_revealer;
+  GtkWidget *message_search_button;
 
   /* Scroll-to-message highlight timer (message ID is in current_room state) */
   guint  highlight_clear_timer_id;
@@ -277,6 +283,14 @@ void gnalk_window_on_processor_call_state_left        (GnalkMessageProcessor *pr
 void gnalk_window_on_processor_call_ended             (GnalkMessageProcessor *proc, GnalkWindow *self);
 void gnalk_window_on_processor_loading_older_changed  (GnalkMessageProcessor *proc, gboolean loading, GnalkWindow *self);
 void gnalk_window_on_processor_state_synced           (GnalkMessageProcessor *proc, guint reason, GnalkWindow *self);
+
+/* Highlight helper (used by message-actions and message-display) */
+gboolean gnalk_window_apply_highlight_timeout (gpointer user_data);
+
+/* Context mode handlers (jump-to-message) */
+void gnalk_window_on_context_loaded  (GnalkMessageController *mc, JsonArray *messages, gint64 target_id, GnalkWindow *self);
+void gnalk_window_on_jump_to_present (GnalkMessageView *view, GnalkWindow *self);
+void gnalk_window_on_search_results  (GnalkMessageController *mc, JsonArray *entries, gboolean has_more, gint cursor, GnalkWindow *self);
 
 /* ============ Conversation list functions (gnalk-window-conversation-list.c) ============ */
 

@@ -53,6 +53,8 @@ enum {
   SIGNAL_UPLOAD_COMPLETED,
   SIGNAL_UPLOAD_FAILED,
   SIGNAL_READ_STATUS_UPDATED,
+  SIGNAL_CONTEXT_LOADED,
+  SIGNAL_SEARCH_RESULTS,
   N_SIGNALS
 };
 
@@ -66,6 +68,8 @@ static void on_send_response (GnalkHttpClient *client, JsonNode *response, GErro
 static void on_edit_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_delete_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_reaction_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_context_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_search_messages_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 
 /* FileUploadData: uses its own GWeakRef pattern (multi-step chain with many fields) */
 typedef struct {
@@ -251,6 +255,25 @@ gnalk_message_controller_class_init (GnalkMessageControllerClass *klass)
                   0, NULL, NULL, NULL,
                   G_TYPE_NONE, 1,
                   G_TYPE_INT64);     /* last_common_read_message */
+
+  signals[SIGNAL_CONTEXT_LOADED] =
+    g_signal_new ("context-loaded",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 2,
+                  JSON_TYPE_ARRAY,   /* messages */
+                  G_TYPE_INT64);     /* target_message_id */
+
+  signals[SIGNAL_SEARCH_RESULTS] =
+    g_signal_new ("search-results",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 3,
+                  JSON_TYPE_ARRAY,   /* entries */
+                  G_TYPE_BOOLEAN,    /* has_more */
+                  G_TYPE_INT);       /* cursor */
 }
 
 static void
@@ -1453,4 +1476,142 @@ gnalk_message_controller_set_session_ready (GnalkMessageController *self,
       self->polling_deferred = FALSE;
       gnalk_message_controller_start_polling (self, self->deferred_last_known_id);
     }
+}
+
+/* ============ Context Loading (Jump-to-message) ============ */
+
+static void
+on_context_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                     JsonNode         *response,
+                     GError           *error,
+                     gpointer          user_data)
+{
+  GnalkAsyncOp *op = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gint64 target_id = op->context_id;
+  gnalk_async_op_free (op);
+
+  if (error)
+    {
+      g_warning ("Failed to get message context: %s", error->message);
+      return;
+    }
+
+  JsonArray *messages = extract_messages_array (response);
+  if (messages)
+    {
+      save_messages_to_db (self, messages, self->room_token);
+      g_signal_emit (self, signals[SIGNAL_CONTEXT_LOADED], 0, messages, target_id);
+    }
+}
+
+void
+gnalk_message_controller_load_context (GnalkMessageController *self,
+                                       gint64                  message_id)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (self->room_token != NULL);
+  g_return_if_fail (message_id > 0);
+
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation,
+                                          NULL, message_id);
+
+  gnalk_http_client_get_message_context (self->http_client,
+                                          self->room_token,
+                                          message_id,
+                                          50,
+                                          on_context_response,
+                                          op);
+}
+
+/* ============ Message Search ============ */
+
+static void
+on_search_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                             JsonNode         *response,
+                             GError           *error,
+                             gpointer          user_data)
+{
+  GnalkAsyncOp *op = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
+
+  if (error)
+    {
+      g_warning ("Failed to search messages: %s", error->message);
+      return;
+    }
+
+  if (!response || !JSON_NODE_HOLDS_OBJECT (response))
+    return;
+
+  JsonObject *root = json_node_get_object (response);
+  JsonObject *ocs = json_object_get_object_member (root, "ocs");
+  if (!ocs)
+    return;
+
+  JsonObject *data = json_object_get_object_member (ocs, "data");
+  if (!data)
+    return;
+
+  JsonArray *entries = json_object_get_array_member (data, "entries");
+  if (!entries)
+    return;
+
+  /* Check for pagination: cursor is in ocs.data.cursor */
+  gint cursor = (gint) json_object_get_int_member_with_default (data, "cursor", 0);
+  gboolean has_more = json_object_has_member (data, "cursor") && cursor > 0;
+
+  g_signal_emit (self, signals[SIGNAL_SEARCH_RESULTS], 0, entries, has_more, cursor);
+}
+
+void
+gnalk_message_controller_search_messages (GnalkMessageController *self,
+                                          const char             *search_term,
+                                          gint                    cursor)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (self->room_token != NULL);
+  g_return_if_fail (search_term != NULL);
+
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation,
+                                          NULL, 0);
+
+  gnalk_http_client_search_messages (self->http_client,
+                                      self->room_token,
+                                      search_term,
+                                      20,
+                                      cursor,
+                                      on_search_messages_response,
+                                      op);
 }

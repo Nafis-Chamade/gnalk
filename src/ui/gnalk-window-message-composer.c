@@ -170,6 +170,13 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
   if (!self->current_room)
     return;
 
+  /* If in context mode, restore live view before sending */
+  if (self->current_room->in_context_mode)
+    {
+      gnalk_message_processor_restore_live (self->message_processor);
+      gnalk_message_view_set_context_mode (self->message_view, FALSE);
+    }
+
   gboolean has_text = text && *text;
   gboolean has_attachments = self->attachments && self->attachments->len > 0;
 

@@ -251,6 +251,23 @@ void gnalk_http_client_add_participant (GnalkHttpClient   *self,
                                           GnalkHttpCallback  callback,
                                           gpointer            user_data);
 
+/* Context around a specific message (for jump-to-message) */
+void gnalk_http_client_get_message_context (GnalkHttpClient  *self,
+                                            const char       *room_token,
+                                            gint64            message_id,
+                                            gint              limit,
+                                            GnalkHttpCallback callback,
+                                            gpointer          user_data);
+
+/* Unified search for messages in a conversation */
+void gnalk_http_client_search_messages (GnalkHttpClient  *self,
+                                        const char       *room_token,
+                                        const char       *search_term,
+                                        gint              limit,
+                                        gint              cursor,
+                                        GnalkHttpCallback callback,
+                                        gpointer          user_data);
+
 /* Guest mode API */
 void gnalk_http_client_get_room_info (GnalkHttpClient   *self,
                                         const char         *room_token,

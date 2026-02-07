@@ -108,6 +108,17 @@ void gnalk_message_controller_upload_voice_message (GnalkMessageController *self
                                                       GBytes                  *file_bytes,
                                                       const char              *reference_id);
 
+/* Load context around a specific message (for jump-to-message).
+ * Emits "context-loaded" (JsonArray *messages, gint64 target_message_id) on success. */
+void gnalk_message_controller_load_context (GnalkMessageController *self,
+                                            gint64                  message_id);
+
+/* Search messages in a conversation.
+ * Emits "search-results" (JsonArray *entries, gboolean has_more, gint cursor) */
+void gnalk_message_controller_search_messages (GnalkMessageController *self,
+                                               const char             *search_term,
+                                               gint                    cursor);
+
 /* Session-ready gate: defer polling until cookies are established */
 void gnalk_message_controller_set_session_ready (GnalkMessageController *self,
                                                  gboolean                ready);

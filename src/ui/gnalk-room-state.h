@@ -51,6 +51,11 @@ struct _GnalkRoomState
 
   /* UI state */
   gint64      highlight_message_id;
+
+  /* Context mode (jump-to-message) */
+  gboolean    in_context_mode;
+  gint64      context_target_message_id;
+  gint64      context_newest_id;
 };
 
 G_END_DECLS

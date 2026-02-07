@@ -240,8 +240,8 @@ iterate_children (GtkWidget *widget, gpointer user_data)
     }
 }
 
-static gboolean
-apply_highlight_timeout (gpointer user_data)
+gboolean
+gnalk_window_apply_highlight_timeout (gpointer user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
@@ -266,7 +266,7 @@ gnalk_window_on_scroll_to_message_requested (GnalkMessageRow *row,
   if (!self->messages_store || message_id <= 0)
     return;
 
-  /* Find the message index by ID */
+  /* Find the message index by ID (fast path for locally loaded messages) */
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
   for (guint i = 0; i < n_items; i++)
     {
@@ -283,13 +283,20 @@ gnalk_window_on_scroll_to_message_requested (GnalkMessageRow *row,
           /* Apply highlight after scroll animation completes */
           if (self->highlight_clear_timer_id)
             g_source_remove (self->highlight_clear_timer_id);
-          self->highlight_clear_timer_id = g_timeout_add (100, apply_highlight_timeout, self);
+          self->highlight_clear_timer_id = g_timeout_add (100, gnalk_window_apply_highlight_timeout, self);
 
           g_object_unref (msg_data);
           return;
         }
       if (msg_data)
         g_object_unref (msg_data);
+    }
+
+  /* Not found in store: request context from server */
+  if (self->message_controller && self->current_room)
+    {
+      self->current_room->highlight_message_id = message_id;
+      gnalk_message_controller_load_context (self->message_controller, message_id);
     }
 }
 

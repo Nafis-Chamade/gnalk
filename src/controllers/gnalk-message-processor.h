@@ -31,7 +31,8 @@ typedef struct _GnalkRoomState GnalkRoomState;
 G_DECLARE_FINAL_TYPE (GnalkMessageProcessor, gnalk_message_processor, GNALK, MESSAGE_PROCESSOR, GObject)
 
 /* State sync reasons for the "state-synced" signal */
-#define GNALK_PROCESSOR_SYNC_DB_LOADED  0
+#define GNALK_PROCESSOR_SYNC_DB_LOADED       0
+#define GNALK_PROCESSOR_SYNC_CONTEXT_LOADED  1
 
 GnalkMessageProcessor *gnalk_message_processor_new (void);
 
@@ -70,6 +71,12 @@ void gnalk_message_processor_process_older_from_server (GnalkMessageProcessor *s
 gint gnalk_message_processor_compare_by_id (gconstpointer a,
                                              gconstpointer b,
                                              gpointer      user_data);
+
+/* Context mode (jump-to-message) */
+void gnalk_message_processor_load_context  (GnalkMessageProcessor *self,
+                                            JsonArray             *messages,
+                                            gint64                 target_message_id);
+void gnalk_message_processor_restore_live  (GnalkMessageProcessor *self);
 
 /* State queries */
 gboolean gnalk_message_processor_get_loading_older (GnalkMessageProcessor *self);

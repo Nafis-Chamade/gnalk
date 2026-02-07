@@ -74,4 +74,8 @@ void gnalk_message_view_set_mosaic_avatars (GnalkMessageView *self,
                                              GPtrArray        *textures,
                                              GdkTexture       *room_avatar);
 
+/* Context mode (jump-to-message): changes scroll-to-bottom button to "jump to present" */
+void gnalk_message_view_set_context_mode (GnalkMessageView *self,
+                                          gboolean          context_mode);
+
 G_END_DECLS

@@ -113,6 +113,10 @@ connect_controller_signals (GnalkWindow  *self,
                         G_CALLBACK (gnalk_window_on_message_controller_poll_response), self);
       g_signal_connect (mc, "older-messages-loaded",
                         G_CALLBACK (gnalk_window_on_message_controller_older_messages_loaded), self);
+      g_signal_connect (mc, "context-loaded",
+                        G_CALLBACK (gnalk_window_on_context_loaded), self);
+      g_signal_connect (mc, "search-results",
+                        G_CALLBACK (gnalk_window_on_search_results), self);
     }
 
   /* Conversation controller */

@@ -2,6 +2,7 @@
 #include "gnalk-background-generator.h"
 #include "gnalk-log.h"
 #include <gio/gio.h>
+#include <glib/gi18n.h>
 
 struct _GnalkMessageView
 {
@@ -13,6 +14,7 @@ struct _GnalkMessageView
   GtkWidget *scroll_to_bottom_button;
 
   gboolean loading_older;
+  gboolean in_context_mode;
 
   GSettings *settings;
   gulong bg_style_handler_id;
@@ -28,6 +30,7 @@ enum
   SIGNAL_LOAD_OLDER_REQUESTED,
   SIGNAL_SCROLL_CHANGED,
   SIGNAL_SCROLL_TO_BOTTOM_CLICKED,
+  SIGNAL_JUMP_TO_PRESENT_CLICKED,
   N_SIGNALS
 };
 
@@ -73,7 +76,8 @@ on_scroll_adjustment_value_changed (GtkAdjustment     *adj,
              value, upper, page_size, upper - page_size);
 
   gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
-  gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
+  if (!self->in_context_mode)
+    gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
 
   g_signal_emit (self, signals[SIGNAL_SCROLL_CHANGED], 0);
 }
@@ -90,7 +94,8 @@ on_scroll_adjustment_changed (GtkAdjustment     *adj,
              value, upper, page_size, upper - page_size);
 
   gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
-  gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
+  if (!self->in_context_mode)
+    gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
 
   g_signal_emit (self, signals[SIGNAL_SCROLL_CHANGED], 0);
 }
@@ -101,8 +106,15 @@ on_scroll_to_bottom_clicked (GtkButton         *button,
 {
   (void) button;
 
-  g_signal_emit (self, signals[SIGNAL_SCROLL_TO_BOTTOM_CLICKED], 0);
-  gnalk_message_view_scroll_to_bottom (self);
+  if (self->in_context_mode)
+    {
+      g_signal_emit (self, signals[SIGNAL_JUMP_TO_PRESENT_CLICKED], 0);
+    }
+  else
+    {
+      g_signal_emit (self, signals[SIGNAL_SCROLL_TO_BOTTOM_CLICKED], 0);
+      gnalk_message_view_scroll_to_bottom (self);
+    }
 }
 
 static void
@@ -218,6 +230,15 @@ gnalk_message_view_class_init (GnalkMessageViewClass *klass)
 
   signals[SIGNAL_SCROLL_TO_BOTTOM_CLICKED] =
     g_signal_new ("scroll-to-bottom-clicked",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 0);
+
+  signals[SIGNAL_JUMP_TO_PRESENT_CLICKED] =
+    g_signal_new ("jump-to-present-clicked",
                   G_TYPE_FROM_CLASS (klass),
                   G_SIGNAL_RUN_LAST,
                   0,
@@ -552,5 +573,34 @@ gnalk_message_view_set_mosaic_avatars (GnalkMessageView *self,
         gtk_widget_get_display (GTK_WIDGET (self)),
         GTK_STYLE_PROVIDER (self->mosaic_provider),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+}
+
+void
+gnalk_message_view_set_context_mode (GnalkMessageView *self,
+                                     gboolean          context_mode)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  self->in_context_mode = context_mode;
+
+  if (context_mode)
+    {
+      /* Force button visible, change icon to indicate "jump to present" */
+      gtk_widget_set_visible (self->scroll_to_bottom_button, TRUE);
+      gtk_button_set_icon_name (GTK_BUTTON (self->scroll_to_bottom_button), "go-bottom-symbolic");
+      gtk_widget_add_css_class (self->scroll_to_bottom_button, "pill");
+      gtk_widget_set_tooltip_text (self->scroll_to_bottom_button, _("Jump to present"));
+    }
+  else
+    {
+      /* Restore original icon and behavior */
+      gtk_button_set_icon_name (GTK_BUTTON (self->scroll_to_bottom_button), "go-down-symbolic");
+      gtk_widget_remove_css_class (self->scroll_to_bottom_button, "pill");
+      gtk_widget_set_tooltip_text (self->scroll_to_bottom_button, _("Scroll to bottom"));
+
+      /* Let scroll position determine visibility again */
+      gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
+      gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
     }
 }

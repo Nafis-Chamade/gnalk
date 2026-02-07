@@ -1913,6 +1913,7 @@ gnalk_window_class_init (GnalkWindowClass *klass)
   g_type_ensure (GNALK_TYPE_TYPING_INDICATOR);
   g_type_ensure (GNALK_TYPE_CONVERSATION_ACTIONS);
   g_type_ensure (GNALK_TYPE_MESSAGE_INPUT);
+  g_type_ensure (GNALK_TYPE_MESSAGE_SEARCH);
 
   gtk_widget_class_set_template_from_resource (widget_class,
                                                 "/net/skilpa/gnalk/gnalk-window.ui");
@@ -1939,6 +1940,59 @@ gnalk_window_class_init (GnalkWindowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, network_status_bar);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, incoming_call_banner);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, participants_list);
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, message_search);
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, message_search_revealer);
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, message_search_button);
+}
+
+/* ============ Message Search Handlers ============ */
+
+static void
+on_message_search_requested (GnalkMessageSearch *search G_GNUC_UNUSED,
+                             const char         *search_term,
+                             gint                cursor,
+                             GnalkWindow        *self)
+{
+  if (self->message_controller)
+    gnalk_message_controller_search_messages (self->message_controller, search_term, cursor);
+}
+
+static void
+on_message_search_result_activated (GnalkMessageSearch *search G_GNUC_UNUSED,
+                                    gint64              message_id,
+                                    GnalkWindow        *self)
+{
+  gnalk_window_on_scroll_to_message_requested (NULL, message_id, self);
+}
+
+static void
+on_message_search_load_more (GnalkMessageSearch *search G_GNUC_UNUSED,
+                             const char         *search_term,
+                             gint                cursor,
+                             GnalkWindow        *self)
+{
+  if (self->message_controller)
+    gnalk_message_controller_search_messages (self->message_controller, search_term, cursor);
+}
+
+void
+gnalk_window_on_search_results (GnalkMessageController *mc G_GNUC_UNUSED,
+                                JsonArray              *entries,
+                                gboolean                has_more,
+                                gint                    cursor,
+                                GnalkWindow            *self)
+{
+  gnalk_message_search_set_results (self->message_search, entries, has_more, cursor);
+}
+
+static void
+on_search_messages_action (GSimpleAction *action G_GNUC_UNUSED,
+                           GVariant      *parameter G_GNUC_UNUSED,
+                           gpointer       user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+  gboolean active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (self->message_search_button));
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->message_search_button), !active);
 }
 
 static void
@@ -1946,6 +2000,7 @@ gnalk_window_init (GnalkWindow *self)
 {
   static GActionEntry win_actions[] = {
     { "preferences", on_preferences_action },
+    { "search-messages", on_search_messages_action },
   };
 
   static GActionEntry app_actions[] = {
@@ -1957,6 +2012,8 @@ gnalk_window_init (GnalkWindow *self)
   g_action_map_add_action_entries (G_ACTION_MAP (self), win_actions, G_N_ELEMENTS (win_actions), self);
 
   GApplication *app = g_application_get_default ();
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app), "win.search-messages",
+                                          (const char *[]) { "<Control>f", NULL });
   g_action_map_add_action_entries (G_ACTION_MAP (app), app_actions, G_N_ELEMENTS (app_actions), self);
 
   /* Connect to network monitor for offline/online status */
@@ -2161,6 +2218,18 @@ gnalk_window_init (GnalkWindow *self)
 
   /* Connect scroll-changed to re-check visibility of unread messages on scroll */
   g_signal_connect (self->message_view, "scroll-changed", G_CALLBACK (gnalk_window_on_message_scroll_changed), self);
+  g_signal_connect (self->message_view, "jump-to-present-clicked", G_CALLBACK (gnalk_window_on_jump_to_present), self);
+
+  /* Message search panel: bind toggle button to revealer */
+  g_object_bind_property (self->message_search_button, "active",
+                          self->message_search_revealer, "reveal-child",
+                          G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE);
+  g_signal_connect (self->message_search, "search-requested",
+                    G_CALLBACK (on_message_search_requested), self);
+  g_signal_connect (self->message_search, "result-activated",
+                    G_CALLBACK (on_message_search_result_activated), self);
+  g_signal_connect (self->message_search, "load-more-requested",
+                    G_CALLBACK (on_message_search_load_more), self);
 
   /* Set up breakpoint for responsive message display (wide vs narrow layout) */
   AdwBreakpoint *wide_breakpoint = adw_breakpoint_new (

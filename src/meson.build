@@ -98,6 +98,7 @@ ui_sources = [
   'ui/gnalk-upload-preview.c',
   'ui/gnalk-file-preview.c',
   'ui/gnalk-media-capture-dialog.c',
+  'ui/gnalk-message-search.c',
   'ui/gnalk-video-player.c',
   'ui/gnalk-video-player-dialog.c',
   'ui/gnalk-video-thumbnail.c',
