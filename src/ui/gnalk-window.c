@@ -1986,6 +1986,13 @@ gnalk_window_on_search_results (GnalkMessageController *mc G_GNUC_UNUSED,
 }
 
 static void
+on_message_search_close (GnalkMessageSearch *search G_GNUC_UNUSED,
+                         GnalkWindow        *self)
+{
+  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->message_search_button), FALSE);
+}
+
+static void
 on_search_messages_action (GSimpleAction *action G_GNUC_UNUSED,
                            GVariant      *parameter G_GNUC_UNUSED,
                            gpointer       user_data)
@@ -1993,6 +2000,8 @@ on_search_messages_action (GSimpleAction *action G_GNUC_UNUSED,
   GnalkWindow *self = GNALK_WINDOW (user_data);
   gboolean active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (self->message_search_button));
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->message_search_button), !active);
+  if (!active)
+    gnalk_message_search_grab_focus (self->message_search);
 }
 
 static void
@@ -2230,6 +2239,8 @@ gnalk_window_init (GnalkWindow *self)
                     G_CALLBACK (on_message_search_result_activated), self);
   g_signal_connect (self->message_search, "load-more-requested",
                     G_CALLBACK (on_message_search_load_more), self);
+  g_signal_connect (self->message_search, "close-requested",
+                    G_CALLBACK (on_message_search_close), self);
 
   /* Set up breakpoint for responsive message display (wide vs narrow layout) */
   AdwBreakpoint *wide_breakpoint = adw_breakpoint_new (

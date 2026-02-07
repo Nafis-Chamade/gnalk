@@ -1,12 +1,13 @@
 /* gnalk-message-search.c
  *
  * Search messages in a conversation using Nextcloud unified search.
- * Contains a search entry with debounce and a scrollable results list.
+ * Non-modal bottom panel: search entry + scrollable results with timestamps.
  *
  * Signals:
  * - "search-requested" (const char *search_term, gint cursor) - User typed a search query
  * - "result-activated" (gint64 message_id) - User clicked a search result
  * - "load-more-requested" (const char *search_term, gint cursor) - Pagination
+ * - "close-requested" () - User clicked close button
  */
 
 #include "gnalk-message-search.h"
@@ -18,6 +19,7 @@ struct _GnalkMessageSearch
   GtkBox parent_instance;
 
   GtkWidget *search_entry;
+  GtkWidget *close_button;
   GtkWidget *scrolled_window;
   GtkWidget *results_box;
   GtkWidget *status_label;
@@ -34,6 +36,7 @@ enum {
   SIGNAL_SEARCH_REQUESTED,
   SIGNAL_RESULT_ACTIVATED,
   SIGNAL_LOAD_MORE_REQUESTED,
+  SIGNAL_CLOSE_REQUESTED,
   N_SIGNALS
 };
 
@@ -53,6 +56,7 @@ clear_results (GnalkMessageSearch *self)
   self->has_more = FALSE;
   gtk_widget_set_visible (self->load_more_button, FALSE);
   gtk_widget_set_visible (self->status_label, FALSE);
+  gtk_widget_set_visible (self->scrolled_window, FALSE);
 }
 
 static void
@@ -110,6 +114,46 @@ on_load_more_clicked (GtkButton          *button G_GNUC_UNUSED,
 }
 
 static void
+on_close_clicked (GtkButton          *button G_GNUC_UNUSED,
+                  GnalkMessageSearch *self)
+{
+  g_signal_emit (self, signals[SIGNAL_CLOSE_REQUESTED], 0);
+}
+
+/* Format a Unix timestamp as a short relative/absolute date string */
+static char *
+format_timestamp (gint64 timestamp)
+{
+  if (timestamp <= 0)
+    return NULL;
+
+  g_autoptr(GDateTime) dt = g_date_time_new_from_unix_local (timestamp);
+  if (!dt)
+    return NULL;
+
+  g_autoptr(GDateTime) now = g_date_time_new_now_local ();
+  gint dt_year, dt_month, dt_day;
+  gint now_year, now_month, now_day;
+  g_date_time_get_ymd (dt, &dt_year, &dt_month, &dt_day);
+  g_date_time_get_ymd (now, &now_year, &now_month, &now_day);
+
+  if (dt_year == now_year && dt_month == now_month && dt_day == now_day)
+    return g_date_time_format (dt, "%H:%M");
+
+  /* Yesterday: check day difference */
+  g_autoptr(GDateTime) yesterday = g_date_time_add_days (now, -1);
+  gint y_year, y_month, y_day;
+  g_date_time_get_ymd (yesterday, &y_year, &y_month, &y_day);
+  if (dt_year == y_year && dt_month == y_month && dt_day == y_day)
+    return g_strdup (_("Yesterday"));
+
+  if (dt_year == now_year)
+    return g_date_time_format (dt, "%b %e");
+
+  return g_date_time_format (dt, "%b %e, %Y");
+}
+
+static void
 gnalk_message_search_dispose (GObject *object)
 {
   GnalkMessageSearch *self = GNALK_MESSAGE_SEARCH (object);
@@ -154,42 +198,65 @@ gnalk_message_search_class_init (GnalkMessageSearchClass *klass)
                   G_TYPE_NONE, 2,
                   G_TYPE_STRING,     /* search_term */
                   G_TYPE_INT);       /* cursor */
+
+  signals[SIGNAL_CLOSE_REQUESTED] =
+    g_signal_new ("close-requested",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 0);
 }
 
 static void
 gnalk_message_search_init (GnalkMessageSearch *self)
 {
   gtk_orientable_set_orientation (GTK_ORIENTABLE (self), GTK_ORIENTATION_VERTICAL);
-  gtk_widget_set_size_request (GTK_WIDGET (self), 280, -1);
+  gtk_widget_add_css_class (GTK_WIDGET (self), "card");
+  gtk_widget_set_margin_start (GTK_WIDGET (self), 12);
+  gtk_widget_set_margin_end (GTK_WIDGET (self), 12);
+  gtk_widget_set_margin_bottom (GTK_WIDGET (self), 8);
 
-  /* Search entry */
+  /* Header: search entry + close button */
+  GtkWidget *header_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
+  gtk_widget_set_margin_start (header_box, 8);
+  gtk_widget_set_margin_end (header_box, 4);
+  gtk_widget_set_margin_top (header_box, 8);
+  gtk_widget_set_margin_bottom (header_box, 4);
+  gtk_box_append (GTK_BOX (self), header_box);
+
   self->search_entry = gtk_search_entry_new ();
-  gtk_widget_set_margin_start (self->search_entry, 6);
-  gtk_widget_set_margin_end (self->search_entry, 6);
-  gtk_widget_set_margin_top (self->search_entry, 6);
-  gtk_widget_set_margin_bottom (self->search_entry, 6);
-  gtk_box_append (GTK_BOX (self), self->search_entry);
+  gtk_widget_set_hexpand (self->search_entry, TRUE);
+  gtk_box_append (GTK_BOX (header_box), self->search_entry);
 
   g_signal_connect (self->search_entry, "search-changed",
                     G_CALLBACK (on_search_changed), self);
 
+  self->close_button = gtk_button_new_from_icon_name ("window-close-symbolic");
+  gtk_widget_add_css_class (self->close_button, "flat");
+  gtk_widget_add_css_class (self->close_button, "circular");
+  gtk_box_append (GTK_BOX (header_box), self->close_button);
+
+  g_signal_connect (self->close_button, "clicked",
+                    G_CALLBACK (on_close_clicked), self);
+
   /* Status label */
   self->status_label = gtk_label_new (NULL);
   gtk_widget_add_css_class (self->status_label, "dim-label");
-  gtk_widget_set_margin_top (self->status_label, 12);
-  gtk_widget_set_margin_bottom (self->status_label, 12);
+  gtk_widget_set_margin_top (self->status_label, 8);
+  gtk_widget_set_margin_bottom (self->status_label, 8);
   gtk_widget_set_visible (self->status_label, FALSE);
   gtk_box_append (GTK_BOX (self), self->status_label);
 
-  /* Scrolled results */
+  /* Scrolled results (hidden until results arrive) */
   self->scrolled_window = gtk_scrolled_window_new ();
-  gtk_widget_set_vexpand (self->scrolled_window, TRUE);
   gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (self->scrolled_window),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_max_content_height (GTK_SCROLLED_WINDOW (self->scrolled_window), 280);
+  gtk_scrolled_window_set_propagate_natural_height (GTK_SCROLLED_WINDOW (self->scrolled_window), TRUE);
+  gtk_widget_set_visible (self->scrolled_window, FALSE);
 
   self->results_box = gtk_list_box_new ();
   gtk_list_box_set_selection_mode (GTK_LIST_BOX (self->results_box), GTK_SELECTION_NONE);
-  gtk_widget_add_css_class (self->results_box, "boxed-list");
   g_signal_connect (self->results_box, "row-activated",
                     G_CALLBACK (on_result_row_activated), self);
 
@@ -199,9 +266,9 @@ gnalk_message_search_init (GnalkMessageSearch *self)
 
   /* Load more button */
   self->load_more_button = gtk_button_new_with_label (_("Load more..."));
-  gtk_widget_set_margin_start (self->load_more_button, 6);
-  gtk_widget_set_margin_end (self->load_more_button, 6);
-  gtk_widget_set_margin_bottom (self->load_more_button, 6);
+  gtk_widget_set_margin_start (self->load_more_button, 8);
+  gtk_widget_set_margin_end (self->load_more_button, 8);
+  gtk_widget_set_margin_bottom (self->load_more_button, 8);
   gtk_widget_add_css_class (self->load_more_button, "flat");
   gtk_widget_set_visible (self->load_more_button, FALSE);
   g_signal_connect (self->load_more_button, "clicked",
@@ -222,6 +289,13 @@ gnalk_message_search_clear (GnalkMessageSearch *self)
 
   gtk_editable_set_text (GTK_EDITABLE (self->search_entry), "");
   clear_results (self);
+}
+
+void
+gnalk_message_search_grab_focus (GnalkMessageSearch *self)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_SEARCH (self));
+  gtk_widget_grab_focus (self->search_entry);
 }
 
 void
@@ -253,34 +327,54 @@ gnalk_message_search_set_results (GnalkMessageSearch *self,
       const char *title = json_object_get_string_member_with_default (entry, "title", "");
       const char *subline = json_object_get_string_member_with_default (entry, "subline", "");
 
-      /* Extract messageId from attributes */
+      /* Extract messageId and timestamp from attributes */
       gint64 message_id = 0;
+      gint64 timestamp = 0;
       JsonObject *attributes = json_object_get_object_member (entry, "attributes");
       if (attributes)
         {
           const char *msg_id_str = json_object_get_string_member_with_default (attributes, "messageId", NULL);
           if (msg_id_str)
             message_id = g_ascii_strtoll (msg_id_str, NULL, 10);
+
+          const char *ts_str = json_object_get_string_member_with_default (attributes, "timestamp", NULL);
+          if (ts_str)
+            timestamp = g_ascii_strtoll (ts_str, NULL, 10);
         }
 
       /* Build the row */
       GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
-      gtk_widget_set_margin_start (box, 8);
-      gtk_widget_set_margin_end (box, 8);
+      gtk_widget_set_margin_start (box, 10);
+      gtk_widget_set_margin_end (box, 10);
       gtk_widget_set_margin_top (box, 6);
       gtk_widget_set_margin_bottom (box, 6);
+
+      /* Top line: author + date */
+      GtkWidget *top_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+      gtk_box_append (GTK_BOX (box), top_box);
 
       GtkWidget *title_label = gtk_label_new (title);
       gtk_label_set_xalign (GTK_LABEL (title_label), 0);
       gtk_widget_add_css_class (title_label, "heading");
       gtk_label_set_ellipsize (GTK_LABEL (title_label), PANGO_ELLIPSIZE_END);
-      gtk_box_append (GTK_BOX (box), title_label);
+      gtk_widget_set_hexpand (title_label, TRUE);
+      gtk_box_append (GTK_BOX (top_box), title_label);
 
+      g_autofree char *date_str = format_timestamp (timestamp);
+      if (date_str)
+        {
+          GtkWidget *date_label = gtk_label_new (date_str);
+          gtk_widget_add_css_class (date_label, "dim-label");
+          gtk_widget_add_css_class (date_label, "caption");
+          gtk_box_append (GTK_BOX (top_box), date_label);
+        }
+
+      /* Subline: message excerpt */
       GtkWidget *subline_label = gtk_label_new (subline);
       gtk_label_set_xalign (GTK_LABEL (subline_label), 0);
       gtk_widget_add_css_class (subline_label, "dim-label");
       gtk_label_set_ellipsize (GTK_LABEL (subline_label), PANGO_ELLIPSIZE_END);
-      gtk_label_set_max_width_chars (GTK_LABEL (subline_label), 40);
+      gtk_label_set_max_width_chars (GTK_LABEL (subline_label), 60);
       gtk_box_append (GTK_BOX (box), subline_label);
 
       GtkWidget *row = gtk_list_box_row_new ();
@@ -292,5 +386,6 @@ gnalk_message_search_set_results (GnalkMessageSearch *self,
       gtk_list_box_append (GTK_LIST_BOX (self->results_box), row);
     }
 
+  gtk_widget_set_visible (self->scrolled_window, TRUE);
   gtk_widget_set_visible (self->load_more_button, has_more);
 }

@@ -180,13 +180,12 @@
                       <object class="GnalkParticipantsList" id="participants_list"/>
                     </child>
                     <child>
-                      <object class="GtkBox">
-                        <property name="orientation">horizontal</property>
+                      <object class="GtkOverlay">
                         <property name="vexpand">true</property>
-                        <child>
+                        <property name="child">
                           <object class="GtkBox">
                             <property name="orientation">vertical</property>
-                            <property name="hexpand">true</property>
+                            <property name="vexpand">true</property>
                             <child>
                               <object class="GnalkMessageView" id="message_view">
                                 <property name="vexpand">true</property>
@@ -202,11 +201,12 @@
                               <object class="GnalkMessageInput" id="message_input"/>
                             </child>
                           </object>
-                        </child>
-                        <child>
+                        </property>
+                        <child type="overlay">
                           <object class="GtkRevealer" id="message_search_revealer">
                             <property name="reveal-child">false</property>
-                            <property name="transition-type">slide-left</property>
+                            <property name="transition-type">slide-up</property>
+                            <property name="valign">end</property>
                             <child>
                               <object class="GnalkMessageSearch" id="message_search"/>
                             </child>
