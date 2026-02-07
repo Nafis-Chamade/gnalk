@@ -290,6 +290,14 @@ void gnalk_data_repository_set_last_known_message_id (GnalkDataRepository *self,
                                                       const char          *conversation_token,
                                                       gint64               message_id);
 
+gint64 gnalk_data_repository_get_last_notified_message_id (GnalkDataRepository *self,
+                                                            gint64               account_id,
+                                                            const char          *conversation_token);
+void gnalk_data_repository_set_last_notified_message_id (GnalkDataRepository *self,
+                                                          gint64               account_id,
+                                                          const char          *conversation_token,
+                                                          gint64               message_id);
+
 /* Sync state operations (async) */
 
 /**

@@ -72,6 +72,7 @@ typedef struct {
   char                 *room_token;
   char                 *room_name;    /* For notification display */
   gint64                last_known_id;
+  gint64                last_notified_id;
   gint                  notification_level;
 } RoomSyncData;
 
@@ -201,10 +202,11 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
                                               data->room_token, msg_data);
           saved_count++;
 
-          /* Collect messages from others for notification (skip system messages) */
+          /* Collect messages from others for notification (skip system messages, skip already notified) */
           const char *author_id = gnalk_message_data_get_author_id (msg_data);
           const char *sys_msg = json_object_get_string_member_with_default (msg_obj, "systemMessage", "");
-          if (g_strcmp0 (author_id, data->user_id) != 0 && (!sys_msg || !*sys_msg))
+          if (msg_id > data->last_notified_id &&
+              g_strcmp0 (author_id, data->user_id) != 0 && (!sys_msg || !*sys_msg))
             {
               const char *sender = json_object_get_string_member_with_default (
                   msg_obj, "actorDisplayName", "Someone");
@@ -333,8 +335,13 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
 
   /* Update last known message ID so we don't re-fetch these */
   if (newest_id > 0)
-    gnalk_data_repository_set_last_known_message_id (self->repository, data->account_id,
-                                                     data->room_token, newest_id);
+    {
+      gnalk_data_repository_set_last_known_message_id (self->repository, data->account_id,
+                                                       data->room_token, newest_id);
+      /* Advance notification watermark so we never re-notify these messages */
+      gnalk_data_repository_set_last_notified_message_id (self->repository, data->account_id,
+                                                           data->room_token, newest_id);
+    }
 
   room_sync_data_free (data);
 }
@@ -359,6 +366,8 @@ sync_room_messages (GnalkSyncCoordinator *self,
   sync_data->room_token = g_strdup (room_token);
   sync_data->room_name = g_strdup (room_name);
   sync_data->last_known_id = db_last_id;
+  sync_data->last_notified_id = gnalk_data_repository_get_last_notified_message_id (
+      self->repository, account_id, room_token);
   sync_data->notification_level = notification_level;
 
   if (db_last_id == 0)

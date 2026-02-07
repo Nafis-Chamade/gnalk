@@ -777,6 +777,31 @@ gnalk_data_repository_set_last_known_message_id (GnalkDataRepository *self,
   gnalk_database_set_last_known_message_id (self->database, account_id, conversation_token, message_id);
 }
 
+gint64
+gnalk_data_repository_get_last_notified_message_id (GnalkDataRepository *self,
+                                                     gint64               account_id,
+                                                     const char          *conversation_token)
+{
+  g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (self), 0);
+  g_return_val_if_fail (self->is_open, 0);
+  g_return_val_if_fail (conversation_token != NULL, 0);
+
+  return gnalk_database_get_last_notified_message_id (self->database, account_id, conversation_token);
+}
+
+void
+gnalk_data_repository_set_last_notified_message_id (GnalkDataRepository *self,
+                                                     gint64               account_id,
+                                                     const char          *conversation_token,
+                                                     gint64               message_id)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  g_return_if_fail (self->is_open);
+  g_return_if_fail (conversation_token != NULL);
+
+  gnalk_database_set_last_notified_message_id (self->database, account_id, conversation_token, message_id);
+}
+
 void
 gnalk_data_repository_set_has_more_history (GnalkDataRepository *self,
                                              gint64               account_id,

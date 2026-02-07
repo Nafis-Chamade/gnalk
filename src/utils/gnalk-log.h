@@ -96,6 +96,16 @@ void gnalk_log_ws_recv (const char *account,
 void gnalk_log_webrtc (const char *format, ...) G_GNUC_PRINTF (1, 2);
 
 /**
+ * gnalk_log_notification:
+ * @format: printf-style format string
+ * @...: Format arguments
+ *
+ * Log notification-related messages (send, withdraw, action invoked).
+ * Goes to GNALK_NOTIF_LOG file if set, otherwise stdout.
+ */
+void gnalk_log_notification (const char *format, ...) G_GNUC_PRINTF (1, 2);
+
+/**
  * gnalk_log_trace:
  * @category: Log category
  * @format: printf-style format string

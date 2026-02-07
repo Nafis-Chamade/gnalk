@@ -18,10 +18,12 @@ export G_MESSAGES_DEBUG=gnalk
 LOG_FILE="$BUILD_DIR/gnalk.log"
 HTTP_LOG="$BUILD_DIR/http.log"
 WS_LOG="$BUILD_DIR/websocket.log"
+NOTIF_LOG="$BUILD_DIR/notifications.log"
 
-# HTTP and WebSocket logs go to separate files
+# HTTP, WebSocket, and notification logs go to separate files
 export GNALK_HTTP_LOG="$HTTP_LOG"
 export GNALK_WS_LOG="$WS_LOG"
+export GNALK_NOTIF_LOG="$NOTIF_LOG"
 
 # Enable trace logging (set to "1" for all, or comma-separated categories)
 # Categories: messages, room_switch, scroll, store, polling, database, ui, network
@@ -33,11 +35,13 @@ export GNALK_WS_LOG="$WS_LOG"
 > "$LOG_FILE"
 > "$HTTP_LOG"
 > "$WS_LOG"
+> "$NOTIF_LOG"
 
 echo "Logging to:"
 echo "  Main log: $LOG_FILE"
 echo "  HTTP log: $HTTP_LOG"
 echo "  WebSocket log: $WS_LOG"
+echo "  Notifications log: $NOTIF_LOG"
 if [ -n "$GNALK_TRACE" ]; then
     echo "  Trace enabled: $GNALK_TRACE"
 fi

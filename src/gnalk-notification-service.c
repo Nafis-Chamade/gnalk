@@ -1,5 +1,6 @@
 #include "gnalk-notification-service.h"
 #include "gnalk-config.h"
+#include "gnalk-log.h"
 
 #ifdef HAVE_LIBPORTAL
 #include <libportal-gtk4/portal-gtk4.h>
@@ -50,8 +51,8 @@ on_notification_action_invoked (XdpPortal   *portal G_GNUC_UNUSED,
                                  GVariant    *parameter,
                                  gpointer     user_data G_GNUC_UNUSED)
 {
-  g_message ("Notification action invoked: %s (param type: %s)",
-             action, parameter ? g_variant_get_type_string (parameter) : "none");
+  gnalk_log_notification ("Action invoked: %s (param type: %s)",
+                          action, parameter ? g_variant_get_type_string (parameter) : "none");
 
   GApplication *app = g_application_get_default ();
   if (!app)
@@ -130,6 +131,13 @@ gnalk_notification_service_notify_message (GnalkNotificationService *self,
 {
   g_return_if_fail (GNALK_IS_NOTIFICATION_SERVICE (self));
   g_return_if_fail (room_token != NULL);
+
+  gnalk_log_notification ("SEND message: room=%s, room_name=%s, sender=%s, text=%.80s, mention=%d",
+                          room_token,
+                          room_name ? room_name : "(null)",
+                          sender_name ? sender_name : "(null)",
+                          message_text ? message_text : "(null)",
+                          is_mention);
 
   /* Use room_token as notification ID for grouping */
   g_autofree char *notification_id = g_strdup_printf ("message-%s", room_token);
@@ -230,6 +238,8 @@ gnalk_notification_service_withdraw (GnalkNotificationService *self,
   if (!notification_id)
     return;
 
+  gnalk_log_notification ("WITHDRAW message: room=%s, id=%s", room_token, notification_id);
+
 #ifdef HAVE_LIBPORTAL
   xdp_portal_remove_notification (self->portal, notification_id);
 #else
@@ -249,6 +259,11 @@ gnalk_notification_service_notify_call (GnalkNotificationService *self,
 {
   g_return_if_fail (GNALK_IS_NOTIFICATION_SERVICE (self));
   g_return_if_fail (room_token != NULL);
+
+  gnalk_log_notification ("SEND call: room=%s, room_name=%s, caller=%s",
+                          room_token,
+                          room_name ? room_name : "(null)",
+                          caller_name ? caller_name : "(null)");
 
   g_autofree char *notification_id = g_strdup_printf ("call-%s", room_token);
   g_autofree char *hash_key = g_strdup_printf ("call-%s", room_token);
@@ -308,6 +323,8 @@ gnalk_notification_service_withdraw_call (GnalkNotificationService *self,
   if (!notification_id)
     return;
 
+  gnalk_log_notification ("WITHDRAW call: room=%s, id=%s", room_token, notification_id);
+
 #ifdef HAVE_LIBPORTAL
   xdp_portal_remove_notification (self->portal, notification_id);
 #else
@@ -326,6 +343,8 @@ gnalk_notification_service_withdraw_all (GnalkNotificationService *self)
 
   GHashTableIter iter;
   gpointer key, value;
+
+  gnalk_log_notification ("WITHDRAW ALL (%u active)", g_hash_table_size (self->active_notifications));
 
   g_hash_table_iter_init (&iter, self->active_notifications);
   while (g_hash_table_iter_next (&iter, &key, &value))

@@ -101,6 +101,13 @@ void gnalk_database_set_last_known_message_id (GnalkDatabase *self,
                                                  gint64 account_id,
                                                  const char *conversation_token,
                                                  gint64 message_id);
+gint64 gnalk_database_get_last_notified_message_id (GnalkDatabase *self,
+                                                      gint64 account_id,
+                                                      const char *conversation_token);
+void gnalk_database_set_last_notified_message_id (GnalkDatabase *self,
+                                                    gint64 account_id,
+                                                    const char *conversation_token,
+                                                    gint64 message_id);
 gboolean gnalk_database_has_more_history (GnalkDatabase *self,
                                             gint64 account_id,
                                             const char *conversation_token);

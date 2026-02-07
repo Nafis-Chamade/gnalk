@@ -7,9 +7,10 @@
 
 static gboolean initialized = FALSE;
 
-/* Separate file handles for HTTP and WebSocket logs */
+/* Separate file handles for HTTP, WebSocket, and notification logs */
 static FILE *http_log_file = NULL;
 static FILE *ws_log_file = NULL;
+static FILE *notif_log_file = NULL;
 
 /* Trace logging enabled flags per category */
 static gboolean trace_enabled[GNALK_LOG_CAT_COUNT] = { FALSE };
@@ -133,6 +134,24 @@ gnalk_log_init (void)
         }
     }
 
+  /* Open notification log file if specified */
+  const char *notif_log_path = g_getenv ("GNALK_NOTIF_LOG");
+  if (notif_log_path && *notif_log_path)
+    {
+      notif_log_file = fopen (notif_log_path, "a");
+      if (notif_log_file)
+        {
+          g_print ("=== Notification logging to: %s ===\n", notif_log_path);
+          fprint_timestamp (notif_log_file);
+          fprintf (notif_log_file, "=== Notification Log Session Started ===\n");
+          fflush (notif_log_file);
+        }
+      else
+        {
+          g_warning ("Failed to open notification log file: %s", notif_log_path);
+        }
+    }
+
   /* Parse trace logging configuration */
   const char *trace_config = g_getenv ("GNALK_TRACE");
   parse_trace_config (trace_config);
@@ -174,6 +193,14 @@ gnalk_log_shutdown (void)
       fprintf (ws_log_file, "=== WebSocket Log Session Ended ===\n");
       fclose (ws_log_file);
       ws_log_file = NULL;
+    }
+
+  if (notif_log_file)
+    {
+      fprint_timestamp (notif_log_file);
+      fprintf (notif_log_file, "=== Notification Log Session Ended ===\n");
+      fclose (notif_log_file);
+      notif_log_file = NULL;
     }
 
   initialized = FALSE;
@@ -280,6 +307,29 @@ gnalk_log_webrtc (const char *format, ...)
   va_end (args);
 
   g_print ("\n");
+}
+
+void
+gnalk_log_notification (const char *format, ...)
+{
+  FILE *out = notif_log_file ? notif_log_file : stdout;
+
+  if (notif_log_file)
+    fprint_timestamp (notif_log_file);
+  else
+    print_timestamp ();
+
+  fprintf (out, "[Notification] ");
+
+  va_list args;
+  va_start (args, format);
+  vfprintf (out, format, args);
+  va_end (args);
+
+  fprintf (out, "\n");
+
+  if (notif_log_file)
+    fflush (notif_log_file);
 }
 
 gboolean

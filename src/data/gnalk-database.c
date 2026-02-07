@@ -252,6 +252,11 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
                 "CREATE INDEX IF NOT EXISTS idx_sync_state_lookup ON sync_state(account_id, conversation_token);",
                 NULL, NULL, NULL);
 
+  /* Migration: Add last_notified_message_id to avoid duplicate notifications */
+  sqlite3_exec (self->db,
+                "ALTER TABLE sync_state ADD COLUMN last_notified_message_id INTEGER DEFAULT 0;",
+                NULL, NULL, NULL);
+
   /* Migration: Change messages table primary key to (id, account_id) for multi-account support.
    * Check if migration is needed by looking for tables without the composite key. */
   {
@@ -1060,6 +1065,63 @@ gnalk_database_set_last_known_message_id (GnalkDatabase *self,
     "INSERT INTO sync_state (account_id, conversation_token, last_known_message_id) "
     "VALUES (?, ?, ?) "
     "ON CONFLICT(account_id, conversation_token) DO UPDATE SET last_known_message_id = ?";
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_int64 (stmt, 1, account_id);
+      sqlite3_bind_text (stmt, 2, conversation_token, -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 3, message_id);
+      sqlite3_bind_int64 (stmt, 4, message_id);
+      sqlite3_step (stmt);
+      sqlite3_finalize (stmt);
+    }
+}
+
+gint64
+gnalk_database_get_last_notified_message_id (GnalkDatabase *self,
+                                              gint64          account_id,
+                                              const char     *conversation_token)
+{
+  g_return_val_if_fail (GNALK_IS_DATABASE (self), 0);
+  g_return_val_if_fail (self->db != NULL, 0);
+  g_return_val_if_fail (conversation_token != NULL, 0);
+
+  gint64 message_id = 0;
+  sqlite3_stmt *stmt;
+
+  const char *sql =
+    "SELECT last_notified_message_id FROM sync_state "
+    "WHERE account_id = ? AND conversation_token = ?";
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_int64 (stmt, 1, account_id);
+      sqlite3_bind_text (stmt, 2, conversation_token, -1, SQLITE_STATIC);
+
+      if (sqlite3_step (stmt) == SQLITE_ROW)
+        message_id = sqlite3_column_int64 (stmt, 0);
+
+      sqlite3_finalize (stmt);
+    }
+
+  return message_id;
+}
+
+void
+gnalk_database_set_last_notified_message_id (GnalkDatabase *self,
+                                              gint64          account_id,
+                                              const char     *conversation_token,
+                                              gint64          message_id)
+{
+  g_return_if_fail (GNALK_IS_DATABASE (self));
+  g_return_if_fail (self->db != NULL);
+  g_return_if_fail (conversation_token != NULL);
+
+  sqlite3_stmt *stmt;
+  const char *sql =
+    "INSERT INTO sync_state (account_id, conversation_token, last_notified_message_id) "
+    "VALUES (?, ?, ?) "
+    "ON CONFLICT(account_id, conversation_token) DO UPDATE SET last_notified_message_id = ?";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
