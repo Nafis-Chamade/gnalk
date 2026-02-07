@@ -42,6 +42,7 @@ static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 static void update_participant_status_icon (GtkWidget *item, const char *status);
+static void on_participant_left_click (GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data);
 
 /* Update call icon for a participant item */
 static void
@@ -328,7 +329,7 @@ gnalk_participants_list_class_init (GnalkParticipantsListClass *klass)
                   0,
                   NULL, NULL,
                   NULL,
-                  G_TYPE_NONE, 1, G_TYPE_STRING);
+                  G_TYPE_NONE, 2, G_TYPE_STRING, JSON_TYPE_OBJECT);
 
   signals[SIGNAL_CHAT_REQUESTED] =
     g_signal_new ("chat-requested",
@@ -447,14 +448,21 @@ show_participant_context_menu (GnalkParticipantsList *self,
   gboolean target_is_owner = (participant_type == 1);
   gboolean is_one_to_one = (self->room_type == 1);
 
-  /* Chat directly: not self, not 1-to-1, target is a user (has actorId) */
-  gtk_widget_set_visible (self->chat_button, !is_self && !is_one_to_one && actor_id && *actor_id);
+  /* Check if target is a federated user */
+  JsonObject *participant_json = g_object_get_data (G_OBJECT (item), "participant-json");
+  const char *actor_type = participant_json
+    ? json_object_get_string_member_with_default (participant_json, "actorType", "users")
+    : "users";
+  gboolean target_is_federated = (g_strcmp0 (actor_type, "federated_users") == 0);
 
-  /* Promote: caller is mod, not self, target is NOT already mod */
-  gtk_widget_set_visible (self->promote_button, caller_is_mod && !is_self && !target_is_mod);
+  /* Chat directly: not self, not 1-to-1, not federated (no private federated chats) */
+  gtk_widget_set_visible (self->chat_button, !is_self && !is_one_to_one && !target_is_federated && actor_id && *actor_id);
 
-  /* Demote: caller is mod, not self, target IS mod but not owner */
-  gtk_widget_set_visible (self->demote_button, caller_is_mod && !is_self && target_is_mod && !target_is_owner);
+  /* Promote: caller is mod, not self, target is NOT already mod, not federated */
+  gtk_widget_set_visible (self->promote_button, caller_is_mod && !is_self && !target_is_mod && !target_is_federated);
+
+  /* Demote: caller is mod, not self, target IS mod but not owner, not federated */
+  gtk_widget_set_visible (self->demote_button, caller_is_mod && !is_self && target_is_mod && !target_is_owner && !target_is_federated);
 
   /* Remove: caller is mod, not self, target not owner, not 1-to-1 */
   gtk_widget_set_visible (self->remove_button, caller_is_mod && !is_self && !target_is_owner && !is_one_to_one);
@@ -480,6 +488,23 @@ show_participant_context_menu (GnalkParticipantsList *self,
   gtk_popover_set_pointing_to (GTK_POPOVER (self->context_popover), &rect);
 
   gtk_popover_popup (GTK_POPOVER (self->context_popover));
+}
+
+static void
+on_participant_left_click (GtkGestureClick *gesture G_GNUC_UNUSED,
+                            int              n_press G_GNUC_UNUSED,
+                            double           x G_GNUC_UNUSED,
+                            double           y G_GNUC_UNUSED,
+                            gpointer         user_data)
+{
+  GtkWidget *item = GTK_WIDGET (user_data);
+  GnalkParticipantsList *self = GNALK_PARTICIPANTS_LIST (
+    g_object_get_data (G_OBJECT (item), "participants-list"));
+  const char *actor_id = g_object_get_data (G_OBJECT (item), "user-id");
+  JsonObject *participant_json = g_object_get_data (G_OBJECT (item), "participant-json");
+
+  if (self && actor_id && participant_json)
+    g_signal_emit (self, signals[SIGNAL_PARTICIPANT_CLICKED], 0, actor_id, participant_json);
 }
 
 static void
@@ -612,20 +637,41 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
       JsonObject *participant = g_ptr_array_index (participant_list, i);
       const char *actor_id = json_object_get_string_member_with_default (participant, "actorId", "");
       const char *display_name = json_object_get_string_member_with_default (participant, "displayName", "");
+      const char *actor_type = json_object_get_string_member_with_default (participant, "actorType", "users");
       const char *status = json_object_get_string_member_with_default (participant, "status", "");
       gint64 attendee_id = json_object_get_int_member_with_default (participant, "attendeeId", 0);
       gint participant_type = (gint) json_object_get_int_member_with_default (participant, "participantType", 3);
       gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
+      gboolean is_federated = (g_strcmp0 (actor_type, "federated_users") == 0);
 
-      GtkWidget *item = create_participant_item (self, actor_id, display_name, status, cache);
+      /* For federated users, append @server to the display name */
+      g_autofree char *effective_name = NULL;
+      if (is_federated && actor_id)
+        {
+          const char *at = strchr (actor_id, '@');
+          if (at)
+            effective_name = g_strdup_printf ("%s @%s", display_name, at + 1);
+        }
+
+      GtkWidget *item = create_participant_item (self, actor_id,
+                                                  effective_name ? effective_name : display_name,
+                                                  is_federated ? NULL : status, cache);
 
       /* Set call icon from JSON data directly */
       update_participant_call_icon (item, in_call);
 
-      /* Store additional data for context menu */
+      /* Store additional data for context menu and profile */
       g_object_set_data (G_OBJECT (item), "attendee-id", GINT_TO_POINTER ((gint) attendee_id));
       g_object_set_data (G_OBJECT (item), "participant-type", GINT_TO_POINTER (participant_type));
       g_object_set_data (G_OBJECT (item), "participants-list", self);
+      g_object_set_data_full (G_OBJECT (item), "participant-json",
+                              json_object_ref (participant), (GDestroyNotify) json_object_unref);
+
+      /* Add left-click gesture (opens profile) */
+      GtkGesture *left_click = gtk_gesture_click_new ();
+      gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (left_click), GDK_BUTTON_PRIMARY);
+      g_signal_connect (left_click, "released", G_CALLBACK (on_participant_left_click), item);
+      gtk_widget_add_controller (item, GTK_EVENT_CONTROLLER (left_click));
 
       /* Add right-click gesture */
       GtkGesture *right_click = gtk_gesture_click_new ();

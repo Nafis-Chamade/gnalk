@@ -329,6 +329,13 @@ gnalk_message_data_is_bot (GnalkMessageData *self)
   return self->actor_type && g_strcmp0 (self->actor_type, "bots") == 0;
 }
 
+gboolean
+gnalk_message_data_is_federated (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
+  return self->actor_type && g_strcmp0 (self->actor_type, "federated_users") == 0;
+}
+
 void
 gnalk_message_data_set_message_parameters (GnalkMessageData *self,
                                              JsonObject        *params)

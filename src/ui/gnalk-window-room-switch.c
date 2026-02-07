@@ -262,6 +262,10 @@ gnalk_window_on_room_controller_room_closed (GnalkRoomController *ctrl,
 
   /* Clear read status tracking */
   gnalk_window_clear_read_status_tracking (self);
+
+  /* Clear federation signaling when leaving a room */
+  if (self->active_session)
+    gnalk_session_clear_federation_signaling (self->active_session);
 }
 
 /**
@@ -320,6 +324,27 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
       gint room_type = gnalk_conversation_data_get_room_type (conv_data);
       const char *user_status = gnalk_conversation_data_get_user_status (conv_data);
 
+      /* Check if this is a pending federation invitation */
+      if (gnalk_conversation_data_is_invitation (conv_data) ||
+          (self->pending_invitations &&
+           g_hash_table_contains (self->pending_invitations, token)))
+        {
+          /* Update header minimally */
+          gnalk_conversation_header_set_room (self->conversation_header, token, title, description, room_type);
+          gnalk_conversation_header_set_visible (self->conversation_header, TRUE);
+          adw_navigation_page_set_title (ADW_NAVIGATION_PAGE (self->content_page), title ? title : _("Invitation"));
+
+          gnalk_window_show_invitation_view (self, token);
+          adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+
+          /* Track ConversationData for live updates */
+          gnalk_window_track_conv_data_for_status (self, conv_data);
+          return;
+        }
+
+      /* Normal conversation - show messages view */
+      gnalk_window_show_messages_view (self);
+
       /* Update conversation header */
       gnalk_conversation_header_set_room (self->conversation_header, token, title, description, room_type);
       gnalk_conversation_header_set_visible (self->conversation_header, TRUE);
@@ -329,6 +354,15 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
 
       gnalk_window_update_call_button_state (self);
       gnalk_window_update_room_status_icon (self, room_type, user_status);
+
+      /* For federated rooms with federation-v2, fetch federation signaling settings.
+       * This prepares the federation signaling connection needed for calls. */
+      if (gnalk_conversation_data_is_federated (conv_data) &&
+          self->active_session &&
+          gnalk_session_has_federation_v2 (self->active_session))
+        {
+          gnalk_session_fetch_federation_signaling (self->active_session, token);
+        }
 
       /* Show participants toggle for group conversations */
       {
@@ -554,4 +588,321 @@ gnalk_window_maybe_restore_last_room (GnalkWindow *self)
 
   gboolean is_collapsed = adw_navigation_split_view_get_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view));
   gnalk_room_controller_restore_last_room (self->room_controller, is_collapsed);
+}
+
+/* ============ Federation Invitation View ============ */
+
+/**
+ * gnalk_window_on_invitations_updated:
+ *
+ * Stores pending invitations indexed by local token for quick lookup
+ * when opening rooms. Saves invitations to DB so they persist across
+ * conversation list reloads (no more flickering).
+ */
+void
+gnalk_window_on_invitations_updated (GnalkConversationController *controller,
+                                      JsonArray                   *invitations,
+                                      GnalkWindow                 *self)
+{
+  (void) controller;
+
+  if (!self->pending_invitations)
+    self->pending_invitations = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                                        g_free,
+                                                        (GDestroyNotify) json_object_unref);
+
+  /* Build set of new pending invitation tokens */
+  g_autoptr(GHashTable) new_tokens = g_hash_table_new (g_str_hash, g_str_equal);
+
+  if (invitations)
+    {
+      guint n = json_array_get_length (invitations);
+      for (guint i = 0; i < n; i++)
+        {
+          JsonObject *inv = json_array_get_object_element (invitations, i);
+          gint64 state = json_object_get_int_member_with_default (inv, "state", -1);
+
+          /* Only store pending invitations (state=0) */
+          if (state != 0)
+            continue;
+
+          const char *local_token = json_object_get_string_member_with_default (inv, "localToken", "");
+          if (local_token && *local_token)
+            g_hash_table_add (new_tokens, (gpointer) local_token);
+        }
+    }
+
+  /* Remove invitations from DB that are no longer pending (accepted/declined elsewhere) */
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GnalkDataRepository *repo = app ? gnalk_application_get_data_repository (app) : NULL;
+  gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
+
+  if (repo && account_id > 0)
+    {
+      GHashTableIter old_iter;
+      gpointer old_key, old_value;
+      g_hash_table_iter_init (&old_iter, self->pending_invitations);
+      while (g_hash_table_iter_next (&old_iter, &old_key, &old_value))
+        {
+          const char *old_token = old_key;
+          if (!g_hash_table_contains (new_tokens, old_token))
+            {
+              gnalk_data_repository_delete_conversation (repo, account_id, old_token);
+              g_debug ("Window: Removed stale invitation from DB: %s", old_token);
+            }
+        }
+    }
+
+  /* Update pending_invitations hash table */
+  g_hash_table_remove_all (self->pending_invitations);
+
+  if (!invitations)
+    return;
+
+  gboolean saved_any = FALSE;
+  guint n = json_array_get_length (invitations);
+  for (guint i = 0; i < n; i++)
+    {
+      JsonObject *inv = json_array_get_object_element (invitations, i);
+      gint64 state = json_object_get_int_member_with_default (inv, "state", -1);
+
+      if (state != 0)
+        continue;
+
+      const char *local_token = json_object_get_string_member_with_default (inv, "localToken", "");
+      if (!local_token || !*local_token)
+        continue;
+
+      g_hash_table_insert (self->pending_invitations,
+                           g_strdup (local_token),
+                           json_object_ref (inv));
+
+      /* Save invitation as a conversation in DB */
+      if (repo && account_id > 0)
+        {
+          const char *room_name = json_object_get_string_member_with_default (inv, "roomName", _("Federation invitation"));
+          const char *remote_server = json_object_get_string_member_with_default (inv, "remoteServerUrl", "");
+          const char *remote_token = json_object_get_string_member_with_default (inv, "remoteToken", "");
+          const char *inviter = json_object_get_string_member_with_default (inv, "inviterDisplayName", "");
+          gint64 inv_id = json_object_get_int_member_with_default (inv, "id", 1);
+
+          g_autofree char *subtitle = g_strdup_printf (_("Invitation from %s"), inviter);
+
+          GnalkConversationData *conv = gnalk_conversation_data_new_from_db (
+            local_token,        /* token */
+            room_name,          /* title */
+            room_name,          /* name */
+            NULL,               /* user_status */
+            NULL,               /* actor_id */
+            2,                  /* room_type: group */
+            g_get_real_time () / G_USEC_PER_SEC, /* last_activity: now */
+            0, 0, FALSE,        /* last_common_read, unread, is_favorite */
+            FALSE, FALSE,       /* can_leave, can_delete */
+            subtitle,           /* description */
+            0, 0, 0,            /* participant_type, notification_level, call_notification_level */
+            0, 0,               /* last_read_message, last_message_id */
+            subtitle,           /* last_message_text */
+            NULL, inviter,      /* last_message_actor_id, actor_name */
+            NULL, NULL,         /* last_message_type, params_json */
+            remote_server,      /* remote_server */
+            remote_token,       /* remote_token */
+            inv_id,             /* invitation_id */
+            self->active_session);
+
+          gnalk_data_repository_save_conversation (repo, account_id, conv);
+          g_object_unref (conv);
+          saved_any = TRUE;
+
+          g_debug ("Window: Saved invitation to DB: token=%s name=%s from=%s",
+                   local_token, room_name, inviter);
+        }
+    }
+
+  g_message ("Window: Stored %u pending federation invitations",
+             g_hash_table_size (self->pending_invitations));
+
+  /* data-changed from save_conversation will trigger a debounced reload,
+   * but if we saved multiple invitations we only need one reload. */
+  if (saved_any)
+    gnalk_window_load_conversations_from_db (self);
+}
+
+/**
+ * gnalk_window_show_invitation_view:
+ *
+ * Switches the content stack to the invitation page and populates
+ * it with the invitation details for the given room token.
+ */
+void
+gnalk_window_show_invitation_view (GnalkWindow *self,
+                                    const char  *room_token)
+{
+  if (!self->pending_invitations || !room_token)
+    return;
+
+  JsonObject *inv = g_hash_table_lookup (self->pending_invitations, room_token);
+  if (!inv)
+    return;
+
+  gint64 invitation_id = json_object_get_int_member_with_default (inv, "id", 0);
+  const char *room_name = json_object_get_string_member_with_default (inv, "roomName", "");
+  const char *inviter_display_name = json_object_get_string_member_with_default (inv, "inviterDisplayName", "");
+  const char *inviter_cloud_id = json_object_get_string_member_with_default (inv, "inviterCloudId", "");
+  const char *remote_server_url = json_object_get_string_member_with_default (inv, "remoteServerUrl", "");
+
+  self->pending_invitation_id = invitation_id;
+
+  /* Update the status page */
+  adw_status_page_set_title (ADW_STATUS_PAGE (self->invitation_status_page),
+                             (room_name && *room_name) ? room_name : _("Federation Invitation"));
+
+  /* Build details text */
+  g_autofree char *details = NULL;
+  if (inviter_display_name && *inviter_display_name)
+    details = g_strdup_printf (_("Invited by %s (%s)\nServer: %s"),
+                               inviter_display_name, inviter_cloud_id, remote_server_url);
+  else
+    details = g_strdup_printf (_("Invited from %s"), remote_server_url);
+
+  gtk_label_set_text (GTK_LABEL (self->invitation_details_label), details);
+
+  /* Ensure buttons are sensitive */
+  gtk_widget_set_sensitive (self->invitation_accept_button, TRUE);
+  gtk_widget_set_sensitive (self->invitation_decline_button, TRUE);
+
+  /* Switch to invitation page */
+  gtk_stack_set_visible_child_name (GTK_STACK (self->content_stack), "invitation");
+}
+
+/**
+ * gnalk_window_show_messages_view:
+ *
+ * Switches the content stack back to the messages page.
+ */
+void
+gnalk_window_show_messages_view (GnalkWindow *self)
+{
+  gtk_stack_set_visible_child_name (GTK_STACK (self->content_stack), "messages");
+  self->pending_invitation_id = 0;
+}
+
+/**
+ * gnalk_window_on_invitation_accepted:
+ *
+ * Handles successful invitation acceptance.
+ * Reloads conversations and switches to message view.
+ */
+void
+gnalk_window_on_invitation_accepted (GnalkConversationController *controller,
+                                      gint64                       invitation_id,
+                                      GnalkWindow                 *self)
+{
+  (void) controller;
+
+  g_debug ("Window: Invitation %" G_GINT64_FORMAT " accepted", invitation_id);
+
+  /* Remove the invitation from our local cache and from DB */
+  if (self->pending_invitations)
+    {
+      GHashTableIter iter;
+      gpointer key, value;
+      g_hash_table_iter_init (&iter, self->pending_invitations);
+      while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+          JsonObject *inv = value;
+          if (json_object_get_int_member_with_default (inv, "id", 0) == invitation_id)
+            {
+              const char *token = key;
+
+              /* Delete invitation entry from DB */
+              GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+              GnalkDataRepository *repo = app ? gnalk_application_get_data_repository (app) : NULL;
+              gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
+              if (repo && account_id > 0)
+                gnalk_data_repository_delete_conversation (repo, account_id, token);
+
+              g_hash_table_iter_remove (&iter);
+              break;
+            }
+        }
+    }
+
+  /* Switch back to messages view */
+  gnalk_window_show_messages_view (self);
+
+  /* Re-join the room: the initial join 404'd because the invitation
+   * wasn't accepted yet. Now that it is, the room exists and we can join. */
+  if (self->current_room && self->active_session)
+    {
+      const char *room_token = self->current_room->room_token;
+      gnalk_session_join_room (self->active_session, room_token);
+
+      /* Start message polling (room had no messages loaded) */
+      if (self->message_controller)
+        gnalk_message_controller_start_polling (self->message_controller, 0);
+
+      /* Enable unread tracking: invitation rooms start with last_read_message_id=0
+       * (no read state), which prevents the message processor from marking anything
+       * as unread. Set to 1 so incoming messages will trigger mark-as-read flow. */
+      self->current_room->last_read_message_id = 1;
+    }
+
+  /* Reload conversations to pick up the now-accepted conversation */
+  gnalk_window_load_conversations_from_db (self);
+
+  /* Show a toast */
+  adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (self->toast_overlay),
+                               adw_toast_new (_("Invitation accepted")));
+}
+
+/**
+ * gnalk_window_on_invitation_declined:
+ *
+ * Handles successful invitation decline.
+ * Closes the room and reloads conversations.
+ */
+void
+gnalk_window_on_invitation_declined (GnalkConversationController *controller,
+                                      gint64                       invitation_id,
+                                      GnalkWindow                 *self)
+{
+  (void) controller;
+
+  g_debug ("Window: Invitation %" G_GINT64_FORMAT " declined", invitation_id);
+
+  /* Remove from cache and from DB */
+  if (self->pending_invitations)
+    {
+      GHashTableIter iter;
+      gpointer key, value;
+      g_hash_table_iter_init (&iter, self->pending_invitations);
+      while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+          JsonObject *inv = value;
+          if (json_object_get_int_member_with_default (inv, "id", 0) == invitation_id)
+            {
+              const char *token = key;
+
+              /* Delete invitation entry from DB */
+              GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+              GnalkDataRepository *repo = app ? gnalk_application_get_data_repository (app) : NULL;
+              gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
+              if (repo && account_id > 0)
+                gnalk_data_repository_delete_conversation (repo, account_id, token);
+
+              g_hash_table_iter_remove (&iter);
+              break;
+            }
+        }
+    }
+
+  /* Close the current room */
+  gnalk_window_on_content_page_hiding (ADW_NAVIGATION_PAGE (self->content_page), self);
+
+  /* Reload conversations */
+  gnalk_window_load_conversations_from_db (self);
+
+  /* Show a toast */
+  adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (self->toast_overlay),
+                               adw_toast_new (_("Invitation declined")));
 }

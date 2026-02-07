@@ -19,6 +19,9 @@ enum {
   SIGNAL_CONVERSATION_LEFT,
   SIGNAL_CONVERSATION_DELETED,
   SIGNAL_ERROR,
+  SIGNAL_INVITATIONS_UPDATED,
+  SIGNAL_INVITATION_ACCEPTED,
+  SIGNAL_INVITATION_DECLINED,
   N_SIGNALS
 };
 
@@ -87,6 +90,30 @@ gnalk_conversation_controller_class_init (GnalkConversationControllerClass *klas
                   0, NULL, NULL, NULL,
                   G_TYPE_NONE, 1,
                   G_TYPE_STRING);  /* error message */
+
+  signals[SIGNAL_INVITATIONS_UPDATED] =
+    g_signal_new ("invitations-updated",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  JSON_TYPE_ARRAY);  /* invitations */
+
+  signals[SIGNAL_INVITATION_ACCEPTED] =
+    g_signal_new ("invitation-accepted",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_INT64);  /* invitation_id */
+
+  signals[SIGNAL_INVITATION_DECLINED] =
+    g_signal_new ("invitation-declined",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_INT64);  /* invitation_id */
 }
 
 static void
@@ -397,4 +424,166 @@ gnalk_conversation_controller_search_contacts (GnalkConversationController  *sel
                                      search_term,
                                      on_search_contacts_response,
                                      cb_data);
+}
+
+/* ============ Federation Invitations ============ */
+
+typedef struct {
+  GnalkConversationController *controller;
+  gint64                       invitation_id;
+} InvitationCallbackData;
+
+static void
+invitation_callback_data_free (InvitationCallbackData *data)
+{
+  g_slice_free (InvitationCallbackData, data);
+}
+
+static void
+on_fetch_invitations_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                               JsonNode         *response,
+                               GError           *error,
+                               gpointer          user_data)
+{
+  InvitationCallbackData *cb_data = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      invitation_callback_data_free (cb_data);
+      return;
+    }
+
+  GnalkConversationController *self = cb_data->controller;
+  invitation_callback_data_free (cb_data);
+
+  if (error)
+    {
+      g_debug ("ConversationController: Fetch invitations failed: %s", error->message);
+      return;
+    }
+
+  if (!response || !JSON_NODE_HOLDS_OBJECT (response))
+    return;
+
+  JsonObject *root = json_node_get_object (response);
+  JsonObject *ocs = json_object_get_object_member (root, "ocs");
+  if (!ocs)
+    return;
+
+  JsonNode *data_node = json_object_get_member (ocs, "data");
+  if (!data_node || !JSON_NODE_HOLDS_ARRAY (data_node))
+    return;
+
+  JsonArray *invitations = json_node_get_array (data_node);
+  g_debug ("ConversationController: Fetched %u federation invitations",
+           json_array_get_length (invitations));
+
+  g_signal_emit (self, signals[SIGNAL_INVITATIONS_UPDATED], 0, invitations);
+}
+
+void
+gnalk_conversation_controller_fetch_invitations (GnalkConversationController *self)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+
+  InvitationCallbackData *cb_data = g_slice_new0 (InvitationCallbackData);
+  cb_data->controller = self;
+  cb_data->invitation_id = 0;
+
+  gnalk_http_client_get_federation_invitations (self->http_client,
+                                                on_fetch_invitations_response,
+                                                cb_data);
+}
+
+static void
+on_accept_invitation_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                               JsonNode         *response G_GNUC_UNUSED,
+                               GError           *error,
+                               gpointer          user_data)
+{
+  InvitationCallbackData *cb_data = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      invitation_callback_data_free (cb_data);
+      return;
+    }
+
+  GnalkConversationController *self = cb_data->controller;
+  gint64 invitation_id = cb_data->invitation_id;
+  invitation_callback_data_free (cb_data);
+
+  if (error)
+    {
+      g_warning ("ConversationController: Accept invitation failed: %s", error->message);
+      g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
+      return;
+    }
+
+  g_debug ("ConversationController: Accepted invitation %" G_GINT64_FORMAT, invitation_id);
+  g_signal_emit (self, signals[SIGNAL_INVITATION_ACCEPTED], 0, invitation_id);
+}
+
+void
+gnalk_conversation_controller_accept_invitation (GnalkConversationController *self,
+                                                 gint64                       invitation_id)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+
+  InvitationCallbackData *cb_data = g_slice_new0 (InvitationCallbackData);
+  cb_data->controller = self;
+  cb_data->invitation_id = invitation_id;
+
+  gnalk_http_client_accept_federation_invitation (self->http_client,
+                                                  invitation_id,
+                                                  on_accept_invitation_response,
+                                                  cb_data);
+}
+
+static void
+on_decline_invitation_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                                JsonNode         *response G_GNUC_UNUSED,
+                                GError           *error,
+                                gpointer          user_data)
+{
+  InvitationCallbackData *cb_data = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      invitation_callback_data_free (cb_data);
+      return;
+    }
+
+  GnalkConversationController *self = cb_data->controller;
+  gint64 invitation_id = cb_data->invitation_id;
+  invitation_callback_data_free (cb_data);
+
+  if (error)
+    {
+      g_warning ("ConversationController: Decline invitation failed: %s", error->message);
+      g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
+      return;
+    }
+
+  g_debug ("ConversationController: Declined invitation %" G_GINT64_FORMAT, invitation_id);
+  g_signal_emit (self, signals[SIGNAL_INVITATION_DECLINED], 0, invitation_id);
+}
+
+void
+gnalk_conversation_controller_decline_invitation (GnalkConversationController *self,
+                                                   gint64                       invitation_id)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+
+  InvitationCallbackData *cb_data = g_slice_new0 (InvitationCallbackData);
+  cb_data->controller = self;
+  cb_data->invitation_id = invitation_id;
+
+  gnalk_http_client_decline_federation_invitation (self->http_client,
+                                                    invitation_id,
+                                                    on_decline_invitation_response,
+                                                    cb_data);
 }

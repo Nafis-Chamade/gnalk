@@ -75,6 +75,7 @@ ui_sources = [
   'ui/gnalk-conversation-header.c',
   'ui/gnalk-conversation-actions.c',
   'ui/gnalk-conversation-info-dialog.c',
+  'ui/gnalk-participant-profile-dialog.c',
   'ui/gnalk-new-conversation-dialog.c',
   'ui/gnalk-connection-dialog.c',
   'ui/gnalk-message-row.c',

@@ -122,7 +122,9 @@ struct _GnalkConversationData
   char   *name;
   char   *description;
   char   *user_status;
-  char   *actor_id;  /* User ID for 1:1 conversations (for avatar loading) */
+  char   *actor_id;      /* User ID for 1:1 conversations (for avatar loading) */
+  char   *remote_server; /* Non-empty for federated conversations */
+  char   *remote_token;  /* Token on the remote server */
   gint64  last_activity;
   gint64  last_common_read_message;
   gint64  last_read_message;  /* Last message ID the user has read */
@@ -143,6 +145,9 @@ struct _GnalkConversationData
   char   *last_message_actor_name; /* Author's display name */
   char   *last_message_type;       /* Message type (system, comment, etc.) */
   char   *last_message_params_json; /* JSON string of message parameters */
+
+  /* Federation invitation ID (>0 means this is a pending invitation) */
+  gint64  invitation_id;
 
   /* Session that owns this conversation (weak reference, not owned) */
   GnalkSession *session;
@@ -168,6 +173,8 @@ gnalk_conversation_data_finalize (GObject *object)
   g_free (self->description);
   g_free (self->user_status);
   g_free (self->actor_id);
+  g_free (self->remote_server);
+  g_free (self->remote_token);
   g_free (self->last_message_text);
   g_free (self->last_message_actor_id);
   g_free (self->last_message_actor_name);
@@ -258,6 +265,8 @@ gnalk_conversation_data_new_from_json_with_user (JsonObject *room_data,
   self->room_type = (gint) json_object_get_int_member_with_default (room_data, "type", 0);
   self->user_status = g_strdup (json_object_get_string_member_with_default (room_data, "status", ""));
   self->actor_id = g_strdup (json_object_get_string_member_with_default (room_data, "actorId", ""));
+  self->remote_server = g_strdup (json_object_get_string_member_with_default (room_data, "remoteServer", ""));
+  self->remote_token = g_strdup (json_object_get_string_member_with_default (room_data, "remoteToken", ""));
 
   /* Extract raw last message data */
   JsonNode *last_message_node = json_object_get_member (room_data, "lastMessage");
@@ -349,6 +358,9 @@ gnalk_conversation_data_new_from_db (const char    *token,
                                        const char    *last_message_actor_name,
                                        const char    *last_message_type,
                                        const char    *last_message_params_json,
+                                       const char    *remote_server,
+                                       const char    *remote_token,
+                                       gint64         invitation_id,
                                        GnalkSession *session)
 {
   GnalkConversationData *self = g_object_new (GNALK_TYPE_CONVERSATION_DATA, NULL);
@@ -371,6 +383,9 @@ gnalk_conversation_data_new_from_db (const char    *token,
   self->notification_level = notification_level;
   self->call_notification_level = call_notification_level;
   self->last_read_message = last_read_message;
+  self->remote_server = g_strdup (remote_server ? remote_server : "");
+  self->remote_token = g_strdup (remote_token ? remote_token : "");
+  self->invitation_id = invitation_id;
   self->is_section_header = FALSE;
 
   /* Raw last message data */
@@ -393,6 +408,19 @@ gnalk_conversation_data_new_section_header (const char *title, gboolean is_favor
   self->is_section_header = TRUE;
   self->is_favorite = is_favorite_section;
   /* Set last_activity to max so headers stay at top of their section */
+  self->last_activity = G_MAXINT64;
+
+  return self;
+}
+
+GnalkConversationData *
+gnalk_conversation_data_new_invitation_header (void)
+{
+  GnalkConversationData *self = g_object_new (GNALK_TYPE_CONVERSATION_DATA, NULL);
+
+  self->title = g_strdup ("Invitations");
+  self->is_section_header = TRUE;
+  self->invitation_id = 1;  /* Marks this header as belonging to the invitations section */
   self->last_activity = G_MAXINT64;
 
   return self;
@@ -610,6 +638,27 @@ gnalk_conversation_data_can_moderate (GnalkConversationData *self)
           self->participant_type == 6);
 }
 
+const char *
+gnalk_conversation_data_get_remote_server (GnalkConversationData *self)
+{
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), NULL);
+  return self->remote_server;
+}
+
+const char *
+gnalk_conversation_data_get_remote_token (GnalkConversationData *self)
+{
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), NULL);
+  return self->remote_token;
+}
+
+gboolean
+gnalk_conversation_data_is_federated (GnalkConversationData *self)
+{
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), FALSE);
+  return self->remote_server && self->remote_server[0] != '\0';
+}
+
 void
 gnalk_conversation_data_update_from_json (GnalkConversationData *self,
                                             JsonObject             *room_data)
@@ -669,6 +718,11 @@ gnalk_conversation_data_update_from_json (GnalkConversationData *self,
 
   g_free (self->user_status);
   self->user_status = g_strdup (json_object_get_string_member_with_default (room_data, "status", ""));
+
+  g_free (self->remote_server);
+  self->remote_server = g_strdup (json_object_get_string_member_with_default (room_data, "remoteServer", ""));
+  g_free (self->remote_token);
+  self->remote_token = g_strdup (json_object_get_string_member_with_default (room_data, "remoteToken", ""));
 
   self->last_activity = json_object_get_int_member_with_default (room_data, "lastActivity", 0);
   self->last_common_read_message = json_object_get_int_member_with_default (room_data, "lastCommonReadMessage", 0);
@@ -749,6 +803,20 @@ gnalk_conversation_data_update_from_data (GnalkConversationData *self,
     {
       g_free (self->description);
       self->description = g_strdup (source->description);
+      changed = TRUE;
+    }
+
+  if (g_strcmp0 (self->remote_server, source->remote_server) != 0)
+    {
+      g_free (self->remote_server);
+      self->remote_server = g_strdup (source->remote_server);
+      changed = TRUE;
+    }
+
+  if (g_strcmp0 (self->remote_token, source->remote_token) != 0)
+    {
+      g_free (self->remote_token);
+      self->remote_token = g_strdup (source->remote_token);
       changed = TRUE;
     }
 
@@ -849,6 +917,12 @@ gnalk_conversation_data_update_from_data (GnalkConversationData *self,
       changed = TRUE;
     }
 
+  if (self->invitation_id != source->invitation_id)
+    {
+      self->invitation_id = source->invitation_id;
+      changed = TRUE;
+    }
+
   if (self->last_message_id != source->last_message_id)
     {
       self->last_message_id = source->last_message_id;
@@ -919,4 +993,18 @@ gnalk_conversation_data_get_last_message_params_json (GnalkConversationData *sel
 {
   g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), NULL);
   return self->last_message_params_json;
+}
+
+gint64
+gnalk_conversation_data_get_invitation_id (GnalkConversationData *self)
+{
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), 0);
+  return self->invitation_id;
+}
+
+gboolean
+gnalk_conversation_data_is_invitation (GnalkConversationData *self)
+{
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), FALSE);
+  return self->invitation_id > 0;
 }

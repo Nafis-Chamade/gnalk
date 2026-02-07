@@ -75,6 +75,7 @@ void         gnalk_message_data_set_message_parameters (GnalkMessageData *self,
 gboolean     gnalk_message_data_get_render_markdown (GnalkMessageData *self);
 const char  *gnalk_message_data_get_actor_type     (GnalkMessageData *self);
 gboolean     gnalk_message_data_is_bot             (GnalkMessageData *self);
+gboolean     gnalk_message_data_is_federated       (GnalkMessageData *self);
 
 GnalkMessageDataStatus gnalk_message_data_get_status (GnalkMessageData *self);
 

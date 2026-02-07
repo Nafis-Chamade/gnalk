@@ -470,8 +470,9 @@ gnalk_room_controller_open_room (GnalkRoomController *self, const char *token)
     }
   /* else: the room-opened handler will load messages from DB */
 
-  /* Join room via session */
-  join_room_via_session (self, found_data, token);
+  /* Join room via session (skip for pending invitations — not a real room yet) */
+  if (!found_data || !gnalk_conversation_data_is_invitation (found_data))
+    join_room_via_session (self, found_data, token);
 }
 
 /* Debounce callback */

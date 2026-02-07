@@ -124,6 +124,7 @@ struct _GnalkCallWindow
 
   /* Call state */
   gboolean             call_ending;  /* Guard against multiple end_call calls */
+  gboolean             is_federated; /* TRUE for federated calls (use /call/{token}/federation) */
 
   /* Screen sharing - incoming */
   GHashTable          *screen_tiles;      /* session_id -> GnalkParticipantTile* */

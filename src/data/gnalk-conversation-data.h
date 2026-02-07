@@ -38,8 +38,12 @@ GnalkConversationData *gnalk_conversation_data_new_from_db (const char    *token
                                                                const char    *last_message_actor_name,
                                                                const char    *last_message_type,
                                                                const char    *last_message_params_json,
+                                                               const char    *remote_server,
+                                                               const char    *remote_token,
+                                                               gint64         invitation_id,
                                                                GnalkSession *session);
 GnalkConversationData *gnalk_conversation_data_new_section_header (const char *title, gboolean is_favorite_section);
+GnalkConversationData *gnalk_conversation_data_new_invitation_header (void);
 
 gboolean gnalk_conversation_data_is_section_header (GnalkConversationData *self);
 const char *gnalk_conversation_data_get_token (GnalkConversationData *self);
@@ -65,6 +69,11 @@ gint gnalk_conversation_data_get_participant_type (GnalkConversationData *self);
 gint gnalk_conversation_data_get_notification_level (GnalkConversationData *self);
 gint gnalk_conversation_data_get_call_notification_level (GnalkConversationData *self);
 gboolean gnalk_conversation_data_can_moderate (GnalkConversationData *self);
+const char *gnalk_conversation_data_get_remote_server (GnalkConversationData *self);
+const char *gnalk_conversation_data_get_remote_token (GnalkConversationData *self);
+gboolean gnalk_conversation_data_is_federated (GnalkConversationData *self);
+gint64 gnalk_conversation_data_get_invitation_id (GnalkConversationData *self);
+gboolean gnalk_conversation_data_is_invitation (GnalkConversationData *self);
 
 /* Raw last message data getters (for database storage) */
 const char *gnalk_conversation_data_get_last_message_text (GnalkConversationData *self);

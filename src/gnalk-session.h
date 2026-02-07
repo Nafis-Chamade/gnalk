@@ -174,6 +174,17 @@ const char *gnalk_session_get_turn_server     (GnalkSession *self);
 const char *gnalk_session_get_turn_username   (GnalkSession *self);
 const char *gnalk_session_get_turn_credential (GnalkSession *self);
 
+/* Federation capabilities */
+gboolean gnalk_session_has_federation_v1 (GnalkSession *self);
+gboolean gnalk_session_has_federation_v2 (GnalkSession *self);
+
+/* Federation signaling (for federated calls) */
+void            gnalk_session_fetch_federation_signaling (GnalkSession *self,
+                                                          const char    *room_token);
+GnalkSignaling *gnalk_session_get_fed_signaling          (GnalkSession *self);
+const char     *gnalk_session_get_fed_room_id            (GnalkSession *self);
+void            gnalk_session_clear_federation_signaling  (GnalkSession *self);
+
 /* Manual reconnection trigger */
 void gnalk_session_attempt_reconnect (GnalkSession *self);
 

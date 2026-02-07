@@ -276,17 +276,20 @@ on_mark_read_delay_timer (gpointer user_data)
     }
 
   /* Update first_unread_message_id by finding new first unread */
-  self->current_room->first_unread_message_id = 0;
-  for (guint i = 0; i < n_items; i++)
+  if (self->current_room)
     {
-      GnalkMessageData *data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
-      if (gnalk_message_data_get_is_unread (data))
+      self->current_room->first_unread_message_id = 0;
+      for (guint i = 0; i < n_items; i++)
         {
-          gint64 msg_id = gnalk_message_data_get_id (data);
-          if (self->current_room->first_unread_message_id == 0 || msg_id < self->current_room->first_unread_message_id)
-            self->current_room->first_unread_message_id = msg_id;
+          GnalkMessageData *data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
+          if (gnalk_message_data_get_is_unread (data))
+            {
+              gint64 msg_id = gnalk_message_data_get_id (data);
+              if (self->current_room->first_unread_message_id == 0 || msg_id < self->current_room->first_unread_message_id)
+                self->current_room->first_unread_message_id = msg_id;
+            }
+          g_object_unref (data);
         }
-      g_object_unref (data);
     }
 
   /* Clear the visible list - glow removed */
@@ -348,11 +351,11 @@ on_mark_read_debounce_timer (gpointer user_data)
                                           on_mark_chat_read_response,
                                           self);
     }
-  else
+  else if (self->current_room)
     {
       g_debug ("read-status: skipping HTTP call (highest_id=%ld <= last_read=%ld, token=%s, client=%p)",
                (long) highest_id, (long) self->current_room->last_read_message_id,
-               self->current_room ? self->current_room->room_token : "(null)",
+               self->current_room->room_token,
                (void *) self->http_client);
     }
 

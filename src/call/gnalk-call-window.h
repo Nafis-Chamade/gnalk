@@ -21,7 +21,8 @@ void gnalk_call_window_start_call (GnalkCallWindow  *self,
                                     GnalkWebrtc      *webrtc,
                                     GnalkSignaling   *signaling,
                                     GnalkAvatarCache *avatar_cache,
-                                    gboolean           start_with_video);
+                                    gboolean           start_with_video,
+                                    gboolean           is_federated);
 
 void gnalk_call_window_end_call (GnalkCallWindow *self);
 

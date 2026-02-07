@@ -53,6 +53,13 @@ struct _GnalkSession
   char *turn_username;
   char *turn_credential;
 
+  /* Federation signaling (for federated calls) */
+  char *fed_signaling_server;   /* Remote signaling server URL */
+  char *fed_nextcloud_server;   /* Remote Nextcloud server URL */
+  char *fed_auth_token;         /* JWT token for federation auth */
+  char *fed_room_id;            /* Room token on remote server */
+  GnalkSignaling *fed_signaling; /* Separate signaling connection to remote server */
+
   /* Room state */
   char *current_room_token;
   char *current_session_id;
@@ -60,6 +67,10 @@ struct _GnalkSession
   /* Conversations */
   GListStore *conversations;
   int total_unread;
+
+  /* Capabilities */
+  gboolean has_federation_v1;
+  gboolean has_federation_v2;
 
   /* Signal handler IDs */
   gulong network_changed_handler_id;
@@ -72,6 +83,7 @@ struct _GnalkSession
   gulong signaling_call_ended_handler_id;
   gulong signaling_room_disinvited_handler_id;
   gulong sync_room_messages_synced_handler_id;
+  gulong sync_finished_handler_id;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkSession, gnalk_session, G_TYPE_OBJECT)
@@ -135,6 +147,7 @@ static void on_user_info_response (GnalkHttpClient *client, JsonNode *response, 
 static void on_conversations_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_capabilities_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_signaling_settings_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_fed_signaling_settings_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 
 /* Guest auth chain callbacks */
 static void on_guest_room_info_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
@@ -180,6 +193,13 @@ gnalk_session_finalize (GObject *object)
   g_free (self->turn_credential);
   g_free (self->current_room_token);
   g_free (self->current_session_id);
+
+  /* Federation signaling cleanup */
+  g_clear_object (&self->fed_signaling);
+  g_free (self->fed_signaling_server);
+  g_free (self->fed_nextcloud_server);
+  g_free (self->fed_auth_token);
+  g_free (self->fed_room_id);
 
   G_OBJECT_CLASS (gnalk_session_parent_class)->finalize (object);
 }
@@ -408,6 +428,16 @@ on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GN
   g_signal_emit (self, signals[SIGNAL_ROOM_MESSAGES_SYNCED], 0, room_token, count);
 }
 
+/* Re-fetch federation invitations after each successful sync */
+static void
+on_sync_coordinator_sync_finished (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
+                                   gboolean              success,
+                                   GnalkSession         *self)
+{
+  if (success && self->has_federation_v1 && self->conversation_controller)
+    gnalk_conversation_controller_fetch_invitations (self->conversation_controller);
+}
+
 /* Helper to create controllers and connect to signaling relay signals */
 static void
 setup_controllers_and_relays (GnalkSession *self)
@@ -615,6 +645,10 @@ set_state (GnalkSession *self, GnalkSessionState new_state)
           self->sync_room_messages_synced_handler_id =
             g_signal_connect (self->sync_coordinator, "room-messages-synced",
                               G_CALLBACK (on_sync_coordinator_room_messages_synced), self);
+          /* Re-fetch invitations after each sync */
+          self->sync_finished_handler_id =
+            g_signal_connect (self->sync_coordinator, "sync-finished",
+                              G_CALLBACK (on_sync_coordinator_sync_finished), self);
         }
 
       /* Configure and start sync coordinator */
@@ -1086,6 +1120,31 @@ on_capabilities_response (GnalkHttpClient *client G_GNUC_UNUSED,
                 {
                   JsonObject *capabilities = json_object_get_object_member (data, "capabilities");
 
+                  /* Extract federation capabilities from spreed.features */
+                  if (json_object_has_member (capabilities, "spreed"))
+                    {
+                      JsonObject *spreed = json_object_get_object_member (capabilities, "spreed");
+                      if (spreed && json_object_has_member (spreed, "features"))
+                        {
+                          JsonArray *features = json_object_get_array_member (spreed, "features");
+                          if (features)
+                            {
+                              guint n = json_array_get_length (features);
+                              for (guint i = 0; i < n; i++)
+                                {
+                                  const char *feature = json_array_get_string_element (features, i);
+                                  if (g_strcmp0 (feature, "federation-v1") == 0)
+                                    self->has_federation_v1 = TRUE;
+                                  else if (g_strcmp0 (feature, "federation-v2") == 0)
+                                    self->has_federation_v2 = TRUE;
+                                }
+                              g_debug ("Session %s: Federation capabilities: v1=%d v2=%d",
+                                       gnalk_account_get_user_id (self->account),
+                                       self->has_federation_v1, self->has_federation_v2);
+                            }
+                        }
+                    }
+
                   /* Extract notify_push WebSocket URL */
                   if (json_object_has_member (capabilities, "notify_push"))
                     {
@@ -1113,6 +1172,10 @@ on_capabilities_response (GnalkHttpClient *client G_GNUC_UNUSED,
             }
         }
     }
+
+  /* Fetch federation invitations if server supports it */
+  if (self->has_federation_v1 && self->conversation_controller)
+    gnalk_conversation_controller_fetch_invitations (self->conversation_controller);
 
   /* Proceed to get signaling settings */
   gnalk_http_client_get_signaling_settings (self->http_client,
@@ -1297,6 +1360,109 @@ connect_signaling (GnalkSession *self)
                              self->signaling_ticket);
 }
 
+/* Federation signaling settings callback.
+ * Called when requesting signaling settings for a specific federated room.
+ * Parses the "federation" block to get remote signaling server + JWT token. */
+static void
+on_fed_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                                    JsonNode         *response,
+                                    GError           *error,
+                                    gpointer          user_data)
+{
+  GnalkAsyncOp *op = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+
+  if (!owner)
+    return;
+
+  GnalkSession *self = GNALK_SESSION (owner);
+
+  if (error)
+    {
+      g_debug ("Session %s: Federation signaling settings failed: %s",
+               gnalk_account_get_user_id (self->account), error->message);
+      return;
+    }
+
+  if (!response || !JSON_NODE_HOLDS_OBJECT (response))
+    return;
+
+  JsonObject *obj = json_node_get_object (response);
+  if (!json_object_has_member (obj, "ocs"))
+    return;
+
+  JsonObject *ocs = json_object_get_object_member (obj, "ocs");
+  if (!json_object_has_member (ocs, "data"))
+    return;
+
+  JsonObject *data = json_object_get_object_member (ocs, "data");
+
+  /* Check for federation block */
+  if (!json_object_has_member (data, "federation") ||
+      json_object_get_null_member (data, "federation"))
+    {
+      g_debug ("Session %s: No federation block in signaling settings",
+               gnalk_account_get_user_id (self->account));
+      return;
+    }
+
+  JsonObject *fed = json_object_get_object_member (data, "federation");
+  if (!fed)
+    return;
+
+  const char *fed_server = json_object_get_string_member_with_default (fed, "server", NULL);
+  const char *fed_nc_server = json_object_get_string_member_with_default (fed, "nextcloudServer", NULL);
+  const char *fed_room_id = json_object_get_string_member_with_default (fed, "roomId", NULL);
+
+  /* Extract token from helloAuthParams */
+  const char *fed_token = NULL;
+  if (json_object_has_member (fed, "helloAuthParams"))
+    {
+      JsonObject *auth_params = json_object_get_object_member (fed, "helloAuthParams");
+      if (auth_params)
+        fed_token = json_object_get_string_member_with_default (auth_params, "token", NULL);
+    }
+
+  if (!fed_server || !fed_token)
+    {
+      g_warning ("Session %s: Federation block missing server or token",
+                 gnalk_account_get_user_id (self->account));
+      return;
+    }
+
+  g_message ("Session %s: Federation signaling: server=%s nc=%s roomId=%s",
+             gnalk_account_get_user_id (self->account),
+             fed_server, fed_nc_server ? fed_nc_server : "(null)",
+             fed_room_id ? fed_room_id : "(null)");
+
+  /* Store federation signaling params */
+  g_free (self->fed_signaling_server);
+  self->fed_signaling_server = g_strdup (fed_server);
+  g_free (self->fed_nextcloud_server);
+  self->fed_nextcloud_server = g_strdup (fed_nc_server);
+  g_free (self->fed_auth_token);
+  self->fed_auth_token = g_strdup (fed_token);
+  g_free (self->fed_room_id);
+  self->fed_room_id = g_strdup (fed_room_id);
+
+  /* Create federation signaling instance and connect */
+  if (!self->fed_signaling)
+    self->fed_signaling = gnalk_signaling_new ();
+
+  gnalk_signaling_connect_federation (self->fed_signaling,
+                                      fed_server,
+                                      fed_nc_server ? fed_nc_server : gnalk_account_get_server_url (self->account),
+                                      fed_token);
+}
+
 /* Public API */
 
 GnalkSessionState
@@ -1330,6 +1496,68 @@ gnalk_session_can_call (GnalkSession *self)
   g_debug ("session_can_call: online=%d room_confirmed=%d sig_connected=%d => %d",
              online, self->signaling_room_confirmed, sig_connected, result);
   return result;
+}
+
+gboolean
+gnalk_session_has_federation_v1 (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), FALSE);
+  return self->has_federation_v1;
+}
+
+gboolean
+gnalk_session_has_federation_v2 (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), FALSE);
+  return self->has_federation_v2;
+}
+
+void
+gnalk_session_fetch_federation_signaling (GnalkSession *self,
+                                          const char    *room_token)
+{
+  g_return_if_fail (GNALK_IS_SESSION (self));
+  g_return_if_fail (room_token != NULL);
+
+  if (self->state != GNALK_SESSION_STATE_ONLINE)
+    return;
+
+  g_message ("Session %s: Fetching federation signaling settings for room %s",
+             gnalk_account_get_user_id (self->account), room_token);
+
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0);
+  gnalk_http_client_get_signaling_settings_for_room (self->http_client,
+                                                     room_token,
+                                                     on_fed_signaling_settings_response,
+                                                     op);
+}
+
+GnalkSignaling *
+gnalk_session_get_fed_signaling (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
+  return self->fed_signaling;
+}
+
+const char *
+gnalk_session_get_fed_room_id (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
+  return self->fed_room_id;
+}
+
+void
+gnalk_session_clear_federation_signaling (GnalkSession *self)
+{
+  g_return_if_fail (GNALK_IS_SESSION (self));
+
+  if (self->fed_signaling)
+    gnalk_signaling_disconnect (self->fed_signaling);
+  g_clear_object (&self->fed_signaling);
+  g_clear_pointer (&self->fed_signaling_server, g_free);
+  g_clear_pointer (&self->fed_nextcloud_server, g_free);
+  g_clear_pointer (&self->fed_auth_token, g_free);
+  g_clear_pointer (&self->fed_room_id, g_free);
 }
 
 GnalkAccount *
@@ -2127,6 +2355,9 @@ on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
         NULL,                      /* last_message_actor_name */
         NULL,                      /* last_message_type */
         NULL,                      /* last_message_params_json */
+        NULL,                      /* remote_server */
+        NULL,                      /* remote_token */
+        0,                         /* invitation_id */
         self);                     /* session */
 
     g_list_store_append (self->conversations, conv);

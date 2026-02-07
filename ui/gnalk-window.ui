@@ -180,36 +180,99 @@
                       <object class="GnalkParticipantsList" id="participants_list"/>
                     </child>
                     <child>
-                      <object class="GtkOverlay">
+                      <object class="GtkStack" id="content_stack">
                         <property name="vexpand">true</property>
-                        <property name="child">
-                          <object class="GtkBox">
-                            <property name="orientation">vertical</property>
-                            <property name="vexpand">true</property>
-                            <child>
-                              <object class="GnalkMessageView" id="message_view">
+                        <property name="transition-type">crossfade</property>
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">messages</property>
+                            <property name="child">
+                              <object class="GtkOverlay">
                                 <property name="vexpand">true</property>
+                                <property name="child">
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="vexpand">true</property>
+                                    <child>
+                                      <object class="GnalkMessageView" id="message_view">
+                                        <property name="vexpand">true</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GnalkTypingIndicator" id="typing_indicator"/>
+                                    </child>
+                                    <child>
+                                      <object class="GnalkConversationActions" id="conversation_actions"/>
+                                    </child>
+                                    <child>
+                                      <object class="GnalkMessageInput" id="message_input"/>
+                                    </child>
+                                  </object>
+                                </property>
+                                <child type="overlay">
+                                  <object class="GtkRevealer" id="message_search_revealer">
+                                    <property name="reveal-child">false</property>
+                                    <property name="transition-type">slide-up</property>
+                                    <property name="valign">end</property>
+                                    <child>
+                                      <object class="GnalkMessageSearch" id="message_search"/>
+                                    </child>
+                                  </object>
+                                </child>
                               </object>
-                            </child>
-                            <child>
-                              <object class="GnalkTypingIndicator" id="typing_indicator"/>
-                            </child>
-                            <child>
-                              <object class="GnalkConversationActions" id="conversation_actions"/>
-                            </child>
-                            <child>
-                              <object class="GnalkMessageInput" id="message_input"/>
-                            </child>
+                            </property>
                           </object>
-                        </property>
-                        <child type="overlay">
-                          <object class="GtkRevealer" id="message_search_revealer">
-                            <property name="reveal-child">false</property>
-                            <property name="transition-type">slide-up</property>
-                            <property name="valign">end</property>
-                            <child>
-                              <object class="GnalkMessageSearch" id="message_search"/>
-                            </child>
+                        </child>
+                        <!-- Invitation page (shown for pending federation invitations) -->
+                        <child>
+                          <object class="GtkStackPage">
+                            <property name="name">invitation</property>
+                            <property name="child">
+                              <object class="AdwStatusPage" id="invitation_status_page">
+                                <property name="icon-name">network-server-symbolic</property>
+                                <property name="title" translatable="yes">Federation Invitation</property>
+                                <property name="description" translatable="yes">You have been invited to join this conversation</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">12</property>
+                                    <property name="halign">center</property>
+                                    <child>
+                                      <object class="GtkLabel" id="invitation_details_label">
+                                        <property name="wrap">true</property>
+                                        <property name="justify">center</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="spacing">12</property>
+                                        <property name="halign">center</property>
+                                        <property name="margin-top">12</property>
+                                        <child>
+                                          <object class="GtkButton" id="invitation_decline_button">
+                                            <property name="label" translatable="yes">Decline</property>
+                                            <style>
+                                              <class name="destructive-action"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkButton" id="invitation_accept_button">
+                                            <property name="label" translatable="yes">Accept</property>
+                                            <style>
+                                              <class name="suggested-action"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
                           </object>
                         </child>
                       </object>

@@ -1155,7 +1155,8 @@ gnalk_call_window_start_call (GnalkCallWindow  *self,
                                GnalkWebrtc      *webrtc,
                                GnalkSignaling   *signaling,
                                GnalkAvatarCache *avatar_cache,
-                               gboolean           start_with_video)
+                               gboolean           start_with_video,
+                               gboolean           is_federated)
 {
   g_return_if_fail (GNALK_IS_CALL_WINDOW (self));
 
@@ -1164,6 +1165,8 @@ gnalk_call_window_start_call (GnalkCallWindow  *self,
 
   g_free (self->session_id);
   self->session_id = g_strdup (session_id);
+
+  self->is_federated = is_federated;
 
   g_object_set (self, "room-name", room_name ? room_name : "", NULL);
 
@@ -1250,7 +1253,10 @@ gnalk_call_window_start_call (GnalkCallWindow  *self,
    * that doesn't match the signaling session, causing "not allowed" errors.
    * Always use flags=7 (audio+video+screenshare) for full capabilities.
    * Video on/off is communicated via mute/unmute peer messages. */
-  gnalk_http_client_start_call (http_client, room_token, 7, on_http_join_call_response, g_object_ref (self));
+  if (self->is_federated)
+    gnalk_http_client_start_call_federation (http_client, room_token, 7, on_http_join_call_response, g_object_ref (self));
+  else
+    gnalk_http_client_start_call (http_client, room_token, 7, on_http_join_call_response, g_object_ref (self));
 }
 
 void
@@ -1391,7 +1397,12 @@ gnalk_call_window_end_call (GnalkCallWindow *self)
    * We only leave the call via HTTP API (which updates inCall status). */
 
   if (self->http_client && self->room_token)
-    gnalk_http_client_leave_call (self->http_client, self->room_token, NULL, NULL);
+    {
+      if (self->is_federated)
+        gnalk_http_client_leave_call_federation (self->http_client, self->room_token, NULL, NULL);
+      else
+        gnalk_http_client_leave_call (self->http_client, self->room_token, NULL, NULL);
+    }
 
   /* Reset call state so we can start a new call */
   self->offer_sent = FALSE;

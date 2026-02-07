@@ -127,4 +127,35 @@ void gnalk_conversation_controller_search_contacts (GnalkConversationController 
                                                     GnalkSearchContactsCallback   callback,
                                                     gpointer                      user_data);
 
+/**
+ * gnalk_conversation_controller_fetch_invitations:
+ * @self: The controller
+ *
+ * Fetches pending federation invitations from the server.
+ * Emits "invitations-updated" with a JsonArray of invitations.
+ */
+void gnalk_conversation_controller_fetch_invitations (GnalkConversationController *self);
+
+/**
+ * gnalk_conversation_controller_accept_invitation:
+ * @self: The controller
+ * @invitation_id: The invitation ID to accept
+ *
+ * Accepts a federation invitation.
+ * Emits "invitation-accepted" on success.
+ */
+void gnalk_conversation_controller_accept_invitation (GnalkConversationController *self,
+                                                      gint64                       invitation_id);
+
+/**
+ * gnalk_conversation_controller_decline_invitation:
+ * @self: The controller
+ * @invitation_id: The invitation ID to decline
+ *
+ * Declines a federation invitation.
+ * Emits "invitation-declined" on success.
+ */
+void gnalk_conversation_controller_decline_invitation (GnalkConversationController *self,
+                                                       gint64                       invitation_id);
+
 G_END_DECLS

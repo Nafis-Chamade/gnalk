@@ -12,6 +12,7 @@ struct _GnalkConversationRow
   GtkWidget *subtitle_label;
   GtkWidget *sent_status_icon;
   GtkWidget *status_icon;
+  GtkWidget *federation_icon;
   GtkWidget *unread_badge;
 
   /* Context menu */
@@ -187,6 +188,7 @@ gnalk_conversation_row_class_init (GnalkConversationRowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, subtitle_label);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, sent_status_icon);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, status_icon);
+  gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, federation_icon);
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, unread_badge);
 }
 
@@ -263,6 +265,10 @@ on_data_updated (GnalkConversationData *data,
 
   /* Update status indicator */
   update_status_indicator (self);
+
+  /* Update federation indicator */
+  gtk_widget_set_visible (self->federation_icon,
+                          gnalk_conversation_data_is_federated (data));
 
   /* Re-fetch room avatar (cache-hit is fast; actual fetch only after invalidation) */
   if (self->avatar_cache && self->token && self->room_type != 1)
@@ -772,6 +778,10 @@ gnalk_conversation_row_set_from_data (GnalkConversationRow  *self,
   /* Update status indicator */
   update_status_indicator (self);
 
+  /* Update federation indicator */
+  gtk_widget_set_visible (self->federation_icon,
+                          gnalk_conversation_data_is_federated (data));
+
   if (avatar_cache)
     {
       AvatarCallbackData *cb_data = g_new0 (AvatarCallbackData, 1);
@@ -818,6 +828,7 @@ gnalk_conversation_row_reset (GnalkConversationRow *self)
   gtk_widget_set_visible (self->unread_badge, FALSE);
   gtk_widget_set_visible (self->sent_status_icon, FALSE);
   gtk_widget_set_visible (self->status_icon, FALSE);
+  gtk_widget_set_visible (self->federation_icon, FALSE);
   gtk_widget_remove_css_class (GTK_WIDGET (self), "conversation-unread");
   gtk_widget_remove_css_class (GTK_WIDGET (self), "conversation-active");
   gtk_image_set_from_icon_name (GTK_IMAGE (self->avatar), "avatar-default-symbolic");

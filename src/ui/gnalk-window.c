@@ -330,6 +330,9 @@ gnalk_window_on_session_room_joined (GnalkSession *session G_GNUC_UNUSED,
 {
   g_message ("Window: session room joined: %s (session_id: %s)", room_token, session_id);
 
+  if (!self->current_room)
+    return;
+
   g_free (self->current_room->room_token);
   g_free (self->current_room->session_id);
   self->current_room->room_token = g_strdup (room_token);
@@ -477,6 +480,34 @@ gnalk_window_on_session_signaling_ready (GnalkSession *session,
  * - gnalk_window_on_message_input_send_requested()
  */
 
+/* ============ Federation Invitation Button Handlers ============ */
+
+static void
+on_invitation_accept_clicked (GnalkWindow *self)
+{
+  if (self->pending_invitation_id == 0 || !self->conversation_controller)
+    return;
+
+  gtk_widget_set_sensitive (self->invitation_accept_button, FALSE);
+  gtk_widget_set_sensitive (self->invitation_decline_button, FALSE);
+
+  gnalk_conversation_controller_accept_invitation (self->conversation_controller,
+                                                    self->pending_invitation_id);
+}
+
+static void
+on_invitation_decline_clicked (GnalkWindow *self)
+{
+  if (self->pending_invitation_id == 0 || !self->conversation_controller)
+    return;
+
+  gtk_widget_set_sensitive (self->invitation_accept_button, FALSE);
+  gtk_widget_set_sensitive (self->invitation_decline_button, FALSE);
+
+  gnalk_conversation_controller_decline_invitation (self->conversation_controller,
+                                                     self->pending_invitation_id);
+}
+
 static void
 on_preferences_action (GSimpleAction *action,
                        GVariant      *parameter,
@@ -575,6 +606,14 @@ gnalk_window_update_call_button_state (GnalkWindow *self)
   if (self->active_session)
     {
       can_call = gnalk_session_can_call (self->active_session);
+
+      /* For federated rooms, calls require federation-v2 capability */
+      if (can_call && self->current_room_conv_data &&
+          gnalk_conversation_data_is_federated (self->current_room_conv_data) &&
+          !gnalk_session_has_federation_v2 (self->active_session))
+        {
+          can_call = FALSE;
+        }
     }
   else
     {
@@ -708,11 +747,29 @@ gnalk_window_start_call (GnalkWindow *self,
   if (!self->current_room || !self->active_session)
     return;
 
-  GnalkSignaling *signaling = gnalk_session_get_signaling (self->active_session);
-  if (!signaling || !gnalk_signaling_is_connected (signaling))
+  /* Check if this is a federated conversation */
+  gboolean is_federated = self->current_room_conv_data &&
+    gnalk_conversation_data_is_federated (self->current_room_conv_data);
+
+  /* For federated calls, use the federation signaling connection */
+  GnalkSignaling *signaling;
+  if (is_federated)
     {
-      g_warning ("Cannot start call: signaling not connected");
-      return;
+      signaling = gnalk_session_get_fed_signaling (self->active_session);
+      if (!signaling || !gnalk_signaling_is_connected (signaling))
+        {
+          g_warning ("Cannot start federated call: federation signaling not connected");
+          return;
+        }
+    }
+  else
+    {
+      signaling = gnalk_session_get_signaling (self->active_session);
+      if (!signaling || !gnalk_signaling_is_connected (signaling))
+        {
+          g_warning ("Cannot start call: signaling not connected");
+          return;
+        }
     }
 
   if (!self->current_room->session_id)
@@ -721,14 +778,11 @@ gnalk_window_start_call (GnalkWindow *self,
       return;
     }
 
-  g_message ("start_call: starting %s call for room %s with session %.30s...",
+  g_message ("start_call: starting %s%s call for room %s with session %.30s...",
+             is_federated ? "federated " : "",
              with_video ? "video" : "audio",
              self->current_room->room_token, self->current_room->session_id);
 
-  /* Start the call with the current session.
-   * The session should be valid since we joined the room when viewing it.
-   * Note: We don't refresh the session here because that would invalidate
-   * the signaling connection (server sends disinvite for old session). */
   GtkApplication *app = gtk_window_get_application (GTK_WINDOW (self));
   GnalkCallWindow *call_window = gnalk_call_window_new (app);
 
@@ -740,7 +794,8 @@ gnalk_window_start_call (GnalkWindow *self,
                                  self->webrtc,
                                  signaling,
                                  self->avatar_cache,
-                                 with_video);
+                                 with_video,
+                                 is_federated);
 
   /* Track active call window */
   self->active_call_window = call_window;
@@ -850,6 +905,26 @@ on_audio_call_clicked (GtkButton    *button,
                        GnalkWindow *self)
 {
   gnalk_window_start_call (self, FALSE);
+}
+
+static void
+on_participant_clicked (GnalkParticipantsList *list G_GNUC_UNUSED,
+                         const char            *actor_id,
+                         JsonObject            *participant_json,
+                         GnalkWindow           *self)
+{
+  const char *actor_type = json_object_get_string_member_with_default (participant_json, "actorType", "users");
+  const char *display_name = json_object_get_string_member_with_default (participant_json, "displayName", "");
+  gint participant_type = (gint) json_object_get_int_member_with_default (participant_json, "participantType", 3);
+  const char *status = json_object_get_string_member_with_default (participant_json, "status", "");
+  const char *status_icon = json_object_get_string_member_with_default (participant_json, "statusIcon", "");
+  const char *status_message = json_object_get_string_member_with_default (participant_json, "statusMessage", "");
+
+  GnalkParticipantProfileDialog *dialog = gnalk_participant_profile_dialog_new ();
+  gnalk_participant_profile_dialog_set_participant (dialog, actor_id, actor_type, display_name,
+                                                     participant_type, status, status_icon,
+                                                     status_message, self->avatar_cache);
+  adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (self));
 }
 
 static gint
@@ -1795,6 +1870,9 @@ gnalk_window_finalize (GObject *object)
   g_free (self->user_name);
   g_free (self->login_room_token);
 
+  /* Federation invitation cleanup */
+  g_clear_pointer (&self->pending_invitations, g_hash_table_unref);
+
   /* Attachment cleanup */
   g_clear_pointer (&self->attachments, g_ptr_array_unref);
 
@@ -1943,6 +2021,13 @@ gnalk_window_class_init (GnalkWindowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, message_search);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, message_search_revealer);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, message_search_button);
+
+  /* Federation invitation view */
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, content_stack);
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, invitation_status_page);
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, invitation_details_label);
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, invitation_accept_button);
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, invitation_decline_button);
 }
 
 /* ============ Message Search Handlers ============ */
@@ -2160,6 +2245,12 @@ gnalk_window_init (GnalkWindow *self)
   self->bound_message_rows = g_hash_table_new (g_direct_hash, g_direct_equal);
   self->visible_unread_ids = g_array_new (FALSE, FALSE, sizeof (gint64));
 
+  /* Federation invitation buttons */
+  g_signal_connect_swapped (self->invitation_accept_button, "clicked",
+                             G_CALLBACK (on_invitation_accept_clicked), self);
+  g_signal_connect_swapped (self->invitation_decline_button, "clicked",
+                             G_CALLBACK (on_invitation_decline_clicked), self);
+
   /* Conversation list - uses data/widget separation pattern */
   GtkNoSelection *conv_selection = gtk_no_selection_new (G_LIST_MODEL (self->conversations_store));
   GtkListItemFactory *conv_factory = gtk_signal_list_item_factory_new ();
@@ -2207,6 +2298,7 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect (self->participants_list, "promote-requested", G_CALLBACK (gnalk_window_on_participant_promote_requested), self);
   g_signal_connect (self->participants_list, "demote-requested", G_CALLBACK (gnalk_window_on_participant_demote_requested), self);
   g_signal_connect (self->participants_list, "remove-requested", G_CALLBACK (gnalk_window_on_participant_remove_requested), self);
+  g_signal_connect (self->participants_list, "participant-clicked", G_CALLBACK (on_participant_clicked), self);
   g_signal_connect (self->conversation_actions, "quote-closed", G_CALLBACK (gnalk_window_on_quote_closed), self);
   g_signal_connect (self->conversation_actions, "attachment-closed", G_CALLBACK (gnalk_window_on_attachment_closed), self);
   g_signal_connect (self->conversation_actions, "scroll-to-message-requested", G_CALLBACK (gnalk_window_on_quote_preview_scroll_requested), self);

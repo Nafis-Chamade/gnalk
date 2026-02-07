@@ -1842,8 +1842,12 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
           gtk_widget_set_size_request (self->avatar_frame, -1, -1);
           gtk_image_set_pixel_size (GTK_IMAGE (self->avatar), 32);
           gtk_widget_remove_css_class (self->avatar_frame, "bot-avatar");
-          gnalk_avatar_cache_get_user_avatar (avatar_cache, actor_id, 64, on_avatar_loaded,
-                                               avatar_callback_data_new (self));
+
+          if (gnalk_message_data_is_federated (data))
+            gtk_image_set_from_icon_name (GTK_IMAGE (self->avatar), "avatar-default-symbolic");
+          else
+            gnalk_avatar_cache_get_user_avatar (avatar_cache, actor_id, 64, on_avatar_loaded,
+                                                 avatar_callback_data_new (self));
         }
     }
 

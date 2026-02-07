@@ -372,4 +372,37 @@ void gnalk_http_client_demote_moderator (GnalkHttpClient   *self,
                                            GnalkHttpCallback  callback,
                                            gpointer            user_data);
 
+/* Room-specific signaling settings (needed for federated calls) */
+void gnalk_http_client_get_signaling_settings_for_room (GnalkHttpClient   *self,
+                                                        const char         *room_token,
+                                                        GnalkHttpCallback  callback,
+                                                        gpointer            user_data);
+
+/* Federated call API (uses /call/{token}/federation endpoint) */
+void gnalk_http_client_start_call_federation (GnalkHttpClient   *self,
+                                              const char         *room_token,
+                                              gint                flags,
+                                              GnalkHttpCallback  callback,
+                                              gpointer            user_data);
+
+void gnalk_http_client_leave_call_federation (GnalkHttpClient   *self,
+                                              const char         *room_token,
+                                              GnalkHttpCallback  callback,
+                                              gpointer            user_data);
+
+/* Federation invitation API */
+void gnalk_http_client_get_federation_invitations (GnalkHttpClient   *self,
+                                                   GnalkHttpCallback  callback,
+                                                   gpointer            user_data);
+
+void gnalk_http_client_accept_federation_invitation (GnalkHttpClient   *self,
+                                                     gint64              invitation_id,
+                                                     GnalkHttpCallback  callback,
+                                                     gpointer            user_data);
+
+void gnalk_http_client_decline_federation_invitation (GnalkHttpClient   *self,
+                                                      gint64              invitation_id,
+                                                      GnalkHttpCallback  callback,
+                                                      gpointer            user_data);
+
 G_END_DECLS

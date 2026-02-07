@@ -21,6 +21,13 @@ void gnalk_signaling_connect (GnalkSignaling *self,
                                 const char      *user_id,
                                 const char      *ticket);
 
+/* Connect to a remote signaling server with federation auth (JWT token).
+ * Used for federated calls where the client connects to the host's signaling. */
+void gnalk_signaling_connect_federation (GnalkSignaling *self,
+                                          const char      *server_url,
+                                          const char      *nextcloud_server_url,
+                                          const char      *auth_token);
+
 void gnalk_signaling_disconnect (GnalkSignaling *self);
 
 gboolean gnalk_signaling_is_connected (GnalkSignaling *self);
@@ -80,6 +87,10 @@ void gnalk_signaling_send_unshare_screen (GnalkSignaling *self);
  *     Emitted when a participant's call state changes
  * - "call-ended" ()
  *     Emitted when all participants leave the call
+ * - "federation-interrupted" ()
+ *     Emitted when the federation connection to the remote server is lost
+ * - "federation-resumed" (gboolean session_preserved)
+ *     Emitted when the federation connection is restored
  */
 
 /**

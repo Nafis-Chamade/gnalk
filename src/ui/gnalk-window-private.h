@@ -44,6 +44,7 @@
 #include "gnalk-message-processor.h"
 #include "gnalk-message-search.h"
 #include "gnalk-conversation-info-dialog.h"
+#include "gnalk-participant-profile-dialog.h"
 #include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
@@ -97,6 +98,15 @@ struct _GnalkWindow
   GtkWidget *toast_overlay;
   GnalkNetworkStatusBar *network_status_bar;
   GtkWidget *connecting_spinner;
+
+  /* Content stack (messages vs invitation view) */
+  GtkWidget *content_stack;
+  GtkWidget *invitation_status_page;
+  GtkWidget *invitation_details_label;
+  GtkWidget *invitation_accept_button;
+  GtkWidget *invitation_decline_button;
+  gint64     pending_invitation_id;  /* ID of the invitation being displayed */
+  GHashTable *pending_invitations;   /* localToken -> JsonObject* (owned) */
 
   /* Image gallery for viewing images in-app */
   GnalkImageGallery *image_gallery;
@@ -326,6 +336,19 @@ void gnalk_window_on_conversation_controller_deleted     (GnalkConversationContr
 void gnalk_window_on_data_repository_changed (GnalkDataRepository *repository,
                                                const char          *scope,
                                                GnalkWindow         *self);
+
+/* Federation invitation handlers */
+void gnalk_window_on_invitations_updated       (GnalkConversationController *controller,
+                                                 JsonArray *invitations,
+                                                 GnalkWindow *self);
+void gnalk_window_on_invitation_accepted       (GnalkConversationController *controller,
+                                                 gint64 invitation_id,
+                                                 GnalkWindow *self);
+void gnalk_window_on_invitation_declined       (GnalkConversationController *controller,
+                                                 gint64 invitation_id,
+                                                 GnalkWindow *self);
+void gnalk_window_show_invitation_view         (GnalkWindow *self, const char *room_token);
+void gnalk_window_show_messages_view           (GnalkWindow *self);
 
 /* ============ Room switch functions (gnalk-window-room-switch.c) ============ */
 

@@ -34,6 +34,19 @@
             </style>
           </object>
         </child>
+        <child type="overlay">
+          <object class="GtkImage" id="federation_icon">
+            <property name="pixel-size">14</property>
+            <property name="icon-name">network-server-symbolic</property>
+            <property name="halign">start</property>
+            <property name="valign">end</property>
+            <property name="visible">false</property>
+            <property name="tooltip-text">Federated conversation</property>
+            <style>
+              <class name="federation-indicator"/>
+            </style>
+          </object>
+        </child>
       </object>
     </child>
     <child>

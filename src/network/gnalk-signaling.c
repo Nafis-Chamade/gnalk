@@ -32,6 +32,9 @@ struct _GnalkSignaling
   GHashTable     *participants;      /* session_id -> display_name */
   GHashTable     *session_to_actor;  /* session_id -> actor_id */
 
+  gboolean        is_federation;     /* TRUE when using federation auth */
+  char           *fed_auth_token;    /* JWT token for federation auth */
+
   GnalkSignalingMessageCallback message_callback;
   gpointer                       message_callback_data;
 };
@@ -45,9 +48,11 @@ enum {
   SIGNAL_CALL_ENDED,
   SIGNAL_READY,
   SIGNAL_SCREEN_SHARE_CHANGED,
-  SIGNAL_ROOM_JOINED,       /* Emitted when server confirms room join */
-  SIGNAL_ROOM_DISINVITED,   /* Emitted when kicked from a room */
-  SIGNAL_CONNECTION_LOST,   /* Emitted when WebSocket closes unexpectedly */
+  SIGNAL_ROOM_JOINED,                /* Emitted when server confirms room join */
+  SIGNAL_ROOM_DISINVITED,            /* Emitted when kicked from a room */
+  SIGNAL_CONNECTION_LOST,            /* Emitted when WebSocket closes unexpectedly */
+  SIGNAL_FEDERATION_INTERRUPTED,     /* Emitted when federation connection is lost */
+  SIGNAL_FEDERATION_RESUMED,         /* Emitted when federation connection is restored */
   N_SIGNALS
 };
 
@@ -100,6 +105,7 @@ gnalk_signaling_finalize (GObject *object)
   g_free (self->session_id);
   g_free (self->signaling_session_id);
   g_free (self->current_room_token);
+  g_free (self->fed_auth_token);
 
   G_OBJECT_CLASS (gnalk_signaling_parent_class)->finalize (object);
 }
@@ -226,6 +232,25 @@ gnalk_signaling_class_init (GnalkSignalingClass *klass)
                   NULL, NULL,
                   NULL,
                   G_TYPE_NONE, 0);
+
+  signals[SIGNAL_FEDERATION_INTERRUPTED] =
+    g_signal_new ("federation-interrupted",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 0);
+
+  signals[SIGNAL_FEDERATION_RESUMED] =
+    g_signal_new ("federation-resumed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_BOOLEAN);  /* resumed (TRUE if session was preserved) */
 }
 
 static void
@@ -436,6 +461,19 @@ on_ws_message (SoupWebsocketConnection *ws G_GNUC_UNUSED,
                             }
                         }
                     }
+                  else if (g_strcmp0 (event_type, "federation_interrupted") == 0)
+                    {
+                      g_message ("Signaling: federation connection interrupted");
+                      g_signal_emit (self, signals[SIGNAL_FEDERATION_INTERRUPTED], 0);
+                    }
+                  else if (g_strcmp0 (event_type, "federation_resumed") == 0)
+                    {
+                      gboolean resumed = FALSE;
+                      if (json_object_has_member (event, "resumed"))
+                        resumed = json_object_get_boolean_member_with_default (event, "resumed", FALSE);
+                      g_message ("Signaling: federation connection resumed (session_preserved=%d)", resumed);
+                      g_signal_emit (self, signals[SIGNAL_FEDERATION_RESUMED], 0, resumed);
+                    }
                   else if (g_strcmp0 (event_type, "leave") == 0)
                     {
                       JsonArray *leave_array = json_object_get_array_member (event, "leave");
@@ -628,42 +666,76 @@ send_hello (GnalkSignaling *self)
   json_builder_set_member_name (builder, "auth");
   json_builder_begin_object (builder);
 
-  g_autofree char *auth_url = NULL;
-
-  /* Use backend_url (the Nextcloud server URL) for auth, not the signaling server URL */
-  g_autoptr(GUri) uri = g_uri_parse (self->backend_url ? self->backend_url : self->server_url, G_URI_FLAGS_NONE, NULL);
-  if (uri)
+  if (self->is_federation)
     {
-      const char *scheme = g_uri_get_scheme (uri);
-      const char *host = g_uri_get_host (uri);
-      int port = g_uri_get_port (uri);
+      /* Federation auth: type=federation, url=local Nextcloud, params.token=JWT */
+      json_builder_set_member_name (builder, "type");
+      json_builder_add_string_value (builder, "federation");
 
-      const char *http_scheme = "https";
-      if (g_strcmp0 (scheme, "http") == 0)
-        http_scheme = "http";
-
-      if (port > 0 && port != 80 && port != 443)
-        auth_url = g_strdup_printf ("%s://%s:%d/ocs/v2.php/apps/spreed/api/v3/signaling/backend?format=json",
-                                     http_scheme, host, port);
+      /* URL is our local Nextcloud server (the one that proxied the federation) */
+      g_autofree char *nc_url = NULL;
+      if (self->backend_url && self->backend_url[0])
+        {
+          /* Ensure trailing slash */
+          if (g_str_has_suffix (self->backend_url, "/"))
+            nc_url = g_strdup (self->backend_url);
+          else
+            nc_url = g_strdup_printf ("%s/", self->backend_url);
+        }
       else
-        auth_url = g_strdup_printf ("%s://%s/ocs/v2.php/apps/spreed/api/v3/signaling/backend?format=json",
-                                     http_scheme, host);
+        {
+          nc_url = g_strdup ("https://localhost/");
+        }
+
+      json_builder_set_member_name (builder, "url");
+      json_builder_add_string_value (builder, nc_url);
+
+      json_builder_set_member_name (builder, "params");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "token");
+      json_builder_add_string_value (builder, self->fed_auth_token);
+      json_builder_end_object (builder);
     }
   else
     {
-      auth_url = g_strdup ("https://localhost/ocs/v2.php/apps/spreed/api/v3/signaling/backend?format=json");
+      /* Normal auth: url=backend auth endpoint, params.userid+ticket */
+      g_autofree char *auth_url = NULL;
+
+      /* Use backend_url (the Nextcloud server URL) for auth, not the signaling server URL */
+      g_autoptr(GUri) uri = g_uri_parse (self->backend_url ? self->backend_url : self->server_url, G_URI_FLAGS_NONE, NULL);
+      if (uri)
+        {
+          const char *scheme = g_uri_get_scheme (uri);
+          const char *host = g_uri_get_host (uri);
+          int port = g_uri_get_port (uri);
+
+          const char *http_scheme = "https";
+          if (g_strcmp0 (scheme, "http") == 0)
+            http_scheme = "http";
+
+          if (port > 0 && port != 80 && port != 443)
+            auth_url = g_strdup_printf ("%s://%s:%d/ocs/v2.php/apps/spreed/api/v3/signaling/backend?format=json",
+                                         http_scheme, host, port);
+          else
+            auth_url = g_strdup_printf ("%s://%s/ocs/v2.php/apps/spreed/api/v3/signaling/backend?format=json",
+                                         http_scheme, host);
+        }
+      else
+        {
+          auth_url = g_strdup ("https://localhost/ocs/v2.php/apps/spreed/api/v3/signaling/backend?format=json");
+        }
+
+      json_builder_set_member_name (builder, "url");
+      json_builder_add_string_value (builder, auth_url);
+
+      json_builder_set_member_name (builder, "params");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "userid");
+      json_builder_add_string_value (builder, self->user_id);
+      json_builder_set_member_name (builder, "ticket");
+      json_builder_add_string_value (builder, self->ticket);
+      json_builder_end_object (builder);
     }
-
-  json_builder_set_member_name (builder, "url");
-  json_builder_add_string_value (builder, auth_url);
-
-  json_builder_set_member_name (builder, "params");
-  json_builder_begin_object (builder);
-  json_builder_set_member_name (builder, "userid");
-  json_builder_add_string_value (builder, self->user_id);
-  json_builder_set_member_name (builder, "ticket");
-  json_builder_add_string_value (builder, self->ticket);
-  json_builder_end_object (builder);
 
   json_builder_end_object (builder);
   json_builder_end_object (builder);
@@ -775,10 +847,66 @@ gnalk_signaling_connect (GnalkSignaling *self,
 
   self->user_id = g_strdup (user_id);
   self->ticket = g_strdup (ticket);
+  self->is_federation = FALSE;
+  g_clear_pointer (&self->fed_auth_token, g_free);
 
   if (was_connected)
     {
       /* Wait for disconnect to complete before reconnecting */
+      self->pending_reconnect = TRUE;
+      gnalk_signaling_disconnect (self);
+    }
+  else
+    {
+      gnalk_signaling_do_connect (self);
+    }
+}
+
+void
+gnalk_signaling_connect_federation (GnalkSignaling *self,
+                                    const char      *server_url,
+                                    const char      *nextcloud_server_url,
+                                    const char      *auth_token)
+{
+  g_return_if_fail (GNALK_IS_SIGNALING (self));
+  g_return_if_fail (server_url != NULL);
+  g_return_if_fail (auth_token != NULL);
+
+  gboolean was_connected = (self->ws_connection != NULL);
+
+  g_free (self->server_url);
+  g_free (self->backend_url);
+  g_free (self->user_id);
+  g_free (self->ticket);
+  g_free (self->fed_auth_token);
+
+  /* Store the local Nextcloud server URL for auth */
+  self->backend_url = g_strdup (nextcloud_server_url);
+  self->fed_auth_token = g_strdup (auth_token);
+  self->is_federation = TRUE;
+  self->user_id = NULL;
+  self->ticket = NULL;
+
+  /* Convert URL to WebSocket scheme */
+  if (g_str_has_prefix (server_url, "https://"))
+    self->server_url = g_strdup_printf ("wss://%s", server_url + 8);
+  else if (g_str_has_prefix (server_url, "http://"))
+    self->server_url = g_strdup_printf ("ws://%s", server_url + 7);
+  else
+    self->server_url = g_strdup (server_url);
+
+  if (!g_str_has_suffix (self->server_url, "/spreed"))
+    {
+      char *old = self->server_url;
+      self->server_url = g_strdup_printf ("%s/spreed", old);
+      g_free (old);
+    }
+
+  g_message ("Federation signaling: connecting to %s (nc=%s)",
+             self->server_url, nextcloud_server_url);
+
+  if (was_connected)
+    {
       self->pending_reconnect = TRUE;
       gnalk_signaling_disconnect (self);
     }

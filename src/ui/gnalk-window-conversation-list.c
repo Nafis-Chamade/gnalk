@@ -16,6 +16,17 @@
 
 /* ============ Sorting Helper ============ */
 
+/* Return section priority: invitations (0) > favorites (1) > regular (2) */
+static gint
+get_section_priority (GnalkConversationData *data)
+{
+  if (gnalk_conversation_data_is_invitation (data))
+    return 0;
+  if (gnalk_conversation_data_get_is_favorite (data))
+    return 1;
+  return 2;
+}
+
 gint
 gnalk_window_compare_conversations_by_activity (gconstpointer a,
                                                   gconstpointer b,
@@ -38,14 +49,14 @@ gnalk_window_compare_conversations_by_activity (gconstpointer a,
 
   gboolean header_a = gnalk_conversation_data_is_section_header (data_a);
   gboolean header_b = gnalk_conversation_data_is_section_header (data_b);
-  gboolean fav_a = gnalk_conversation_data_get_is_favorite (data_a);
-  gboolean fav_b = gnalk_conversation_data_get_is_favorite (data_b);
 
-  /* Different sections - favorites come first */
-  if (fav_a && !fav_b)
-    return -1;
-  if (!fav_a && fav_b)
-    return 1;
+  /* Section priority: invitations > favorites > regular */
+  gint prio_a = get_section_priority (data_a);
+  gint prio_b = get_section_priority (data_b);
+
+  /* Different sections */
+  if (prio_a != prio_b)
+    return prio_a - prio_b;
 
   /* Same section - headers come first */
   if (header_a && !header_b)
@@ -151,6 +162,7 @@ load_conversations_from_db_finish (GObject      *source_object,
   g_autoptr(GHashTable) new_convs = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_object_unref);
   gboolean has_favorites = FALSE;
   gboolean has_non_favorites = FALSE;
+  gboolean has_invitations = FALSE;
 
   for (guint i = 0; i < n_cached; i++)
     {
@@ -162,7 +174,9 @@ load_conversations_from_db_finish (GObject      *source_object,
           if (token && *token)
             {
               g_hash_table_insert (new_convs, (gpointer) token, data);  /* Takes ownership of ref */
-              if (gnalk_conversation_data_get_is_favorite (data))
+              if (gnalk_conversation_data_is_invitation (data))
+                has_invitations = TRUE;
+              else if (gnalk_conversation_data_get_is_favorite (data))
                 has_favorites = TRUE;
               else
                 has_non_favorites = TRUE;
@@ -175,14 +189,17 @@ load_conversations_from_db_finish (GObject      *source_object,
   /* Track which tokens we've seen in existing store */
   g_autoptr(GHashTable) seen_tokens = g_hash_table_new (g_str_hash, g_str_equal);
 
-  /* Check if we need section headers */
-  gboolean need_headers = (has_favorites && has_non_favorites);
+  /* Check if we need section headers.
+   * Count how many distinct section types have entries. */
+  gint section_count = (has_invitations ? 1 : 0) + (has_favorites ? 1 : 0) + (has_non_favorites ? 1 : 0);
+  gboolean need_headers = (section_count > 1);
 
   /* First pass: check existing headers and update existing items */
   guint n_store = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
   GArray *indices_to_remove = g_array_new (FALSE, FALSE, sizeof (guint));
   gboolean has_fav_header = FALSE;
   gboolean has_conv_header = FALSE;
+  gboolean has_inv_header = FALSE;
 
   for (guint i = 0; i < n_store; i++)
     {
@@ -193,9 +210,16 @@ load_conversations_from_db_finish (GObject      *source_object,
       if (gnalk_conversation_data_is_section_header (existing))
         {
           /* Track existing headers; remove if no longer needed */
-          if (gnalk_conversation_data_get_is_favorite (existing))
+          if (gnalk_conversation_data_is_invitation (existing))
             {
-              if (need_headers)
+              if (need_headers && has_invitations)
+                has_inv_header = TRUE;
+              else
+                g_array_append_val (indices_to_remove, i);
+            }
+          else if (gnalk_conversation_data_get_is_favorite (existing))
+            {
+              if (need_headers && has_favorites)
                 has_fav_header = TRUE;
               else
                 g_array_append_val (indices_to_remove, i);
@@ -259,7 +283,14 @@ load_conversations_from_db_finish (GObject      *source_object,
   /* Add section headers only if needed and not already present */
   if (need_headers)
     {
-      if (!has_fav_header)
+      if (has_invitations && !has_inv_header)
+        {
+          GnalkConversationData *inv_header = gnalk_conversation_data_new_invitation_header ();
+          g_list_store_append (self->conversations_store, inv_header);
+          g_object_unref (inv_header);
+          has_changes = TRUE;
+        }
+      if (has_favorites && !has_fav_header)
         {
           GnalkConversationData *fav_header = gnalk_conversation_data_new_section_header ("Favorites", TRUE);
           g_list_store_append (self->conversations_store, fav_header);

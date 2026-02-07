@@ -130,6 +130,12 @@ connect_controller_signals (GnalkWindow  *self,
                         G_CALLBACK (gnalk_window_on_conversation_controller_left), self);
       g_signal_connect (cc, "conversation-deleted",
                         G_CALLBACK (gnalk_window_on_conversation_controller_deleted), self);
+      g_signal_connect (cc, "invitations-updated",
+                        G_CALLBACK (gnalk_window_on_invitations_updated), self);
+      g_signal_connect (cc, "invitation-accepted",
+                        G_CALLBACK (gnalk_window_on_invitation_accepted), self);
+      g_signal_connect (cc, "invitation-declined",
+                        G_CALLBACK (gnalk_window_on_invitation_declined), self);
     }
 
   /* Participant controller */

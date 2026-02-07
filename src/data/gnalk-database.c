@@ -52,6 +52,8 @@ static const char *SCHEMA_SQL =
   "  last_message_actor_name TEXT,"
   "  last_message_type TEXT,"
   "  last_message_params_json TEXT,"
+  "  remote_server TEXT DEFAULT '',"
+  "  remote_token TEXT DEFAULT '',"
   "  UNIQUE(account_id, token)"
   ");"
 
@@ -115,6 +117,7 @@ static const char *SCHEMA_SQL =
   "  display_name TEXT,"
   "  status TEXT DEFAULT '',"
   "  in_call INTEGER DEFAULT 0,"
+  "  actor_type TEXT DEFAULT 'users',"
   "  PRIMARY KEY(account_id, conversation_token, actor_id)"
   ");"
 
@@ -351,6 +354,24 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
       }
   }
 
+  /* Migration: Add federation columns to conversations */
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN remote_server TEXT DEFAULT '';",
+                NULL, NULL, NULL);
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN remote_token TEXT DEFAULT '';",
+                NULL, NULL, NULL);
+
+  /* Migration: Add invitation_id column to conversations */
+  sqlite3_exec (self->db,
+                "ALTER TABLE conversations ADD COLUMN invitation_id INTEGER DEFAULT 0;",
+                NULL, NULL, NULL);
+
+  /* Migration: Add actor_type column to participants */
+  sqlite3_exec (self->db,
+                "ALTER TABLE participants ADD COLUMN actor_type TEXT DEFAULT 'users';",
+                NULL, NULL, NULL);
+
   g_debug ("Database opened: %s", self->db_path);
   return TRUE;
 }
@@ -453,8 +474,9 @@ gnalk_database_save_conversation (GnalkDatabase         *self,
     "is_favorite, can_leave, can_delete, description, participant_type, "
     "notification_level, call_notification_level, last_read_message, "
     "last_message_id, last_message_text, last_message_actor_id, "
-    "last_message_actor_name, last_message_type, last_message_params_json) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    "last_message_actor_name, last_message_type, last_message_params_json, "
+    "remote_server, remote_token, invitation_id) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -482,6 +504,9 @@ gnalk_database_save_conversation (GnalkDatabase         *self,
       sqlite3_bind_text (stmt, 22, gnalk_conversation_data_get_last_message_actor_name (data), -1, SQLITE_STATIC);
       sqlite3_bind_text (stmt, 23, gnalk_conversation_data_get_last_message_type (data), -1, SQLITE_STATIC);
       sqlite3_bind_text (stmt, 24, gnalk_conversation_data_get_last_message_params_json (data), -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 25, gnalk_conversation_data_get_remote_server (data), -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 26, gnalk_conversation_data_get_remote_token (data), -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 27, gnalk_conversation_data_get_invitation_id (data));
 
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
@@ -635,8 +660,10 @@ gnalk_database_delete_stale_conversations (GnalkDatabase *self,
   if (valid_tokens->len == 0)
     return 0;
 
-  /* Build SQL with placeholders for valid tokens */
-  GString *sql = g_string_new ("DELETE FROM conversations WHERE account_id = ? AND token NOT IN (");
+  /* Build SQL with placeholders for valid tokens.
+   * Protect invitations (invitation_id > 0) from stale deletion - they are
+   * not returned by /room and would be incorrectly deleted. */
+  GString *sql = g_string_new ("DELETE FROM conversations WHERE account_id = ? AND invitation_id = 0 AND token NOT IN (");
   for (guint i = 0; i < valid_tokens->len; i++)
     {
       if (i > 0)
@@ -732,7 +759,8 @@ gnalk_database_load_conversations (GnalkDatabase *self,
     "can_leave, can_delete, description, participant_type, notification_level, "
     "call_notification_level, last_read_message, last_message_id, "
     "last_message_text, last_message_actor_id, last_message_actor_name, "
-    "last_message_type, last_message_params_json "
+    "last_message_type, last_message_params_json, remote_server, remote_token, "
+    "invitation_id "
     "FROM conversations WHERE account_id = ? ORDER BY last_activity DESC";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
@@ -765,6 +793,9 @@ gnalk_database_load_conversations (GnalkDatabase *self,
             (const char *) sqlite3_column_text (stmt, 20),  /* last_message_actor_name */
             (const char *) sqlite3_column_text (stmt, 21),  /* last_message_type */
             (const char *) sqlite3_column_text (stmt, 22),  /* last_message_params_json */
+            (const char *) sqlite3_column_text (stmt, 23),  /* remote_server */
+            (const char *) sqlite3_column_text (stmt, 24),  /* remote_token */
+            sqlite3_column_int64 (stmt, 25),                 /* invitation_id */
             NULL);                                           /* session (set later) */
 
           g_list_store_append (store, data);
@@ -1559,8 +1590,8 @@ gnalk_database_save_participants (GnalkDatabase *self,
 
   /* Insert new participants */
   const char *insert_sql =
-    "INSERT INTO participants (account_id, conversation_token, actor_id, display_name, status, in_call) "
-    "VALUES (?, ?, ?, ?, ?, ?)";
+    "INSERT INTO participants (account_id, conversation_token, actor_id, display_name, status, in_call, actor_type) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?)";
 
   guint n_participants = json_array_get_length (participants);
   for (guint i = 0; i < n_participants; i++)
@@ -1575,6 +1606,7 @@ gnalk_database_save_participants (GnalkDatabase *self,
       const char *display_name = json_object_get_string_member_with_default (participant, "displayName", "");
       const char *status = json_object_get_string_member_with_default (participant, "status", "");
       gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
+      const char *actor_type = json_object_get_string_member_with_default (participant, "actorType", "users");
 
       if (sqlite3_prepare_v2 (self->db, insert_sql, -1, &stmt, NULL) == SQLITE_OK)
         {
@@ -1584,6 +1616,7 @@ gnalk_database_save_participants (GnalkDatabase *self,
           sqlite3_bind_text (stmt, 4, display_name, -1, SQLITE_STATIC);
           sqlite3_bind_text (stmt, 5, status, -1, SQLITE_STATIC);
           sqlite3_bind_int64 (stmt, 6, in_call);
+          sqlite3_bind_text (stmt, 7, actor_type, -1, SQLITE_STATIC);
           sqlite3_step (stmt);
           sqlite3_finalize (stmt);
         }
@@ -1603,7 +1636,7 @@ gnalk_database_load_participants (GnalkDatabase *self,
   sqlite3_stmt *stmt;
 
   const char *sql =
-    "SELECT actor_id, display_name, status, in_call FROM participants "
+    "SELECT actor_id, display_name, status, in_call, actor_type FROM participants "
     "WHERE account_id = ? AND conversation_token = ? "
     "ORDER BY display_name";
 
@@ -1622,6 +1655,8 @@ gnalk_database_load_participants (GnalkDatabase *self,
           const char *status = (const char *) sqlite3_column_text (stmt, 2);
           json_object_set_string_member (obj, "status", status ? status : "");
           json_object_set_int_member (obj, "inCall", sqlite3_column_int64 (stmt, 3));
+          const char *actor_type = (const char *) sqlite3_column_text (stmt, 4);
+          json_object_set_string_member (obj, "actorType", actor_type ? actor_type : "users");
           json_array_add_object_element (array, obj);
         }
 

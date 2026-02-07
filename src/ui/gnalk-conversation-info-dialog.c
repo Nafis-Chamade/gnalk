@@ -1,4 +1,5 @@
 #include "gnalk-conversation-info-dialog.h"
+#include "gnalk-participant-profile-dialog.h"
 #include "gnalk-markdown.h"
 
 struct _GnalkConversationInfoDialog
@@ -973,14 +974,21 @@ show_dialog_participant_context_menu (GnalkConversationInfoDialog *self,
   gboolean target_is_owner = (participant_type == 1);
   gboolean is_one_to_one = (room_type == 1);
 
-  /* Chat directly: not self, not 1-to-1, target is a user (has actorId) */
-  gtk_widget_set_visible (self->chat_button, !is_self && !is_one_to_one && actor_id && *actor_id);
+  /* Check if target is a federated user */
+  JsonObject *participant_json = g_object_get_data (G_OBJECT (row), "participant-json");
+  const char *actor_type = participant_json
+    ? json_object_get_string_member_with_default (participant_json, "actorType", "users")
+    : "users";
+  gboolean target_is_federated = (g_strcmp0 (actor_type, "federated_users") == 0);
 
-  /* Promote: caller is mod, not self, target is NOT already mod */
-  gtk_widget_set_visible (self->promote_button, caller_is_mod && !is_self && !target_is_mod);
+  /* Chat directly: not self, not 1-to-1, not federated (no private federated chats) */
+  gtk_widget_set_visible (self->chat_button, !is_self && !is_one_to_one && !target_is_federated && actor_id && *actor_id);
 
-  /* Demote: caller is mod, not self, target IS mod but not owner */
-  gtk_widget_set_visible (self->demote_button, caller_is_mod && !is_self && target_is_mod && !target_is_owner);
+  /* Promote: caller is mod, not self, target is NOT already mod, not federated */
+  gtk_widget_set_visible (self->promote_button, caller_is_mod && !is_self && !target_is_mod && !target_is_federated);
+
+  /* Demote: caller is mod, not self, target IS mod but not owner, not federated */
+  gtk_widget_set_visible (self->demote_button, caller_is_mod && !is_self && target_is_mod && !target_is_owner && !target_is_federated);
 
   /* Remove: caller is mod, not self, target not owner, not 1-to-1 */
   gtk_widget_set_visible (self->remove_button, caller_is_mod && !is_self && !target_is_owner && !is_one_to_one);
@@ -1092,13 +1100,29 @@ on_participants_response (GnalkHttpClient *client G_GNUC_UNUSED,
       if (!display_name || !*display_name)
         continue;
 
+      gboolean is_federated = (g_strcmp0 (actor_type, "federated_users") == 0);
+
       /* Create row */
       GtkWidget *row = adw_action_row_new ();
       adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), display_name);
 
-      /* Build subtitle: role or status message */
+      /* Build subtitle: role, server for federated, or status message */
       const char *role = get_participant_role ((gint) participant_type);
-      if (status_message && *status_message)
+      if (is_federated && actor_id)
+        {
+          /* Show server and role for federated users */
+          const char *at = strchr (actor_id, '@');
+          if (at && role)
+            {
+              g_autofree char *subtitle = g_strdup_printf ("%s • %s", role, at + 1);
+              adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+            }
+          else if (at)
+            adw_action_row_set_subtitle (ADW_ACTION_ROW (row), at + 1);
+          else if (role)
+            adw_action_row_set_subtitle (ADW_ACTION_ROW (row), role);
+        }
+      else if (status_message && *status_message)
         {
           if (role)
             {
@@ -1176,6 +1200,12 @@ on_participants_response (GnalkHttpClient *client G_GNUC_UNUSED,
           gtk_widget_set_valign (emoji_label, GTK_ALIGN_CENTER);
           adw_action_row_add_suffix (ADW_ACTION_ROW (row), emoji_label);
         }
+
+      /* Make row activatable for left-click profile view */
+      adw_action_row_set_activatable_widget (ADW_ACTION_ROW (row), NULL);
+      gtk_list_box_row_set_activatable (GTK_LIST_BOX_ROW (row), TRUE);
+      g_object_set_data_full (G_OBJECT (row), "participant-json",
+                              json_object_ref (participant), (GDestroyNotify) json_object_unref);
 
       /* Store data for context menu */
       gint64 attendee_id = json_object_get_int_member_with_default (participant, "attendeeId", 0);
@@ -1345,6 +1375,31 @@ gnalk_conversation_info_dialog_class_init (GnalkConversationInfoDialogClass *kla
 }
 
 static void
+on_participant_row_activated (GtkListBox    *listbox G_GNUC_UNUSED,
+                              GtkListBoxRow *row,
+                              gpointer       user_data)
+{
+  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+  JsonObject *participant_json = g_object_get_data (G_OBJECT (row), "participant-json");
+  if (!participant_json)
+    return;
+
+  const char *actor_id = json_object_get_string_member_with_default (participant_json, "actorId", "");
+  const char *actor_type = json_object_get_string_member_with_default (participant_json, "actorType", "users");
+  const char *display_name = json_object_get_string_member_with_default (participant_json, "displayName", "");
+  gint participant_type = (gint) json_object_get_int_member_with_default (participant_json, "participantType", 3);
+  const char *status = json_object_get_string_member_with_default (participant_json, "status", "");
+  const char *status_icon = json_object_get_string_member_with_default (participant_json, "statusIcon", "");
+  const char *status_message = json_object_get_string_member_with_default (participant_json, "statusMessage", "");
+
+  GnalkParticipantProfileDialog *dialog = gnalk_participant_profile_dialog_new ();
+  gnalk_participant_profile_dialog_set_participant (dialog, actor_id, actor_type, display_name,
+                                                     participant_type, status, status_icon,
+                                                     status_message, self->avatar_cache);
+  adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (self));
+}
+
+static void
 gnalk_conversation_info_dialog_init (GnalkConversationInfoDialog *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
@@ -1352,6 +1407,7 @@ gnalk_conversation_info_dialog_init (GnalkConversationInfoDialog *self)
   g_signal_connect (self->settings_button, "clicked", G_CALLBACK (on_settings_button_clicked), self);
   g_signal_connect (self->save_button, "clicked", G_CALLBACK (on_save_button_clicked), self);
   g_signal_connect (self->change_avatar_button, "clicked", G_CALLBACK (on_change_avatar_clicked), self);
+  g_signal_connect (self->participants_listbox, "row-activated", G_CALLBACK (on_participant_row_activated), self);
 
   /* Create context menu popover - we own it and manage its parent */
   self->context_popover = gtk_popover_new ();
