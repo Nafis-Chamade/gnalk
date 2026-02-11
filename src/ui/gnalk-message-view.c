@@ -586,19 +586,11 @@ gnalk_message_view_set_context_mode (GnalkMessageView *self,
 
   if (context_mode)
     {
-      /* Force button visible, change icon to indicate "jump to present" */
+      /* Force button visible — same look, click returns to present */
       gtk_widget_set_visible (self->scroll_to_bottom_button, TRUE);
-      gtk_button_set_icon_name (GTK_BUTTON (self->scroll_to_bottom_button), "go-bottom-symbolic");
-      gtk_widget_add_css_class (self->scroll_to_bottom_button, "pill");
-      gtk_widget_set_tooltip_text (self->scroll_to_bottom_button, _("Jump to present"));
     }
   else
     {
-      /* Restore original icon and behavior */
-      gtk_button_set_icon_name (GTK_BUTTON (self->scroll_to_bottom_button), "go-down-symbolic");
-      gtk_widget_remove_css_class (self->scroll_to_bottom_button, "pill");
-      gtk_widget_set_tooltip_text (self->scroll_to_bottom_button, _("Scroll to bottom"));
-
       /* Let scroll position determine visibility again */
       gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
       gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
