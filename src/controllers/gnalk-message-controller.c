@@ -1615,3 +1615,91 @@ gnalk_message_controller_search_messages (GnalkMessageController *self,
                                       on_search_messages_response,
                                       op);
 }
+
+/* ============ HPB Chat Relay ============ */
+
+void
+gnalk_message_controller_handle_relayed_chat (GnalkMessageController *self,
+                                               JsonObject             *chat_data)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+  g_return_if_fail (chat_data != NULL);
+
+  if (!self->room_token)
+    return;
+
+  /* Check if full comment is present */
+  if (json_object_has_member (chat_data, "comment"))
+    {
+      JsonObject *comment = json_object_get_object_member (chat_data, "comment");
+      if (!comment)
+        return;
+
+      /* Dedup: skip if we already have this message */
+      gint64 msg_id = json_object_get_int_member_with_default (comment, "id", 0);
+      if (msg_id > 0 && msg_id <= self->last_known_message_id)
+        {
+          g_debug ("MC: chat relay dedup - message %ld already known", (long) msg_id);
+          return;
+        }
+
+      /* Wrap in a single-element array (same format as poll-response) */
+      g_autoptr(JsonArray) messages = json_array_new ();
+      json_array_add_object_element (messages, json_object_ref (comment));
+
+      /* Save to DB */
+      save_messages_to_db (self, messages, self->room_token);
+
+      /* Update last known ID */
+      if (msg_id > self->last_known_message_id)
+        self->last_known_message_id = msg_id;
+
+      /* Emit poll-response signal so MessageProcessor handles it identically */
+      g_signal_emit (self, signals[SIGNAL_POLL_RESPONSE], 0, messages);
+
+      /* Update conversation last message */
+      if (self->repository && self->account_id > 0)
+        {
+          const char *message_text = json_object_get_string_member_with_default (comment, "message", "");
+          const char *actor_id = json_object_get_string_member_with_default (comment, "actorId", "");
+          const char *actor_name = json_object_get_string_member_with_default (comment, "actorDisplayName", "");
+          const char *system_message = json_object_get_string_member_with_default (comment, "systemMessage", "");
+          gint64 timestamp = json_object_get_int_member_with_default (comment, "timestamp", 0);
+
+          const char *message_type = (system_message && *system_message) ? "system" : "comment";
+
+          g_autofree char *params_json = NULL;
+          if (json_object_has_member (comment, "messageParameters"))
+            {
+              JsonNode *params_node = json_object_get_member (comment, "messageParameters");
+              if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
+                {
+                  JsonGenerator *gen = json_generator_new ();
+                  json_generator_set_root (gen, params_node);
+                  params_json = json_generator_to_data (gen, NULL);
+                  g_object_unref (gen);
+                }
+            }
+
+          gnalk_data_repository_update_conversation_last_message (self->repository,
+                                                                    self->account_id,
+                                                                    self->room_token,
+                                                                    timestamp,
+                                                                    msg_id,
+                                                                    message_text,
+                                                                    actor_id,
+                                                                    actor_name,
+                                                                    message_type,
+                                                                    params_json);
+        }
+
+      g_debug ("MC: chat relay delivered message %ld via HPB", (long) msg_id);
+    }
+  else if (json_object_get_boolean_member_with_default (chat_data, "refresh", FALSE))
+    {
+      /* No full message data - fetch via REST */
+      g_debug ("MC: chat relay refresh, fetching new messages via REST");
+      if (self->last_known_message_id > 0)
+        gnalk_message_controller_load_new_messages (self, self->last_known_message_id);
+    }
+}

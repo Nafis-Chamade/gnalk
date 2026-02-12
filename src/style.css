@@ -728,6 +728,12 @@
   background-color: rgba(229, 165, 10, 0.7);
 }
 
+/* Hand raise / reaction emoji overlays on participant tiles */
+.tile-overlay-emoji {
+  font-size: 32px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
 /* Screen share button active state */
 .screen-share-active {
   background-color: #e5a50a;

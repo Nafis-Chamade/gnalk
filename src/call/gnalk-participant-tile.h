@@ -62,4 +62,10 @@ void gnalk_participant_tile_set_is_screen_share (GnalkParticipantTile *self,
 
 gboolean gnalk_participant_tile_get_is_screen_share (GnalkParticipantTile *self);
 
+void gnalk_participant_tile_set_hand_raised (GnalkParticipantTile *self,
+                                               gboolean               raised);
+
+void gnalk_participant_tile_set_reaction (GnalkParticipantTile *self,
+                                            const char            *emoji);
+
 G_END_DECLS

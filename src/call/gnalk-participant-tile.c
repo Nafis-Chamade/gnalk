@@ -29,6 +29,10 @@ struct _GnalkParticipantTile
   gboolean is_screen_share;  /* Whether this tile is for a screen share */
   gboolean has_video;  /* Whether we've received any video frame */
 
+  /* Hand raise / reaction overlays (created programmatically) */
+  GtkWidget *hand_raised_label;
+  GtkWidget *reaction_label;
+
   gint64 last_frame_time;  /* Monotonic time of last received frame */
   gint64 tile_created_time;  /* Monotonic time when tile was created */
   guint frozen_check_id;   /* Timeout source ID for frozen check */
@@ -584,4 +588,70 @@ gnalk_participant_tile_get_is_screen_share (GnalkParticipantTile *self)
 {
   g_return_val_if_fail (GNALK_IS_PARTICIPANT_TILE (self), FALSE);
   return self->is_screen_share;
+}
+
+/* Create an overlay label inside the video_overlay GtkOverlay.
+ * Returns a GtkLabel positioned at the specified alignment. */
+static GtkWidget *
+ensure_overlay_label (GnalkParticipantTile *self,
+                      GtkWidget           **label_ptr,
+                      GtkAlign              halign,
+                      GtkAlign              valign)
+{
+  if (*label_ptr)
+    return *label_ptr;
+
+  *label_ptr = gtk_label_new ("");
+  gtk_widget_set_halign (*label_ptr, halign);
+  gtk_widget_set_valign (*label_ptr, valign);
+  gtk_widget_set_margin_start (*label_ptr, 4);
+  gtk_widget_set_margin_end (*label_ptr, 4);
+  gtk_widget_set_margin_top (*label_ptr, 4);
+  gtk_widget_set_margin_bottom (*label_ptr, 4);
+  gtk_widget_add_css_class (*label_ptr, "tile-overlay-emoji");
+  gtk_widget_set_visible (*label_ptr, FALSE);
+
+  if (self->video_overlay && GTK_IS_OVERLAY (self->video_overlay))
+    gtk_overlay_add_overlay (GTK_OVERLAY (self->video_overlay), *label_ptr);
+
+  return *label_ptr;
+}
+
+void
+gnalk_participant_tile_set_hand_raised (GnalkParticipantTile *self,
+                                          gboolean               raised)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANT_TILE (self));
+
+  GtkWidget *label = ensure_overlay_label (self, &self->hand_raised_label,
+                                            GTK_ALIGN_END, GTK_ALIGN_START);
+  if (raised)
+    {
+      /* Unicode: raised hand emoji */
+      gtk_label_set_text (GTK_LABEL (label), "\xE2\x9C\x8B");
+      gtk_widget_set_visible (label, TRUE);
+    }
+  else
+    {
+      gtk_widget_set_visible (label, FALSE);
+    }
+}
+
+void
+gnalk_participant_tile_set_reaction (GnalkParticipantTile *self,
+                                       const char            *emoji)
+{
+  g_return_if_fail (GNALK_IS_PARTICIPANT_TILE (self));
+
+  GtkWidget *label = ensure_overlay_label (self, &self->reaction_label,
+                                            GTK_ALIGN_CENTER, GTK_ALIGN_CENTER);
+  if (emoji && *emoji)
+    {
+      gtk_label_set_text (GTK_LABEL (label), emoji);
+      gtk_widget_set_visible (label, TRUE);
+    }
+  else
+    {
+      gtk_widget_set_visible (label, FALSE);
+    }
 }

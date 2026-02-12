@@ -48,6 +48,8 @@ struct _GnalkCallWindow
   GtkWidget *mute_audio_button;
   GtkWidget *mute_video_button;
   GtkWidget *screen_share_button;
+  GtkWidget *raise_hand_button;
+  GtkWidget *reaction_button;
   GtkWidget *hangup_button;
   GtkWidget *layout_toggle_button;
 
@@ -125,6 +127,17 @@ struct _GnalkCallWindow
   /* Call state */
   gboolean             call_ending;  /* Guard against multiple end_call calls */
   gboolean             is_federated; /* TRUE for federated calls (use /call/{token}/federation) */
+
+  /* Hand raise state */
+  GHashTable          *raised_hands;      /* session_id -> GINT_TO_POINTER(1) */
+  gboolean             hand_raised;       /* Our own hand state */
+
+  /* Reaction animation */
+  guint                reaction_fade_timeout_id;
+
+  /* Signal handler IDs for hand-raised/call-reaction */
+  gulong               hand_raised_handler_id;
+  gulong               call_reaction_handler_id;
 
   /* Screen sharing - incoming */
   GHashTable          *screen_tiles;      /* session_id -> GnalkParticipantTile* */
@@ -273,5 +286,7 @@ void gnalk_call_control_on_hangup_clicked       (GtkButton *button, GnalkCallWin
 void gnalk_call_control_on_mute_audio_toggled   (GtkToggleButton *button, GnalkCallWindow *self);
 void gnalk_call_control_on_mute_video_toggled   (GtkToggleButton *button, GnalkCallWindow *self);
 void gnalk_call_control_on_switch_camera_clicked (GtkButton *button, GnalkCallWindow *self);
+void gnalk_call_control_on_raise_hand_toggled   (GtkToggleButton *button, GnalkCallWindow *self);
+void gnalk_call_control_on_reaction_clicked     (GtkButton *button, GnalkCallWindow *self);
 
 G_END_DECLS

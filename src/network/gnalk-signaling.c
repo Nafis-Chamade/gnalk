@@ -51,6 +51,9 @@ enum {
   SIGNAL_ROOM_JOINED,                /* Emitted when server confirms room join */
   SIGNAL_ROOM_DISINVITED,            /* Emitted when kicked from a room */
   SIGNAL_CONNECTION_LOST,            /* Emitted when WebSocket closes unexpectedly */
+  SIGNAL_CHAT_MESSAGE,               /* Emitted when HPB relays a chat message */
+  SIGNAL_HAND_RAISED,                /* Emitted when a participant raises/lowers hand */
+  SIGNAL_CALL_REACTION,              /* Emitted when a participant sends emoji reaction */
   SIGNAL_FEDERATION_INTERRUPTED,     /* Emitted when federation connection is lost */
   SIGNAL_FEDERATION_RESUMED,         /* Emitted when federation connection is restored */
   N_SIGNALS
@@ -233,6 +236,39 @@ gnalk_signaling_class_init (GnalkSignalingClass *klass)
                   NULL,
                   G_TYPE_NONE, 0);
 
+  signals[SIGNAL_CHAT_MESSAGE] =
+    g_signal_new ("chat-message",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 1,
+                  JSON_TYPE_OBJECT);  /* chat_data */
+
+  signals[SIGNAL_HAND_RAISED] =
+    g_signal_new ("hand-raised",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 3,
+                  G_TYPE_STRING,   /* session_id */
+                  G_TYPE_BOOLEAN,  /* state */
+                  G_TYPE_INT64);   /* timestamp */
+
+  signals[SIGNAL_CALL_REACTION] =
+    g_signal_new ("call-reaction",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 2,
+                  G_TYPE_STRING,   /* session_id */
+                  G_TYPE_STRING);  /* emoji */
+
   signals[SIGNAL_FEDERATION_INTERRUPTED] =
     g_signal_new ("federation-interrupted",
                   G_TYPE_FROM_CLASS (klass),
@@ -371,7 +407,30 @@ on_ws_message (SoupWebsocketConnection *ws G_GNUC_UNUSED,
                       g_signal_emit (self, signals[SIGNAL_ROOM_DISINVITED], 0, roomid);
                     }
                 }
-              else if (g_strcmp0 (target, "participants") == 0 || g_strcmp0 (target, "room") == 0)
+              else if (g_strcmp0 (target, "room") == 0)
+                {
+                  const char *event_type = json_object_get_string_member_with_default (event, "type", "");
+                  if (g_strcmp0 (event_type, "message") == 0)
+                    {
+                      /* HPB chat relay: event.message.data.type == "chat" */
+                      JsonObject *message = json_object_get_object_member (event, "message");
+                      if (message)
+                        {
+                          JsonObject *data = json_object_get_object_member (message, "data");
+                          if (data)
+                            {
+                              const char *data_type = json_object_get_string_member_with_default (data, "type", "");
+                              if (g_strcmp0 (data_type, "chat") == 0)
+                                {
+                                  JsonObject *chat = json_object_get_object_member (data, "chat");
+                                  if (chat)
+                                    g_signal_emit (self, signals[SIGNAL_CHAT_MESSAGE], 0, chat);
+                                }
+                            }
+                        }
+                    }
+                }
+              if (g_strcmp0 (target, "participants") == 0 || g_strcmp0 (target, "room") == 0)
                 {
                   const char *event_type = json_object_get_string_member_with_default (event, "type", "");
                   if (g_strcmp0 (event_type, "join") == 0)
@@ -551,6 +610,27 @@ on_ws_message (SoupWebsocketConnection *ws G_GNUC_UNUSED,
                       g_signal_emit (self, signals[SIGNAL_SCREEN_SHARE_CHANGED], 0,
                                      sender_session, is_sharing);
                     }
+                  else if (g_strcmp0 (msg_data_type, "raiseHand") == 0)
+                    {
+                      JsonObject *payload = json_object_get_object_member (inner_data, "payload");
+                      if (payload)
+                        {
+                          gboolean state = json_object_get_boolean_member_with_default (payload, "state", FALSE);
+                          gint64 timestamp = json_object_get_int_member_with_default (payload, "timestamp", 0);
+                          g_signal_emit (self, signals[SIGNAL_HAND_RAISED], 0,
+                                         sender_session, state, timestamp);
+                        }
+                    }
+                  else if (g_strcmp0 (msg_data_type, "reaction") == 0)
+                    {
+                      JsonObject *payload = json_object_get_object_member (inner_data, "payload");
+                      if (payload)
+                        {
+                          const char *reaction = json_object_get_string_member_with_default (payload, "reaction", "");
+                          g_signal_emit (self, signals[SIGNAL_CALL_REACTION], 0,
+                                         sender_session, reaction);
+                        }
+                    }
                 }
             }
         }
@@ -646,6 +726,7 @@ send_hello (GnalkSignaling *self)
   json_builder_set_member_name (builder, "features");
   json_builder_begin_array (builder);
   json_builder_add_string_value (builder, "audio-video-permissions");
+  json_builder_add_string_value (builder, "chat-v2");
   json_builder_add_string_value (builder, "dialout");
   json_builder_add_string_value (builder, "federation");
   json_builder_add_string_value (builder, "hello-v2");
@@ -1289,6 +1370,119 @@ gnalk_signaling_send_unshare_screen (GnalkSignaling *self)
       json_builder_begin_object (builder);
       json_builder_set_member_name (builder, "type");
       json_builder_add_string_value (builder, "unshareScreen");
+      json_builder_end_object (builder);
+      json_builder_end_object (builder);
+      json_builder_end_object (builder);
+
+      g_autoptr(JsonNode) root = json_builder_get_root (builder);
+      gnalk_signaling_send_message (self, root);
+    }
+}
+
+void
+gnalk_signaling_send_raise_hand (GnalkSignaling *self,
+                                  gboolean         raised)
+{
+  g_return_if_fail (GNALK_IS_SIGNALING (self));
+
+  if (!self->ws_connection || !self->signaling_session_id)
+    return;
+
+  gint64 timestamp = g_get_real_time () / G_USEC_PER_SEC;
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init (&iter, self->participants);
+
+  while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+      const char *session_id = key;
+
+      if (g_strcmp0 (session_id, self->signaling_session_id) == 0)
+        continue;
+
+      g_autoptr(JsonBuilder) builder = json_builder_new ();
+
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "type");
+      json_builder_add_string_value (builder, "message");
+      json_builder_set_member_name (builder, "message");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "recipient");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "type");
+      json_builder_add_string_value (builder, "session");
+      json_builder_set_member_name (builder, "sessionid");
+      json_builder_add_string_value (builder, session_id);
+      json_builder_end_object (builder);
+      json_builder_set_member_name (builder, "data");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "type");
+      json_builder_add_string_value (builder, "raiseHand");
+      json_builder_set_member_name (builder, "payload");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "state");
+      json_builder_add_boolean_value (builder, raised);
+      json_builder_set_member_name (builder, "timestamp");
+      json_builder_add_int_value (builder, timestamp);
+      json_builder_end_object (builder);
+      json_builder_end_object (builder);
+      json_builder_end_object (builder);
+      json_builder_end_object (builder);
+
+      g_autoptr(JsonNode) root = json_builder_get_root (builder);
+      gnalk_signaling_send_message (self, root);
+    }
+}
+
+void
+gnalk_signaling_send_call_reaction (GnalkSignaling *self,
+                                     const char      *emoji)
+{
+  g_return_if_fail (GNALK_IS_SIGNALING (self));
+  g_return_if_fail (emoji != NULL);
+
+  if (!self->ws_connection || !self->signaling_session_id)
+    return;
+
+  gint64 timestamp = g_get_real_time () / G_USEC_PER_SEC;
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init (&iter, self->participants);
+
+  while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+      const char *session_id = key;
+
+      if (g_strcmp0 (session_id, self->signaling_session_id) == 0)
+        continue;
+
+      g_autoptr(JsonBuilder) builder = json_builder_new ();
+
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "type");
+      json_builder_add_string_value (builder, "message");
+      json_builder_set_member_name (builder, "message");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "recipient");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "type");
+      json_builder_add_string_value (builder, "session");
+      json_builder_set_member_name (builder, "sessionid");
+      json_builder_add_string_value (builder, session_id);
+      json_builder_end_object (builder);
+      json_builder_set_member_name (builder, "data");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "type");
+      json_builder_add_string_value (builder, "reaction");
+      json_builder_set_member_name (builder, "payload");
+      json_builder_begin_object (builder);
+      json_builder_set_member_name (builder, "reaction");
+      json_builder_add_string_value (builder, emoji);
+      json_builder_set_member_name (builder, "timestamp");
+      json_builder_add_int_value (builder, timestamp);
+      json_builder_end_object (builder);
       json_builder_end_object (builder);
       json_builder_end_object (builder);
       json_builder_end_object (builder);

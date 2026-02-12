@@ -64,6 +64,89 @@ static void on_signaling_message (GnalkSignaling *signaling,
                                   JsonNode        *message,
                                   gpointer         user_data);
 
+/* ============ Hand raise / Reaction signal handlers ============ */
+
+static void
+on_hand_raised (GnalkSignaling  *signaling G_GNUC_UNUSED,
+                const char       *session_id,
+                gboolean          state,
+                gint64            timestamp G_GNUC_UNUSED,
+                GnalkCallWindow *self)
+{
+  if (!session_id)
+    return;
+
+  if (state)
+    g_hash_table_insert (self->raised_hands, g_strdup (session_id), GINT_TO_POINTER (1));
+  else
+    g_hash_table_remove (self->raised_hands, session_id);
+
+  /* Update tile overlay */
+  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, session_id);
+  if (tile)
+    gnalk_participant_tile_set_hand_raised (tile, state);
+}
+
+typedef struct {
+  GWeakRef window_ref;
+  char *session_id;
+} ReactionFadeData;
+
+static void
+reaction_fade_data_free (ReactionFadeData *data)
+{
+  g_weak_ref_clear (&data->window_ref);
+  g_free (data->session_id);
+  g_free (data);
+}
+
+static gboolean
+on_reaction_fade_timeout (gpointer user_data)
+{
+  ReactionFadeData *data = user_data;
+
+  g_autoptr(GObject) window_obj = g_weak_ref_get (&data->window_ref);
+  if (window_obj)
+    {
+      GnalkCallWindow *self = GNALK_CALL_WINDOW (window_obj);
+      self->reaction_fade_timeout_id = 0;
+
+      GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles,
+                                                         data->session_id);
+      if (tile)
+        gnalk_participant_tile_set_reaction (tile, NULL);
+    }
+
+  reaction_fade_data_free (data);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_call_reaction (GnalkSignaling  *signaling G_GNUC_UNUSED,
+                  const char       *session_id,
+                  const char       *emoji,
+                  GnalkCallWindow *self)
+{
+  if (!session_id || !emoji || !*emoji)
+    return;
+
+  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, session_id);
+  if (!tile)
+    return;
+
+  gnalk_participant_tile_set_reaction (tile, emoji);
+
+  /* Cancel previous fade timeout if any */
+  if (self->reaction_fade_timeout_id > 0)
+    g_source_remove (self->reaction_fade_timeout_id);
+
+  ReactionFadeData *data = g_new0 (ReactionFadeData, 1);
+  g_weak_ref_init (&data->window_ref, self);
+  data->session_id = g_strdup (session_id);
+
+  self->reaction_fade_timeout_id = g_timeout_add_seconds (3, on_reaction_fade_timeout, data);
+}
+
 /* Drag gesture callbacks for preview overlay.
  * We translate coordinates to the parent (overlay) to avoid jitter caused
  * by the widget moving under the gesture as margins change. */
@@ -223,12 +306,33 @@ gnalk_call_window_finalize (GObject *object)
   g_clear_pointer (&self->user_display_names, g_hash_table_unref);
   g_clear_pointer (&self->participant_tiles, g_hash_table_unref);
 
-  /* Disconnect screen share signal handler before clearing state */
-  if (self->screen_share_handler_id > 0 && self->signaling)
+  /* Disconnect signal handlers before clearing state */
+  if (self->signaling)
     {
-      g_signal_handler_disconnect (self->signaling, self->screen_share_handler_id);
-      self->screen_share_handler_id = 0;
+      if (self->screen_share_handler_id > 0)
+        {
+          g_signal_handler_disconnect (self->signaling, self->screen_share_handler_id);
+          self->screen_share_handler_id = 0;
+        }
+      if (self->hand_raised_handler_id > 0)
+        {
+          g_signal_handler_disconnect (self->signaling, self->hand_raised_handler_id);
+          self->hand_raised_handler_id = 0;
+        }
+      if (self->call_reaction_handler_id > 0)
+        {
+          g_signal_handler_disconnect (self->signaling, self->call_reaction_handler_id);
+          self->call_reaction_handler_id = 0;
+        }
     }
+
+  if (self->reaction_fade_timeout_id > 0)
+    {
+      g_source_remove (self->reaction_fade_timeout_id);
+      self->reaction_fade_timeout_id = 0;
+    }
+
+  g_clear_pointer (&self->raised_hands, g_hash_table_unref);
 
   /* Clean up screen sharing state */
   g_clear_pointer (&self->screen_tiles, g_hash_table_unref);
@@ -289,6 +393,8 @@ gnalk_call_window_class_init (GnalkCallWindowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkCallWindow, mute_audio_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkCallWindow, mute_video_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkCallWindow, screen_share_button);
+  gtk_widget_class_bind_template_child (widget_class, GnalkCallWindow, raise_hand_button);
+  gtk_widget_class_bind_template_child (widget_class, GnalkCallWindow, reaction_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkCallWindow, hangup_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkCallWindow, layout_toggle_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkCallWindow, layout_stack);
@@ -336,6 +442,8 @@ gnalk_call_window_init (GnalkCallWindow *self)
                                                      g_free, g_free);
   self->participant_tiles = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                     g_free, g_object_unref);
+  self->raised_hands = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                               g_free, NULL);
   self->screen_tiles = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                g_free, g_object_unref);
   self->screen_subscribers = g_hash_table_new_full (g_str_hash, g_str_equal,
@@ -395,6 +503,39 @@ gnalk_call_window_init (GnalkCallWindow *self)
     g_signal_connect (self->layout_toggle_button, "clicked", G_CALLBACK (gnalk_call_layout_on_toggle_clicked), self);
   if (self->screen_share_button)
     g_signal_connect (self->screen_share_button, "toggled", G_CALLBACK (gnalk_call_screen_share_on_toggled), self);
+  if (self->raise_hand_button)
+    g_signal_connect (self->raise_hand_button, "toggled", G_CALLBACK (gnalk_call_control_on_raise_hand_toggled), self);
+
+  /* Set up reaction emoji popover */
+  if (self->reaction_button)
+    {
+      static const char *emojis[] = { "\xF0\x9F\x91\x8D", "\xF0\x9F\x91\x8E",  /* thumbs up/down */
+                                       "\xF0\x9F\x98\x82", "\xE2\x9D\xA4\xEF\xB8\x8F",  /* face joy, red heart */
+                                       "\xF0\x9F\x8E\x89", "\xF0\x9F\x91\x8F",  /* party popper, clap */
+                                       "\xF0\x9F\xA4\x94", "\xF0\x9F\x98\xAE", NULL }; /* thinking, surprised */
+      GtkWidget *popover = gtk_popover_new ();
+      GtkWidget *flow = gtk_flow_box_new ();
+      gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (flow), 4);
+      gtk_flow_box_set_selection_mode (GTK_FLOW_BOX (flow), GTK_SELECTION_NONE);
+      gtk_widget_set_margin_start (flow, 6);
+      gtk_widget_set_margin_end (flow, 6);
+      gtk_widget_set_margin_top (flow, 6);
+      gtk_widget_set_margin_bottom (flow, 6);
+
+      for (int i = 0; emojis[i]; i++)
+        {
+          GtkWidget *btn = gtk_button_new_with_label (emojis[i]);
+          gtk_widget_add_css_class (btn, "flat");
+          gtk_widget_set_size_request (btn, 40, 40);
+          g_object_set_data_full (G_OBJECT (btn), "emoji", g_strdup (emojis[i]), g_free);
+          g_object_set_data (G_OBJECT (btn), "popover", popover);
+          g_signal_connect (btn, "clicked", G_CALLBACK (gnalk_call_control_on_reaction_clicked), self);
+          gtk_flow_box_insert (GTK_FLOW_BOX (flow), btn, -1);
+        }
+
+      gtk_popover_set_child (GTK_POPOVER (popover), flow);
+      gtk_menu_button_set_popover (GTK_MENU_BUTTON (self->reaction_button), popover);
+    }
 
   /* Handle window close */
   g_signal_connect (self, "close-request", G_CALLBACK (on_close_request), NULL);
@@ -1242,6 +1383,12 @@ gnalk_call_window_start_call (GnalkCallWindow  *self,
   /* Connect to screen share signal from signaling */
   self->screen_share_handler_id = g_signal_connect (signaling, "screen-share-changed",
                                                      G_CALLBACK (gnalk_call_screen_share_on_signaling_changed), self);
+
+  /* Connect to hand raise and reaction signals */
+  self->hand_raised_handler_id = g_signal_connect (signaling, "hand-raised",
+                                                    G_CALLBACK (on_hand_raised), self);
+  self->call_reaction_handler_id = g_signal_connect (signaling, "call-reaction",
+                                                      G_CALLBACK (on_call_reaction), self);
 
   /* Fetch participants list to get display names */
   gnalk_http_client_get_participants (http_client, room_token, on_http_get_participants_response, g_object_ref (self));

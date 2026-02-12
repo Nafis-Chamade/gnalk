@@ -82,6 +82,7 @@ struct _GnalkSession
   gulong signaling_call_state_changed_handler_id;
   gulong signaling_call_ended_handler_id;
   gulong signaling_room_disinvited_handler_id;
+  gulong signaling_chat_message_handler_id;
   gulong sync_room_messages_synced_handler_id;
   gulong sync_finished_handler_id;
 };
@@ -418,6 +419,16 @@ on_signaling_room_disinvited (GnalkSignaling *signaling G_GNUC_UNUSED,
   g_signal_emit (self, signals[SIGNAL_ROOM_DISINVITED], 0, room_token);
 }
 
+/* Relay handler for HPB chat messages */
+static void
+on_signaling_chat_message (GnalkSignaling *signaling G_GNUC_UNUSED,
+                           JsonObject     *chat_data,
+                           GnalkSession   *self)
+{
+  if (self->message_controller)
+    gnalk_message_controller_handle_relayed_chat (self->message_controller, chat_data);
+}
+
 /* Relay handler for sync coordinator */
 static void
 on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
@@ -474,6 +485,9 @@ setup_controllers_and_relays (GnalkSession *self)
   self->signaling_room_disinvited_handler_id =
     g_signal_connect (self->signaling, "room-disinvited",
                       G_CALLBACK (on_signaling_room_disinvited), self);
+  self->signaling_chat_message_handler_id =
+    g_signal_connect (self->signaling, "chat-message",
+                      G_CALLBACK (on_signaling_chat_message), self);
 }
 
 /* Constructor */

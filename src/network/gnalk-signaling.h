@@ -68,6 +68,14 @@ void gnalk_signaling_send_share_screen (GnalkSignaling *self);
 /* Broadcast screen share stop to all participants */
 void gnalk_signaling_send_unshare_screen (GnalkSignaling *self);
 
+/* Broadcast hand raise/lower to all participants in the call */
+void gnalk_signaling_send_raise_hand (GnalkSignaling *self,
+                                       gboolean         raised);
+
+/* Broadcast emoji reaction to all participants in the call */
+void gnalk_signaling_send_call_reaction (GnalkSignaling *self,
+                                          const char      *emoji);
+
 /* Signals:
  * - "ready" ()
  *     Emitted when signaling is authenticated and ready
@@ -87,6 +95,12 @@ void gnalk_signaling_send_unshare_screen (GnalkSignaling *self);
  *     Emitted when a participant's call state changes
  * - "call-ended" ()
  *     Emitted when all participants leave the call
+ * - "chat-message" (JsonObject *chat_data)
+ *     Emitted when HPB relays a chat message (contains "refresh" bool and optional "comment" object)
+ * - "hand-raised" (const char *session_id, gboolean state, gint64 timestamp)
+ *     Emitted when a participant raises or lowers their hand
+ * - "call-reaction" (const char *session_id, const char *emoji)
+ *     Emitted when a participant sends an emoji reaction during a call
  * - "federation-interrupted" ()
  *     Emitted when the federation connection to the remote server is lost
  * - "federation-resumed" (gboolean session_preserved)

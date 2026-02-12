@@ -123,6 +123,12 @@ void gnalk_message_controller_search_messages (GnalkMessageController *self,
 void gnalk_message_controller_set_session_ready (GnalkMessageController *self,
                                                  gboolean                ready);
 
+/* Handle a chat message relayed via HPB WebSocket.
+ * If full comment is present, saves to DB and emits poll-response.
+ * If only refresh=true, triggers a REST fetch for new messages. */
+void gnalk_message_controller_handle_relayed_chat (GnalkMessageController *self,
+                                                    JsonObject             *chat_data);
+
 /* Cancel pending operations */
 void gnalk_message_controller_cancel (GnalkMessageController *self);
 

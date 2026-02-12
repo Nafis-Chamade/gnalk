@@ -56,6 +56,41 @@ gnalk_call_control_on_mute_video_toggled (GtkToggleButton  *button,
     gnalk_webrtc_set_video_enabled (self->webrtc, !muted);
 }
 
+/* Raise hand toggle handler */
+void
+gnalk_call_control_on_raise_hand_toggled (GtkToggleButton  *button,
+                                            GnalkCallWindow *self)
+{
+  gboolean raised = gtk_toggle_button_get_active (button);
+  self->hand_raised = raised;
+
+  if (raised)
+    gtk_button_set_icon_name (GTK_BUTTON (button), "palm-down-symbolic");
+  else
+    gtk_button_set_icon_name (GTK_BUTTON (button), "palm-up-symbolic");
+
+  if (self->signaling)
+    gnalk_signaling_send_raise_hand (self->signaling, raised);
+}
+
+/* Reaction emoji button clicked in popover */
+void
+gnalk_call_control_on_reaction_clicked (GtkButton        *button,
+                                          GnalkCallWindow *self)
+{
+  const char *emoji = g_object_get_data (G_OBJECT (button), "emoji");
+  if (!emoji)
+    return;
+
+  if (self->signaling)
+    gnalk_signaling_send_call_reaction (self->signaling, emoji);
+
+  /* Close the popover */
+  GtkWidget *popover = g_object_get_data (G_OBJECT (button), "popover");
+  if (popover)
+    gtk_popover_popdown (GTK_POPOVER (popover));
+}
+
 /* Switch camera button handler */
 void
 gnalk_call_control_on_switch_camera_clicked (GtkButton        *button G_GNUC_UNUSED,
