@@ -96,5 +96,10 @@
       <summary>Background tab message retention</summary>
       <description>How many viewports worth of messages to keep in backgrounded room tabs. Higher values keep more messages but use more memory.</description>
     </key>
+    <key name="preferred-language" type="s">
+      <default>''</default>
+      <summary>Preferred UI language</summary>
+      <description>Override system language. Empty = system locale.</description>
+    </key>
   </schema>
 </schemalist>

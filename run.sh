@@ -11,6 +11,7 @@ glib-compile-schemas "$BUILD_DIR/schemas/"
 
 # Set environment variables
 export GSETTINGS_SCHEMA_DIR="$BUILD_DIR/schemas"
+export GNALK_LOCALE_DIR="$BUILD_DIR/po"
 export G_MESSAGES_DEBUG=gnalk
 #export GST_DEBUG=rtpvp8depay:5,vp8dec:4
 

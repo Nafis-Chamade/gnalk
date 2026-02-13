@@ -49,6 +49,12 @@
                             <property name="subtitle" translatable="yes">Pattern behind messages</property>
                           </object>
                         </child>
+                        <child>
+                          <object class="AdwComboRow" id="language_row">
+                            <property name="title" translatable="yes">Language</property>
+                            <property name="subtitle" translatable="yes">Application restart required</property>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <!-- Video Section -->

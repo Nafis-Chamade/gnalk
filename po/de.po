@@ -1,0 +1,1542 @@
+# German translation for the gnalk package.
+# Copyright (C) 2026 THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the gnalk package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: gnalk\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-02-13 01:39+0100\n"
+"PO-Revision-Date: 2026-02-13 12:00+0100\n"
+"Last-Translator: \n"
+"Language-Team: German\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: data/net.skilpa.gnalk.desktop.in:3 data/net.skilpa.gnalk.metainfo.xml.in:6
+#: ui/gnalk-window.ui:10 ui/gnalk-window.ui:61
+msgid "Gnalk"
+msgstr "Gnalk"
+
+#: data/net.skilpa.gnalk.desktop.in:4 data/net.skilpa.gnalk.metainfo.xml.in:7
+msgid "Nextcloud Talk Client"
+msgstr "Nextcloud Talk Client"
+
+#: data/net.skilpa.gnalk.desktop.in:10
+msgid "nextcloud;talk;chat;messenger;"
+msgstr "nextcloud;talk;chat;nachricht;unterhaltung;kommunikation;"
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:9
+msgid ""
+"Gnalk is a native GTK4 client for Nextcloud Talk, allowing you to chat and "
+"make audio/video calls with your Nextcloud contacts."
+msgstr ""
+"Gnalk ist ein nativer GTK4-Client für Nextcloud Talk, mit dem Sie chatten "
+"und Audio-/Videoanrufe mit Ihren Nextcloud-Kontakten führen können."
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:13
+msgid "Features:"
+msgstr "Funktionen:"
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:15
+msgid "View and search conversations"
+msgstr "Unterhaltungen anzeigen und durchsuchen"
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:16
+msgid "Send and receive messages"
+msgstr "Nachrichten senden und empfangen"
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:17
+msgid "Audio and video calls"
+msgstr "Audio- und Videoanrufe"
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:18
+msgid "Adaptive layout for desktop and mobile"
+msgstr "Anpassungsfähiges Layout für Desktop und Mobilgeräte"
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:23
+msgid "Main window showing conversations"
+msgstr "Hauptfenster mit Unterhaltungen"
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:33
+msgid "Initial release"
+msgstr "Erstveröffentlichung"
+
+#: data/net.skilpa.gnalk.metainfo.xml.in:46
+msgid "Skilpa"
+msgstr "Skilpa"
+
+#: data/net.skilpa.gnalk.gschema.xml:6
+msgid "Window width"
+msgstr "Fensterbreite"
+
+#: data/net.skilpa.gnalk.gschema.xml:7
+msgid "The width of the main window"
+msgstr "Die Breite des Hauptfensters"
+
+#: data/net.skilpa.gnalk.gschema.xml:11
+msgid "Window height"
+msgstr "Fensterhöhe"
+
+#: data/net.skilpa.gnalk.gschema.xml:12
+msgid "The height of the main window"
+msgstr "Die Höhe des Hauptfensters"
+
+#: data/net.skilpa.gnalk.gschema.xml:16
+msgid "Window maximized"
+msgstr "Fenster maximiert"
+
+#: data/net.skilpa.gnalk.gschema.xml:17
+msgid "Whether the window is maximized"
+msgstr "Ob das Fenster maximiert ist"
+
+#: data/net.skilpa.gnalk.gschema.xml:21
+msgid "Last server URL"
+msgstr "Letzte Server-URL"
+
+#: data/net.skilpa.gnalk.gschema.xml:22
+msgid "The URL of the last connected Nextcloud server"
+msgstr "Die URL des zuletzt verbundenen Nextcloud-Servers"
+
+#: data/net.skilpa.gnalk.gschema.xml:26
+msgid "Last user ID"
+msgstr "Letzte Benutzer-ID"
+
+#: data/net.skilpa.gnalk.gschema.xml:27
+msgid "The user ID used for the last connection"
+msgstr "Die für die letzte Verbindung verwendete Benutzer-ID"
+
+#: data/net.skilpa.gnalk.gschema.xml:31
+msgid "Last display name"
+msgstr "Letzter Anzeigename"
+
+#: data/net.skilpa.gnalk.gschema.xml:32
+msgid "The display name of the last logged in user"
+msgstr "Der Anzeigename des zuletzt angemeldeten Benutzers"
+
+#: data/net.skilpa.gnalk.gschema.xml:36
+msgid "Auto-login enabled"
+msgstr "Automatische Anmeldung aktiviert"
+
+#: data/net.skilpa.gnalk.gschema.xml:37
+msgid "Whether to automatically log in on startup using saved credentials"
+msgstr ""
+"Ob beim Start automatisch mit gespeicherten Zugangsdaten angemeldet werden "
+"soll"
+
+#: data/net.skilpa.gnalk.gschema.xml:41
+msgid "Last opened room"
+msgstr "Zuletzt geöffneter Raum"
+
+#: data/net.skilpa.gnalk.gschema.xml:42
+msgid "The token of the last opened conversation room"
+msgstr "Das Token des zuletzt geöffneten Unterhaltungsraums"
+
+#: data/net.skilpa.gnalk.gschema.xml:46
+msgid "Last active account"
+msgstr "Zuletzt aktives Konto"
+
+#: data/net.skilpa.gnalk.gschema.xml:47
+msgid "The ID of the last active account for multi-account support"
+msgstr "Die ID des zuletzt aktiven Kontos für die Mehrkonto-Unterstützung"
+
+#: data/net.skilpa.gnalk.gschema.xml:51
+msgid "Preferred video device"
+msgstr "Bevorzugtes Videogerät"
+
+#: data/net.skilpa.gnalk.gschema.xml:52
+msgid "The device path or name of the preferred camera"
+msgstr "Der Gerätepfad oder Name der bevorzugten Kamera"
+
+#: data/net.skilpa.gnalk.gschema.xml:56
+msgid "Preferred audio device"
+msgstr "Bevorzugtes Audiogerät"
+
+#: data/net.skilpa.gnalk.gschema.xml:57
+msgid "The device path or name of the preferred microphone"
+msgstr "Der Gerätepfad oder Name des bevorzugten Mikrofons"
+
+#: data/net.skilpa.gnalk.gschema.xml:61
+msgid "Camera quality"
+msgstr "Kameraqualität"
+
+#: data/net.skilpa.gnalk.gschema.xml:62
+msgid "Camera quality preset: 0=Low (fast), 1=Medium, 2=High (best FOV)"
+msgstr ""
+"Kameraqualitätsstufe: 0=Niedrig (schnell), 1=Mittel, 2=Hoch (bestes "
+"Sichtfeld)"
+
+#: data/net.skilpa.gnalk.gschema.xml:66
+msgid "Camera position"
+msgstr "Kameraposition"
+
+#: data/net.skilpa.gnalk.gschema.xml:67
+msgid "Default camera position: 0=Front, 1=Back, 2=Generic"
+msgstr "Standard-Kameraposition: 0=Vorne, 1=Hinten, 2=Allgemein"
+
+#: data/net.skilpa.gnalk.gschema.xml:71
+msgid "Color scheme"
+msgstr "Farbschema"
+
+#: data/net.skilpa.gnalk.gschema.xml:72
+msgid "Application color scheme: 0=Auto (follow system), 1=Light, 2=Dark"
+msgstr ""
+"Farbschema der Anwendung: 0=Automatisch (System folgen), 1=Hell, 2=Dunkel"
+
+#: data/net.skilpa.gnalk.gschema.xml:76
+msgid "Conversation background style"
+msgstr "Hintergrundstil der Unterhaltung"
+
+#: data/net.skilpa.gnalk.gschema.xml:77
+msgid ""
+"Background pattern for the message list: 0=Flat, 1=Grid, 2=Hexagons, "
+"3=Isometric, 4=Rhombus, 5=ZigZag, 6=Houndstooth, 7=Herringbone, 8=Stars, "
+"9=Triangles, 10=Waves, 11=Scales, 12=Cross, 13=Mosaic (participant avatars)"
+msgstr ""
+"Hintergrundmuster für die Nachrichtenliste: 0=Flach, 1=Raster, 2=Hexagone, "
+"3=Isometrisch, 4=Raute, 5=Zickzack, 6=Hahnentritt, 7=Fischgrät, 8=Sterne, "
+"9=Dreiecke, 10=Wellen, 11=Schuppen, 12=Kreuz, 13=Mosaik (Teilnehmer-Avatare)"
+
+#: data/net.skilpa.gnalk.gschema.xml:81
+msgid "Show participants list"
+msgstr "Teilnehmerliste anzeigen"
+
+#: data/net.skilpa.gnalk.gschema.xml:82
+msgid "Whether to show the participants list in group conversations"
+msgstr "Ob die Teilnehmerliste in Gruppenunterhaltungen angezeigt werden soll"
+
+#: data/net.skilpa.gnalk.gschema.xml:86
+msgid "Default media action"
+msgstr "Standard-Medienaktion"
+
+#: data/net.skilpa.gnalk.gschema.xml:87
+msgid ""
+"Default action for the media button: 0=Attach file, 1=Record voice, 2=Take "
+"photo/video"
+msgstr ""
+"Standardaktion für die Medientaste: 0=Datei anhängen, 1=Sprachaufnahme, "
+"2=Foto/Video aufnehmen"
+
+#: data/net.skilpa.gnalk.gschema.xml:91
+msgid "Maximum rooms to keep loaded"
+msgstr "Maximal geladene Räume"
+
+#: data/net.skilpa.gnalk.gschema.xml:92
+msgid ""
+"Maximum number of rooms to keep loaded in memory with their messages. Older "
+"rooms are evicted when this limit is exceeded."
+msgstr ""
+"Maximale Anzahl der im Speicher gehaltenen Räume mit ihren Nachrichten. "
+"Ältere Räume werden entfernt, wenn dieses Limit überschritten wird."
+
+#: data/net.skilpa.gnalk.gschema.xml:96
+msgid "Background tab message retention"
+msgstr "Nachrichtenaufbewahrung in Hintergrund-Tabs"
+
+#: data/net.skilpa.gnalk.gschema.xml:97
+msgid ""
+"How many viewports worth of messages to keep in backgrounded room tabs. "
+"Higher values keep more messages but use more memory."
+msgstr ""
+"Wie viele Bildschirmseiten an Nachrichten in Hintergrund-Tabs aufbewahrt "
+"werden sollen. Höhere Werte behalten mehr Nachrichten, verbrauchen aber mehr "
+"Speicher."
+
+#. Add mark-read button
+#: src/gnalk-notification-service.c:115 src/gnalk-notification-service.c:222
+msgid "Mark as Read"
+msgstr "Als gelesen markieren"
+
+#. Title: room name, sender name, or fallback
+#: src/gnalk-notification-service.c:157 src/gnalk-notification-service.c:203
+msgid "New message"
+msgstr "Neue Nachricht"
+
+#: src/gnalk-notification-service.c:277
+msgid "Incoming call"
+msgstr "Eingehender Anruf"
+
+#: src/gnalk-notification-service.c:278
+msgid "Active call"
+msgstr "Aktiver Anruf"
+
+#: src/ui/gnalk-window.c:137 src/ui/gnalk-window.c:265
+msgid "Connected"
+msgstr "Verbunden"
+
+#: src/ui/gnalk-window.c:265
+msgid "Reconnected"
+msgstr "Neu verbunden"
+
+#: src/ui/gnalk-window.c:297
+msgid "Connection lost"
+msgstr "Verbindung verloren"
+
+#: src/ui/gnalk-window.c:313 src/ui/gnalk-window-account-session.c:353
+msgid "Reconnecting..."
+msgstr "Verbindung wird wiederhergestellt ..."
+
+#. Just change message text to deleted
+#: src/ui/gnalk-window.c:1574
+msgid "Message deleted by you"
+msgstr "Nachricht von Ihnen gelöscht"
+
+#: src/ui/gnalk-window-login.c:160
+msgid "GNOME Online Accounts not available"
+msgstr "GNOME Online Accounts nicht verfügbar"
+
+#: src/ui/gnalk-window-login.c:172
+#, c-format
+msgid "Failed to get credentials: %s"
+msgstr "Zugangsdaten konnten nicht abgerufen werden: %s"
+
+#: src/ui/gnalk-window-login.c:265 src/ui/gnalk-connection-dialog.c:260
+msgid "Please fill in all fields"
+msgstr "Bitte füllen Sie alle Felder aus"
+
+#: src/ui/gnalk-window-login.c:357 src/ui/gnalk-connection-dialog.c:322
+msgid "Please enter a room URL"
+msgstr "Bitte geben Sie eine Raum-URL ein"
+
+#: src/ui/gnalk-window-login.c:363 src/ui/gnalk-connection-dialog.c:328
+msgid "Please enter a display name"
+msgstr "Bitte geben Sie einen Anzeigenamen ein"
+
+#: src/ui/gnalk-window-login.c:373 src/ui/gnalk-connection-dialog.c:338
+msgid "Invalid room URL. Expected format: https://server.com/call/TOKEN"
+msgstr "Ungültige Raum-URL. Erwartetes Format: https://server.com/call/TOKEN"
+
+#: src/ui/gnalk-window-room-switch.c:335
+msgid "Invitation"
+msgstr "Einladung"
+
+#: src/ui/gnalk-window-room-switch.c:351 src/ui/gnalk-window-room-switch.c:550
+#: ui/gnalk-window.ui:135 ui/gnalk-conversation-info-dialog.ui:230
+msgid "Messages"
+msgstr "Nachrichten"
+
+#: src/ui/gnalk-window-room-switch.c:683
+msgid "Federation invitation"
+msgstr "Föderationseinladung"
+
+#: src/ui/gnalk-window-room-switch.c:689
+#, c-format
+msgid "Invitation from %s"
+msgstr "Einladung von %s"
+
+#: src/ui/gnalk-window-room-switch.c:757 ui/gnalk-window.ui:233
+msgid "Federation Invitation"
+msgstr "Föderationseinladung"
+
+#: src/ui/gnalk-window-room-switch.c:762
+#, c-format
+msgid ""
+"Invited by %s (%s)\n"
+"Server: %s"
+msgstr ""
+"Eingeladen von %s (%s)\n"
+"Server: %s"
+
+#: src/ui/gnalk-window-room-switch.c:765
+#, c-format
+msgid "Invited from %s"
+msgstr "Eingeladen von %s"
+
+#: src/ui/gnalk-window-room-switch.c:855
+msgid "Invitation accepted"
+msgstr "Einladung angenommen"
+
+#: src/ui/gnalk-window-room-switch.c:907
+msgid "Invitation declined"
+msgstr "Einladung abgelehnt"
+
+#: src/ui/gnalk-window-account-session.c:354
+#: src/ui/gnalk-account-switcher.c:192
+msgid "Offline"
+msgstr "Offline"
+
+#: src/ui/gnalk-window-conversation-list.c:565
+#: src/ui/gnalk-window-conversation-list.c:575
+msgid "Open conversation"
+msgstr "Konversation öffnen"
+
+#: src/ui/gnalk-window-conversation-list.c:580
+msgid "Start new conversation"
+msgstr "Neue Konversation starten"
+
+#: src/ui/gnalk-connection-dialog.c:191 src/ui/gnalk-login-view.c:76
+msgid "Join"
+msgstr "Beitreten"
+
+#: src/ui/gnalk-connection-dialog.c:191 src/ui/gnalk-login-view.c:76
+#: ui/gnalk-connection-dialog.ui:102 ui/gnalk-login-view.ui:150
+msgid "Connect"
+msgstr "Verbinden"
+
+#: src/ui/gnalk-connection-dialog.c:193
+msgid "Or sign in with account"
+msgstr "Oder mit Konto anmelden"
+
+#: src/ui/gnalk-connection-dialog.c:193 ui/gnalk-connection-dialog.ui:129
+msgid "Or join a public room as guest"
+msgstr "Oder einem öffentlichen Raum als Gast beitreten"
+
+#: src/ui/gnalk-connection-dialog.c:372
+msgid "Invalid server response"
+msgstr "Ungültige Serverantwort"
+
+#: src/ui/gnalk-connection-dialog.c:381
+msgid "Nextcloud is not properly installed on this server"
+msgstr "Nextcloud ist auf diesem Server nicht richtig installiert"
+
+#: src/ui/gnalk-connection-dialog.c:399
+msgid "Authentication failed. Check your credentials."
+msgstr "Authentifizierung fehlgeschlagen. Überprüfen Sie Ihre Zugangsdaten."
+
+#: src/ui/gnalk-connection-dialog.c:405
+msgid "Invalid user info response"
+msgstr "Ungültige Benutzerinformationsantwort"
+
+#: src/ui/gnalk-connection-dialog.c:413 src/ui/gnalk-connection-dialog.c:660
+msgid "Invalid OCS response"
+msgstr "Ungültige OCS-Antwort"
+
+#: src/ui/gnalk-connection-dialog.c:455
+msgid "Failed to get conversations"
+msgstr "Unterhaltungen konnten nicht abgerufen werden"
+
+#: src/ui/gnalk-connection-dialog.c:646
+msgid "Could not access room. Check the URL."
+msgstr "Raum konnte nicht erreicht werden. Überprüfen Sie die URL."
+
+#: src/ui/gnalk-connection-dialog.c:652
+msgid "Invalid room response"
+msgstr "Ungültige Raumantwort"
+
+#: src/ui/gnalk-connection-dialog.c:679
+msgid "Room data not found"
+msgstr "Raumdaten nicht gefunden"
+
+#: src/ui/gnalk-connection-dialog.c:687
+msgid "This room does not allow guest access"
+msgstr "Dieser Raum erlaubt keinen Gastzugang"
+
+#: src/ui/gnalk-connection-dialog.c:716
+msgid "Failed to join room. Check the password."
+msgstr "Beitritt zum Raum fehlgeschlagen. Überprüfen Sie das Passwort."
+
+#: src/ui/gnalk-connection-dialog.c:733
+msgid "Wrong password"
+msgstr "Falsches Passwort"
+
+#: src/ui/gnalk-conversation-row.c:365
+msgid "Remove from favorites"
+msgstr "Aus Favoriten entfernen"
+
+#. Favorite button
+#: src/ui/gnalk-conversation-row.c:367 src/ui/gnalk-conversation-row.c:431
+msgid "Add to favorites"
+msgstr "Zu Favoriten hinzufügen"
+
+#. Leave button
+#: src/ui/gnalk-conversation-row.c:438
+msgid "Leave conversation"
+msgstr "Konversation verlassen"
+
+#. Delete button
+#: src/ui/gnalk-conversation-row.c:445
+msgid "Delete conversation"
+msgstr "Konversation löschen"
+
+#: src/ui/gnalk-conversation-actions.c:171
+msgid "Editing message"
+msgstr "Nachricht wird bearbeitet"
+
+#: src/ui/gnalk-message-search.c:83
+msgid "Searching..."
+msgstr "Suche läuft ..."
+
+#: src/ui/gnalk-message-search.c:148
+msgid "Yesterday"
+msgstr "Gestern"
+
+#. Load more button
+#: src/ui/gnalk-message-search.c:268
+msgid "Load more..."
+msgstr "Mehr laden ..."
+
+#: src/ui/gnalk-message-search.c:316
+msgid "No results found"
+msgstr "Keine Ergebnisse gefunden"
+
+#: src/ui/gnalk-login-view.c:56
+msgid "Join a public room as guest"
+msgstr "Einem öffentlichen Raum als Gast beitreten"
+
+#: src/ui/gnalk-login-view.c:61 ui/gnalk-login-view.ui:35
+msgid "Sign in to your Nextcloud Talk server"
+msgstr "Bei Ihrem Nextcloud Talk Server anmelden"
+
+#: src/ui/gnalk-login-view.c:474
+msgid "Already connected"
+msgstr "Bereits verbunden"
+
+#. No cameras - add None option
+#. Add "None" option first
+#: src/ui/gnalk-preferences-dialog.c:224 src/ui/gnalk-preferences-dialog.c:225
+#: src/ui/gnalk-preferences-dialog.c:273 src/ui/gnalk-preferences-dialog.c:274
+#: src/ui/gnalk-preferences-dialog.c:312 src/ui/gnalk-preferences-dialog.c:313
+msgid "None"
+msgstr "Keines"
+
+#: src/ui/gnalk-participant-profile-dialog.c:55
+msgctxt "participant role"
+msgid "Owner"
+msgstr "Eigentümer"
+
+#: src/ui/gnalk-participant-profile-dialog.c:56
+msgctxt "participant role"
+msgid "Moderator"
+msgstr "Moderator"
+
+#: src/ui/gnalk-participant-profile-dialog.c:57
+#: src/ui/gnalk-participant-profile-dialog.c:61
+msgctxt "participant role"
+msgid "User"
+msgstr "Benutzer"
+
+#: src/ui/gnalk-participant-profile-dialog.c:58
+#: src/ui/gnalk-participant-profile-dialog.c:59
+msgctxt "participant role"
+msgid "Guest"
+msgstr "Gast"
+
+#: src/ui/gnalk-participant-profile-dialog.c:60
+msgctxt "participant role"
+msgid "Moderator (Guest)"
+msgstr "Moderator (Gast)"
+
+#: src/ui/gnalk-participant-profile-dialog.c:74
+msgid "Profile"
+msgstr "Profil"
+
+#: src/ui/gnalk-participant-profile-dialog.c:211
+#, c-format
+msgid "Server: %s"
+msgstr "Server: %s"
+
+#: src/ui/gnalk-network-status-bar.c:49
+msgid "No network connection"
+msgstr "Keine Netzwerkverbindung"
+
+#: src/ui/gnalk-network-status-bar.c:66
+msgid "Connection error"
+msgstr "Verbindungsfehler"
+
+#: src/ui/gnalk-incoming-call-banner.c:202
+#: src/ui/gnalk-incoming-call-banner.c:206
+msgid "Unknown"
+msgstr "Unbekannt"
+
+#. Set caller info label
+#: src/ui/gnalk-incoming-call-banner.c:205
+#, c-format
+msgid "Incoming call from %s"
+msgstr "Eingehender Anruf von %s"
+
+#: src/ui/gnalk-account-switcher.c:181 ui/gnalk-user-status-menu.ui:66
+msgid "Online"
+msgstr "Online"
+
+#: src/ui/gnalk-account-switcher.c:187 src/call/gnalk-call-window.c:373
+#: src/call/gnalk-call-window.c:435 ui/gnalk-window.ui:121
+#: ui/gnalk-call-window.ui:90
+msgid "Connecting..."
+msgstr "Verbindung wird hergestellt ..."
+
+#: src/ui/gnalk-account-switcher.c:197
+msgid "Disconnected"
+msgstr "Getrennt"
+
+#: src/ui/gnalk-account-switcher.c:248
+msgid "Sign Out"
+msgstr "Abmelden"
+
+#: src/ui/gnalk-account-switcher.c:396
+msgid "Add Account"
+msgstr "Konto hinzufügen"
+
+#: src/call/gnalk-call-window.c:904 src/call/gnalk-call-window.c:1071
+#: src/call/gnalk-call-window.c:1092
+msgid "In call"
+msgstr "Im Anruf"
+
+#: src/call/gnalk-call-window.c:1279
+msgid "Failed to join call"
+msgstr "Beitritt zum Anruf fehlgeschlagen"
+
+#: src/call/gnalk-call-window.c:1285
+msgid "Waiting for peers..."
+msgstr "Warte auf Teilnehmer ..."
+
+#: src/call/gnalk-call-window.c:1330
+msgid "HTTP client not available"
+msgstr "HTTP-Client nicht verfügbar"
+
+#: src/call/gnalk-call-window.c:1337
+msgid "Not connected to signaling server"
+msgstr "Nicht mit Signalisierungsserver verbunden"
+
+#: src/call/gnalk-call-window.c:1342
+msgid "Starting call..."
+msgstr "Anruf wird gestartet ..."
+
+#: src/utils/gnalk-system-message.c:88
+msgid "You created the conversation"
+msgstr "Sie haben die Unterhaltung erstellt"
+
+#: src/utils/gnalk-system-message.c:89
+#, c-format
+msgid "%s created the conversation"
+msgstr "%s hat die Unterhaltung erstellt"
+
+#: src/utils/gnalk-system-message.c:100
+#, c-format
+msgid "You renamed the conversation from \"%s\" to \"%s\""
+msgstr "Sie haben die Unterhaltung von \"%s\" in \"%s\" umbenannt"
+
+#: src/utils/gnalk-system-message.c:102
+#, c-format
+msgid "%s renamed the conversation from \"%s\" to \"%s\""
+msgstr "%s hat die Unterhaltung von \"%s\" in \"%s\" umbenannt"
+
+#: src/utils/gnalk-system-message.c:109
+msgid "You set the description"
+msgstr "Sie haben die Beschreibung festgelegt"
+
+#: src/utils/gnalk-system-message.c:110
+#, c-format
+msgid "%s set the description"
+msgstr "%s hat die Beschreibung festgelegt"
+
+#: src/utils/gnalk-system-message.c:116
+msgid "You removed the description"
+msgstr "Sie haben die Beschreibung entfernt"
+
+#: src/utils/gnalk-system-message.c:117
+#, c-format
+msgid "%s removed the description"
+msgstr "%s hat die Beschreibung entfernt"
+
+#: src/utils/gnalk-system-message.c:125
+msgid "You started a call"
+msgstr "Sie haben einen Anruf gestartet"
+
+#: src/utils/gnalk-system-message.c:126
+#, c-format
+msgid "%s started a call"
+msgstr "%s hat einen Anruf gestartet"
+
+#: src/utils/gnalk-system-message.c:132
+msgid "You joined the call"
+msgstr "Sie sind dem Anruf beigetreten"
+
+#: src/utils/gnalk-system-message.c:133
+#, c-format
+msgid "%s joined the call"
+msgstr "%s ist dem Anruf beigetreten"
+
+#: src/utils/gnalk-system-message.c:139
+msgid "You left the call"
+msgstr "Sie haben den Anruf verlassen"
+
+#: src/utils/gnalk-system-message.c:140
+#, c-format
+msgid "%s left the call"
+msgstr "%s hat den Anruf verlassen"
+
+#: src/utils/gnalk-system-message.c:145
+msgid "You missed a call"
+msgstr "Sie haben einen Anruf verpasst"
+
+#: src/utils/gnalk-system-message.c:153
+#, c-format
+msgid "Call ended (Duration: %s)"
+msgstr "Anruf beendet (Dauer: %s)"
+
+#: src/utils/gnalk-system-message.c:154
+msgid "Call ended"
+msgstr "Anruf beendet"
+
+#: src/utils/gnalk-system-message.c:165
+msgid "You joined the conversation"
+msgstr "Sie sind der Unterhaltung beigetreten"
+
+#: src/utils/gnalk-system-message.c:166
+#, c-format
+msgid "%s joined the conversation"
+msgstr "%s ist der Unterhaltung beigetreten"
+
+#: src/utils/gnalk-system-message.c:169
+#, c-format
+msgid "You added %s"
+msgstr "Sie haben %s hinzugefügt"
+
+#: src/utils/gnalk-system-message.c:171
+#, c-format
+msgid "%s added %s"
+msgstr "%s hat %s hinzugefügt"
+
+#: src/utils/gnalk-system-message.c:172
+#, c-format
+msgid "%s added a user"
+msgstr "%s hat einen Benutzer hinzugefügt"
+
+#: src/utils/gnalk-system-message.c:181
+msgid "You left the conversation"
+msgstr "Sie haben die Unterhaltung verlassen"
+
+#: src/utils/gnalk-system-message.c:182
+#, c-format
+msgid "%s left the conversation"
+msgstr "%s hat die Unterhaltung verlassen"
+
+#: src/utils/gnalk-system-message.c:185 src/utils/gnalk-system-message.c:205
+#, c-format
+msgid "You removed %s"
+msgstr "Sie haben %s entfernt"
+
+#: src/utils/gnalk-system-message.c:187 src/utils/gnalk-system-message.c:207
+#, c-format
+msgid "%s removed %s"
+msgstr "%s hat %s entfernt"
+
+#: src/utils/gnalk-system-message.c:188
+#, c-format
+msgid "%s removed a user"
+msgstr "%s hat einen Benutzer entfernt"
+
+#: src/utils/gnalk-system-message.c:195
+#, c-format
+msgid "You invited %s"
+msgstr "Sie haben %s eingeladen"
+
+#: src/utils/gnalk-system-message.c:197
+#, c-format
+msgid "%s invited %s"
+msgstr "%s hat %s eingeladen"
+
+#: src/utils/gnalk-system-message.c:198
+#, c-format
+msgid "%s invited a federated user"
+msgstr "%s hat einen föderierten Benutzer eingeladen"
+
+#: src/utils/gnalk-system-message.c:208
+#, c-format
+msgid "%s removed a federated user"
+msgstr "%s hat einen föderierten Benutzer entfernt"
+
+#: src/utils/gnalk-system-message.c:215
+#, c-format
+msgid "You added group %s"
+msgstr "Sie haben die Gruppe %s hinzugefügt"
+
+#: src/utils/gnalk-system-message.c:216
+#, c-format
+msgid "%s added group %s"
+msgstr "%s hat die Gruppe %s hinzugefügt"
+
+#: src/utils/gnalk-system-message.c:223
+#, c-format
+msgid "You removed group %s"
+msgstr "Sie haben die Gruppe %s entfernt"
+
+#: src/utils/gnalk-system-message.c:224
+#, c-format
+msgid "%s removed group %s"
+msgstr "%s hat die Gruppe %s entfernt"
+
+#: src/utils/gnalk-system-message.c:231
+#, c-format
+msgid "You added team %s"
+msgstr "Sie haben das Team %s hinzugefügt"
+
+#: src/utils/gnalk-system-message.c:232
+#, c-format
+msgid "%s added team %s"
+msgstr "%s hat das Team %s hinzugefügt"
+
+#: src/utils/gnalk-system-message.c:239
+#, c-format
+msgid "You removed team %s"
+msgstr "Sie haben das Team %s entfernt"
+
+#: src/utils/gnalk-system-message.c:240
+#, c-format
+msgid "%s removed team %s"
+msgstr "%s hat das Team %s entfernt"
+
+#: src/utils/gnalk-system-message.c:250
+#, c-format
+msgid "You promoted %s to moderator"
+msgstr "Sie haben %s zum Moderator befördert"
+
+#: src/utils/gnalk-system-message.c:252
+#, c-format
+msgid "%s promoted %s to moderator"
+msgstr "%s hat %s zum Moderator befördert"
+
+#: src/utils/gnalk-system-message.c:253
+#, c-format
+msgid "%s promoted a user to moderator"
+msgstr "%s hat einen Benutzer zum Moderator befördert"
+
+#: src/utils/gnalk-system-message.c:261
+#, c-format
+msgid "You demoted %s from moderator"
+msgstr "Sie haben %s als Moderator abgesetzt"
+
+#: src/utils/gnalk-system-message.c:263
+#, c-format
+msgid "%s demoted %s from moderator"
+msgstr "%s hat %s als Moderator abgesetzt"
+
+#: src/utils/gnalk-system-message.c:264
+#, c-format
+msgid "%s demoted a user from moderator"
+msgstr "%s hat einen Benutzer als Moderator abgesetzt"
+
+#: src/utils/gnalk-system-message.c:272
+msgid "You locked the conversation"
+msgstr "Sie haben die Unterhaltung gesperrt"
+
+#: src/utils/gnalk-system-message.c:273
+#, c-format
+msgid "%s locked the conversation"
+msgstr "%s hat die Unterhaltung gesperrt"
+
+#: src/utils/gnalk-system-message.c:279
+msgid "You unlocked the conversation"
+msgstr "Sie haben die Unterhaltung entsperrt"
+
+#: src/utils/gnalk-system-message.c:280
+#, c-format
+msgid "%s unlocked the conversation"
+msgstr "%s hat die Unterhaltung entsperrt"
+
+#: src/utils/gnalk-system-message.c:286
+msgid "You allowed guests"
+msgstr "Sie haben Gäste zugelassen"
+
+#: src/utils/gnalk-system-message.c:287
+#, c-format
+msgid "%s allowed guests"
+msgstr "%s hat Gäste zugelassen"
+
+#: src/utils/gnalk-system-message.c:293
+msgid "You disallowed guests"
+msgstr "Sie haben Gäste ausgeschlossen"
+
+#: src/utils/gnalk-system-message.c:294
+#, c-format
+msgid "%s disallowed guests"
+msgstr "%s hat Gäste ausgeschlossen"
+
+#: src/utils/gnalk-system-message.c:300
+msgid "You set a password"
+msgstr "Sie haben ein Passwort festgelegt"
+
+#: src/utils/gnalk-system-message.c:301
+#, c-format
+msgid "%s set a password"
+msgstr "%s hat ein Passwort festgelegt"
+
+#: src/utils/gnalk-system-message.c:307
+msgid "You removed the password"
+msgstr "Sie haben das Passwort entfernt"
+
+#: src/utils/gnalk-system-message.c:308
+#, c-format
+msgid "%s removed the password"
+msgstr "%s hat das Passwort entfernt"
+
+#: src/utils/gnalk-system-message.c:314
+msgid "The conversation is now open to everyone"
+msgstr "Die Unterhaltung ist jetzt für alle offen"
+
+#: src/utils/gnalk-system-message.c:319 src/utils/gnalk-system-message.c:349
+msgid "You opened the conversation to everyone"
+msgstr "Sie haben die Unterhaltung für alle geöffnet"
+
+#: src/utils/gnalk-system-message.c:320 src/utils/gnalk-system-message.c:350
+#, c-format
+msgid "%s opened the conversation to everyone"
+msgstr "%s hat die Unterhaltung für alle geöffnet"
+
+#: src/utils/gnalk-system-message.c:326
+msgid "You restricted the conversation to moderators"
+msgstr "Sie haben die Unterhaltung auf Moderatoren beschränkt"
+
+#: src/utils/gnalk-system-message.c:327
+#, c-format
+msgid "%s restricted the conversation to moderators"
+msgstr "%s hat die Unterhaltung auf Moderatoren beschränkt"
+
+#: src/utils/gnalk-system-message.c:335
+msgid "You limited the conversation to the current participants"
+msgstr "Sie haben die Unterhaltung auf die aktuellen Teilnehmer beschränkt"
+
+#: src/utils/gnalk-system-message.c:336
+#, c-format
+msgid "%s limited the conversation to the current participants"
+msgstr "%s hat die Unterhaltung auf die aktuellen Teilnehmer beschränkt"
+
+#: src/utils/gnalk-system-message.c:342
+msgid "You opened the conversation to registered users"
+msgstr "Sie haben die Unterhaltung für registrierte Benutzer geöffnet"
+
+#: src/utils/gnalk-system-message.c:343
+#, c-format
+msgid "%s opened the conversation to registered users"
+msgstr "%s hat die Unterhaltung für registrierte Benutzer geöffnet"
+
+#: src/utils/gnalk-system-message.c:358
+msgid "You deleted a message"
+msgstr "Sie haben eine Nachricht gelöscht"
+
+#: src/utils/gnalk-system-message.c:359
+#, c-format
+msgid "%s deleted a message"
+msgstr "%s hat eine Nachricht gelöscht"
+
+#: src/utils/gnalk-system-message.c:365
+msgid "You edited a message"
+msgstr "Sie haben eine Nachricht bearbeitet"
+
+#: src/utils/gnalk-system-message.c:366
+#, c-format
+msgid "%s edited a message"
+msgstr "%s hat eine Nachricht bearbeitet"
+
+#: src/utils/gnalk-system-message.c:372
+msgid "You pinned a message"
+msgstr "Sie haben eine Nachricht angepinnt"
+
+#: src/utils/gnalk-system-message.c:373
+#, c-format
+msgid "%s pinned a message"
+msgstr "%s hat eine Nachricht angepinnt"
+
+#: src/utils/gnalk-system-message.c:379
+msgid "You unpinned a message"
+msgstr "Sie haben eine Nachricht losgelöst"
+
+#: src/utils/gnalk-system-message.c:380
+#, c-format
+msgid "%s unpinned a message"
+msgstr "%s hat eine Nachricht losgelöst"
+
+#: src/utils/gnalk-system-message.c:386
+msgid "You deleted a reaction"
+msgstr "Sie haben eine Reaktion gelöscht"
+
+#: src/utils/gnalk-system-message.c:387
+#, c-format
+msgid "%s deleted a reaction"
+msgstr "%s hat eine Reaktion gelöscht"
+
+#: src/utils/gnalk-system-message.c:393
+msgid "You cleared the history of the conversation"
+msgstr "Sie haben den Verlauf der Unterhaltung gelöscht"
+
+#: src/utils/gnalk-system-message.c:394
+#, c-format
+msgid "%s cleared the history of the conversation"
+msgstr "%s hat den Verlauf der Unterhaltung gelöscht"
+
+#: src/utils/gnalk-system-message.c:402
+msgid "You enabled message expiration"
+msgstr "Sie haben den Nachrichtenablauf aktiviert"
+
+#: src/utils/gnalk-system-message.c:403
+#, c-format
+msgid "%s enabled message expiration"
+msgstr "%s hat den Nachrichtenablauf aktiviert"
+
+#: src/utils/gnalk-system-message.c:409
+msgid "You disabled message expiration"
+msgstr "Sie haben den Nachrichtenablauf deaktiviert"
+
+#: src/utils/gnalk-system-message.c:410
+#, c-format
+msgid "%s disabled message expiration"
+msgstr "%s hat den Nachrichtenablauf deaktiviert"
+
+#: src/utils/gnalk-system-message.c:418
+msgid "You set the conversation picture"
+msgstr "Sie haben das Unterhaltungsbild festgelegt"
+
+#: src/utils/gnalk-system-message.c:419
+#, c-format
+msgid "%s set the conversation picture"
+msgstr "%s hat das Unterhaltungsbild festgelegt"
+
+#: src/utils/gnalk-system-message.c:425
+msgid "You removed the conversation picture"
+msgstr "Sie haben das Unterhaltungsbild entfernt"
+
+#: src/utils/gnalk-system-message.c:426
+#, c-format
+msgid "%s removed the conversation picture"
+msgstr "%s hat das Unterhaltungsbild entfernt"
+
+#: src/utils/gnalk-system-message.c:434
+msgid "You started the recording"
+msgstr "Sie haben die Aufnahme gestartet"
+
+#: src/utils/gnalk-system-message.c:435
+#, c-format
+msgid "%s started the recording"
+msgstr "%s hat die Aufnahme gestartet"
+
+#: src/utils/gnalk-system-message.c:441
+msgid "You stopped the recording"
+msgstr "Sie haben die Aufnahme beendet"
+
+#: src/utils/gnalk-system-message.c:442
+#, c-format
+msgid "%s stopped the recording"
+msgstr "%s hat die Aufnahme beendet"
+
+#: src/utils/gnalk-system-message.c:448
+msgid "You started the audio recording"
+msgstr "Sie haben die Audioaufnahme gestartet"
+
+#: src/utils/gnalk-system-message.c:449
+#, c-format
+msgid "%s started the audio recording"
+msgstr "%s hat die Audioaufnahme gestartet"
+
+#: src/utils/gnalk-system-message.c:455
+msgid "You stopped the audio recording"
+msgstr "Sie haben die Audioaufnahme beendet"
+
+#: src/utils/gnalk-system-message.c:456
+#, c-format
+msgid "%s stopped the audio recording"
+msgstr "%s hat die Audioaufnahme beendet"
+
+#: src/utils/gnalk-system-message.c:460
+msgid "The recording failed"
+msgstr "Die Aufnahme ist fehlgeschlagen"
+
+#: src/utils/gnalk-system-message.c:467
+msgid "You started breakout rooms"
+msgstr "Sie haben Gruppenräume gestartet"
+
+#: src/utils/gnalk-system-message.c:468
+#, c-format
+msgid "%s started breakout rooms"
+msgstr "%s hat Gruppenräume gestartet"
+
+#: src/utils/gnalk-system-message.c:474
+msgid "You stopped breakout rooms"
+msgstr "Sie haben Gruppenräume beendet"
+
+#: src/utils/gnalk-system-message.c:475
+#, c-format
+msgid "%s stopped breakout rooms"
+msgstr "%s hat Gruppenräume beendet"
+
+#: src/utils/gnalk-system-message.c:484
+#, c-format
+msgid "Someone voted on the poll \"%s\""
+msgstr "Jemand hat bei der Umfrage \"%s\" abgestimmt"
+
+#: src/utils/gnalk-system-message.c:485
+msgid "Someone voted on a poll"
+msgstr "Jemand hat bei einer Umfrage abgestimmt"
+
+#: src/utils/gnalk-system-message.c:494
+#, c-format
+msgid "You ended the poll \"%s\""
+msgstr "Sie haben die Umfrage \"%s\" beendet"
+
+#: src/utils/gnalk-system-message.c:495
+msgid "You ended a poll"
+msgstr "Sie haben eine Umfrage beendet"
+
+#: src/utils/gnalk-system-message.c:498
+#, c-format
+msgid "%s ended the poll \"%s\""
+msgstr "%s hat die Umfrage \"%s\" beendet"
+
+#: src/utils/gnalk-system-message.c:499
+#, c-format
+msgid "%s ended a poll"
+msgstr "%s hat eine Umfrage beendet"
+
+#: src/utils/gnalk-system-message.c:507
+msgid ""
+"You set up Matterbridge to synchronize this conversation with other chats"
+msgstr ""
+"Sie haben Matterbridge eingerichtet, um diese Unterhaltung mit anderen Chats "
+"zu synchronisieren"
+
+#: src/utils/gnalk-system-message.c:508
+#, c-format
+msgid ""
+"%s set up Matterbridge to synchronize this conversation with other chats"
+msgstr ""
+"%s hat Matterbridge eingerichtet, um diese Unterhaltung mit anderen Chats zu "
+"synchronisieren"
+
+#: src/utils/gnalk-system-message.c:514
+msgid "You updated the Matterbridge configuration"
+msgstr "Sie haben die Matterbridge-Konfiguration aktualisiert"
+
+#: src/utils/gnalk-system-message.c:515
+#, c-format
+msgid "%s updated the Matterbridge configuration"
+msgstr "%s hat die Matterbridge-Konfiguration aktualisiert"
+
+#: src/utils/gnalk-system-message.c:521
+msgid "You removed the Matterbridge configuration"
+msgstr "Sie haben die Matterbridge-Konfiguration entfernt"
+
+#: src/utils/gnalk-system-message.c:522
+#, c-format
+msgid "%s removed the Matterbridge configuration"
+msgstr "%s hat die Matterbridge-Konfiguration entfernt"
+
+#: src/utils/gnalk-system-message.c:528
+msgid "You started Matterbridge"
+msgstr "Sie haben Matterbridge gestartet"
+
+#: src/utils/gnalk-system-message.c:529
+#, c-format
+msgid "%s started Matterbridge"
+msgstr "%s hat Matterbridge gestartet"
+
+#: src/utils/gnalk-system-message.c:535
+msgid "You stopped Matterbridge"
+msgstr "Sie haben Matterbridge beendet"
+
+#: src/utils/gnalk-system-message.c:536
+#, c-format
+msgid "%s stopped Matterbridge"
+msgstr "%s hat Matterbridge beendet"
+
+#: ui/gnalk-window.ui:62
+msgid "Connect to Nextcloud Talk"
+msgstr "Mit Nextcloud Talk verbinden"
+
+#: ui/gnalk-window.ui:97
+msgid "Conversations"
+msgstr "Unterhaltungen"
+
+#: ui/gnalk-window.ui:150
+msgid "Start Video Call"
+msgstr "Videoanruf starten"
+
+#: ui/gnalk-window.ui:157
+msgid "Start Audio Call"
+msgstr "Audioanruf starten"
+
+#: ui/gnalk-window.ui:163
+msgid "Search Messages"
+msgstr "Nachrichten durchsuchen"
+
+#: ui/gnalk-window.ui:170
+msgid "Show/Hide Participants"
+msgstr "Teilnehmer ein-/ausblenden"
+
+#: ui/gnalk-window.ui:234
+msgid "You have been invited to join this conversation"
+msgstr "Sie wurden eingeladen, dieser Unterhaltung beizutreten"
+
+#: ui/gnalk-window.ui:256
+msgid "Decline"
+msgstr "Ablehnen"
+
+#: ui/gnalk-window.ui:264
+msgid "Accept"
+msgstr "Annehmen"
+
+#: ui/gnalk-window.ui:300 ui/gnalk-preferences-dialog.ui:6
+msgid "Preferences"
+msgstr "Einstellungen"
+
+#: ui/gnalk-window.ui:306
+msgid "About Gnalk"
+msgstr "Über Gnalk"
+
+#: ui/gnalk-connection-dialog.ui:6
+msgid "Connect to Nextcloud"
+msgstr "Mit Nextcloud verbinden"
+
+#: ui/gnalk-connection-dialog.ui:16 ui/gnalk-login-view.ui:142
+#: ui/gnalk-new-conversation-dialog.ui:16
+msgid "Cancel"
+msgstr "Abbrechen"
+
+#: ui/gnalk-connection-dialog.ui:45
+msgid "Connect to your Nextcloud Talk server"
+msgstr "Mit Ihrem Nextcloud Talk Server verbinden"
+
+#: ui/gnalk-connection-dialog.ui:58 ui/gnalk-login-view.ui:99
+msgid "Server URL"
+msgstr "Server-URL"
+
+#: ui/gnalk-connection-dialog.ui:64 ui/gnalk-login-view.ui:104
+msgid "User ID"
+msgstr "Benutzer-ID"
+
+#: ui/gnalk-connection-dialog.ui:70 ui/gnalk-login-view.ui:109
+msgid "Password"
+msgstr "Passwort"
+
+#: ui/gnalk-connection-dialog.ui:82 ui/gnalk-login-view.ui:120
+msgid "Room URL"
+msgstr "Raum-URL"
+
+#: ui/gnalk-connection-dialog.ui:88 ui/gnalk-login-view.ui:125
+msgid "Display Name"
+msgstr "Anzeigename"
+
+#: ui/gnalk-connection-dialog.ui:94 ui/gnalk-login-view.ui:130
+msgid "Room Password (optional)"
+msgstr "Raum-Passwort (optional)"
+
+#: ui/gnalk-login-view.ui:54
+msgid "Account"
+msgstr "Konto"
+
+#: ui/gnalk-login-view.ui:63
+msgid "Guest"
+msgstr "Gast"
+
+#: ui/gnalk-login-view.ui:76
+msgid "GNOME Online Accounts"
+msgstr "GNOME Online Accounts"
+
+#: ui/gnalk-login-view.ui:77
+msgid "Select a configured Nextcloud account"
+msgstr "Ein konfiguriertes Nextcloud-Konto auswählen"
+
+#: ui/gnalk-login-view.ui:85
+msgid "Or sign in with different credentials"
+msgstr "Oder mit anderen Zugangsdaten anmelden"
+
+#: ui/gnalk-preferences-dialog.ui:39
+msgid "Appearance"
+msgstr "Erscheinungsbild"
+
+#: ui/gnalk-preferences-dialog.ui:42
+msgid "Style"
+msgstr "Stil"
+
+#: ui/gnalk-preferences-dialog.ui:43
+msgid "Choose light or dark appearance"
+msgstr "Helles oder dunkles Erscheinungsbild wählen"
+
+#: ui/gnalk-preferences-dialog.ui:48
+msgid "Conversation background"
+msgstr "Unterhaltungshintergrund"
+
+#: ui/gnalk-preferences-dialog.ui:49
+msgid "Pattern behind messages"
+msgstr "Muster hinter Nachrichten"
+
+#: ui/gnalk-preferences-dialog.ui:57
+msgid "Video"
+msgstr "Video"
+
+#: ui/gnalk-preferences-dialog.ui:60
+msgid "Camera"
+msgstr "Kamera"
+
+#: ui/gnalk-preferences-dialog.ui:61
+msgid "Select video input device"
+msgstr "Videoeingabegerät auswählen"
+
+#: ui/gnalk-preferences-dialog.ui:66
+msgid "Quality"
+msgstr "Qualität"
+
+#: ui/gnalk-preferences-dialog.ui:67
+msgid "Higher quality uses more CPU"
+msgstr "Höhere Qualität benötigt mehr CPU"
+
+#: ui/gnalk-preferences-dialog.ui:83
+msgid "No camera selected"
+msgstr "Keine Kamera ausgewählt"
+
+#: ui/gnalk-preferences-dialog.ui:102
+msgid "Audio"
+msgstr "Audio"
+
+#: ui/gnalk-preferences-dialog.ui:105
+msgid "Microphone"
+msgstr "Mikrofon"
+
+#: ui/gnalk-preferences-dialog.ui:106
+msgid "Select audio input device"
+msgstr "Audioeingabegerät auswählen"
+
+#: ui/gnalk-preferences-dialog.ui:116
+msgid "Input Level"
+msgstr "Eingangspegel"
+
+#: ui/gnalk-call-window.ui:6
+msgid "Call"
+msgstr "Anruf"
+
+#: ui/gnalk-call-window.ui:229
+msgid "Toggle Layout"
+msgstr "Layout wechseln"
+
+#: ui/gnalk-call-window.ui:239
+msgid "Switch Camera"
+msgstr "Kamera wechseln"
+
+#: ui/gnalk-call-window.ui:249
+msgid "Mute Audio"
+msgstr "Audio stummschalten"
+
+#: ui/gnalk-call-window.ui:259
+msgid "Disable Video"
+msgstr "Video deaktivieren"
+
+#: ui/gnalk-call-window.ui:269
+msgid "Share Screen"
+msgstr "Bildschirm teilen"
+
+#: ui/gnalk-call-window.ui:279
+msgid "Raise Hand"
+msgstr "Hand heben"
+
+#: ui/gnalk-call-window.ui:289
+msgid "Reactions"
+msgstr "Reaktionen"
+
+#: ui/gnalk-call-window.ui:299
+msgid "Hang Up"
+msgstr "Auflegen"
+
+#: ui/gnalk-conversation-info-dialog.ui:6
+msgid "Conversation Info"
+msgstr "Unterhaltungsinfo"
+
+#: ui/gnalk-conversation-info-dialog.ui:15
+msgid "Info"
+msgstr "Info"
+
+#: ui/gnalk-conversation-info-dialog.ui:24
+#: ui/gnalk-conversation-info-dialog.ui:152
+msgid "Settings"
+msgstr "Einstellungen"
+
+#: ui/gnalk-conversation-info-dialog.ui:91
+msgid "Participants"
+msgstr "Teilnehmer"
+
+#: ui/gnalk-conversation-info-dialog.ui:112
+msgid "Shared Media"
+msgstr "Geteilte Medien"
+
+#: ui/gnalk-conversation-info-dialog.ui:128
+msgid "No shared media"
+msgstr "Keine geteilten Medien"
+
+#: ui/gnalk-conversation-info-dialog.ui:160
+msgid "Save"
+msgstr "Speichern"
+
+#: ui/gnalk-conversation-info-dialog.ui:185
+msgid "Conversation"
+msgstr "Unterhaltung"
+
+#: ui/gnalk-conversation-info-dialog.ui:189
+#: ui/gnalk-new-conversation-dialog.ui:75
+msgid "Name"
+msgstr "Name"
+
+#: ui/gnalk-conversation-info-dialog.ui:194
+msgid "Description"
+msgstr "Beschreibung"
+
+#: ui/gnalk-conversation-info-dialog.ui:199
+msgid "Avatar"
+msgstr "Avatar"
+
+#: ui/gnalk-conversation-info-dialog.ui:216
+msgid "Change"
+msgstr "Ändern"
+
+#: ui/gnalk-conversation-info-dialog.ui:227
+msgid "Notifications"
+msgstr "Benachrichtigungen"
+
+#: ui/gnalk-conversation-info-dialog.ui:234
+msgid "All messages"
+msgstr "Alle Nachrichten"
+
+#: ui/gnalk-conversation-info-dialog.ui:235
+msgid "Mentions only"
+msgstr "Nur Erwähnungen"
+
+#: ui/gnalk-conversation-info-dialog.ui:236
+msgid "Off"
+msgstr "Aus"
+
+#: ui/gnalk-conversation-info-dialog.ui:244
+msgid "Call notifications"
+msgstr "Anrufbenachrichtigungen"
+
+#: ui/gnalk-conversation-sidebar.ui:16
+msgid "Search conversations..."
+msgstr "Unterhaltungen suchen ..."
+
+#: ui/gnalk-conversation-sidebar.ui:23
+msgid "New Conversation"
+msgstr "Neue Unterhaltung"
+
+#: ui/gnalk-conversation-sidebar.ui:37
+msgid "Users"
+msgstr "Benutzer"
+
+#: ui/gnalk-new-conversation-dialog.ui:6
+msgid "New Group Conversation"
+msgstr "Neue Gruppenunterhaltung"
+
+#: ui/gnalk-new-conversation-dialog.ui:21
+msgid "Create"
+msgstr "Erstellen"
+
+#: ui/gnalk-new-conversation-dialog.ui:47
+msgid "Group Info"
+msgstr "Gruppeninfo"
+
+#: ui/gnalk-new-conversation-dialog.ui:58
+msgid "Select group avatar"
+msgstr "Gruppenavatar auswählen"
+
+#: ui/gnalk-new-conversation-dialog.ui:80
+msgid "Description (optional)"
+msgstr "Beschreibung (optional)"
+
+#: ui/gnalk-new-conversation-dialog.ui:88
+msgid "Add Members"
+msgstr "Mitglieder hinzufügen"
+
+#: ui/gnalk-new-conversation-dialog.ui:91
+msgid "Search users..."
+msgstr "Benutzer suchen ..."
+
+#: ui/gnalk-new-conversation-dialog.ui:129
+msgid "Members"
+msgstr "Mitglieder"
+
+#: ui/gnalk-incoming-call-banner.ui:58
+msgid "Refuse Call"
+msgstr "Anruf ablehnen"
+
+#: ui/gnalk-incoming-call-banner.ui:68
+msgid "Accept Audio Call"
+msgstr "Audioanruf annehmen"
+
+#: ui/gnalk-incoming-call-banner.ui:78
+msgid "Accept Video Call"
+msgstr "Videoanruf annehmen"
+
+#: ui/gnalk-message-row.ui:146
+msgid "edited"
+msgstr "bearbeitet"
+
+#: ui/gnalk-message-view.ui:16
+msgid "No Conversation Selected"
+msgstr "Keine Unterhaltung ausgewählt"
+
+#: ui/gnalk-message-view.ui:17
+msgid "Select a conversation from the sidebar to start chatting"
+msgstr "Wählen Sie eine Unterhaltung in der Seitenleiste, um zu chatten"
+
+#: ui/gnalk-message-view.ui:53
+msgid "Scroll to bottom"
+msgstr "Nach unten scrollen"
+
+#: ui/gnalk-message-input.ui:7 ui/gnalk-message-input.ui:32
+msgid "Attach File"
+msgstr "Datei anhängen"
+
+#: ui/gnalk-message-input.ui:12
+msgid "Record Voice"
+msgstr "Sprachaufnahme"
+
+#: ui/gnalk-message-input.ui:17
+msgid "Take Photo/Video"
+msgstr "Foto/Video aufnehmen"
+
+#: ui/gnalk-message-input.ui:39
+msgid "Insert Emoji"
+msgstr "Emoji einfügen"
+
+#: ui/gnalk-message-input.ui:48
+msgid "Type a message..."
+msgstr "Nachricht eingeben ..."
+
+#: ui/gnalk-message-input.ui:54
+msgid "Send"
+msgstr "Senden"
+
+#: ui/gnalk-network-status-bar.ui:9
+msgid "No internet connection"
+msgstr "Keine Internetverbindung"
+
+#: ui/gnalk-user-status-menu.ui:94
+msgid "Away"
+msgstr "Abwesend"
+
+#: ui/gnalk-user-status-menu.ui:122
+msgid "Do Not Disturb"
+msgstr "Bitte nicht stören"
+
+#: ui/gnalk-user-status-menu.ui:153
+msgid "Appear Offline"
+msgstr "Als offline anzeigen"
+
+#: ui/gnalk-image-gallery.ui:87
+msgid "Close"
+msgstr "Schließen"
+
+#: ui/gnalk-image-gallery.ui:104
+msgid "Previous image"
+msgstr "Vorheriges Bild"
+
+#: ui/gnalk-image-gallery.ui:119
+msgid "Next image"
+msgstr "Nächstes Bild"
+
+#: data/net.skilpa.gnalk.gschema.xml:100
+msgid "Preferred UI language"
+msgstr "Bevorzugte Sprache der Benutzeroberfläche"
+
+#: data/net.skilpa.gnalk.gschema.xml:101
+msgid "Override system language. Empty = system locale."
+msgstr "Systemsprache überschreiben. Leer = Systemsprache."
+
+#: ui/gnalk-preferences-dialog.ui:54
+msgid "Language"
+msgstr "Sprache"
+
+#: ui/gnalk-preferences-dialog.ui:55
+msgid "Application restart required"
+msgstr "Neustart der Anwendung erforderlich"
+
+#: src/ui/gnalk-preferences-dialog.c:803
+msgctxt "language"
+msgid "System default"
+msgstr "Systemstandard"
