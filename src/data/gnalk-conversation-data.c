@@ -1,70 +1,7 @@
 #include "gnalk-conversation-data.h"
 #include "gnalk-session.h"
 #include "gnalk-account.h"
-
-/* Helper to replace message parameters like {user1}, {actor}, etc. */
-static char *
-replace_message_parameters (const char *message,
-                            JsonObject *params,
-                            const char *actor_name)
-{
-  if (!message || !*message)
-    return g_strdup ("");
-
-  char *result = g_strdup (message);
-
-  /* Replace {actor} with actor name */
-  if (actor_name && *actor_name)
-    {
-      GRegex *actor_regex = g_regex_new ("\\{actor\\}", 0, 0, NULL);
-      if (actor_regex)
-        {
-          char *tmp = result;
-          result = g_regex_replace_literal (actor_regex, tmp, -1, 0, actor_name, 0, NULL);
-          if (!result)
-            result = g_strdup (tmp);
-          g_free (tmp);
-          g_regex_unref (actor_regex);
-        }
-    }
-
-  /* Replace parameters like {user1}, {file}, etc. */
-  if (params)
-    {
-      JsonObjectIter iter;
-      const char *param_key;
-      JsonNode *param_node;
-
-      json_object_iter_init (&iter, params);
-      while (json_object_iter_next (&iter, &param_key, &param_node))
-        {
-          if (JSON_NODE_HOLDS_OBJECT (param_node))
-            {
-              JsonObject *param_obj = json_node_get_object (param_node);
-              const char *name = json_object_get_string_member_with_default (param_obj, "name", NULL);
-
-              if (name)
-                {
-                  char *pattern = g_strdup_printf ("\\{%s\\}", param_key);
-                  GRegex *param_regex = g_regex_new (pattern, 0, 0, NULL);
-                  g_free (pattern);
-
-                  if (param_regex)
-                    {
-                      char *tmp = result;
-                      result = g_regex_replace_literal (param_regex, tmp, -1, 0, name, 0, NULL);
-                      if (!result)
-                        result = g_strdup (tmp);
-                      g_free (tmp);
-                      g_regex_unref (param_regex);
-                    }
-                }
-            }
-        }
-    }
-
-  return result;
-}
+#include "gnalk-message-utils.h"
 
 /* Extract only the first line from text (up to first newline) */
 static char *
@@ -90,7 +27,7 @@ build_subtitle (const char *message_text,
                 gboolean    is_own_message)
 {
   /* First, replace all message parameters */
-  g_autofree char *processed = replace_message_parameters (message_text, message_params, actor_name);
+  g_autofree char *processed = gnalk_message_utils_replace_parameters (message_text, message_params, actor_name);
 
   /* Extract only the first line */
   g_autofree char *first_line = extract_first_line (processed);
@@ -140,11 +77,14 @@ struct _GnalkConversationData
   gboolean is_section_header;
 
   /* Raw last message data (for computing subtitle at display time) */
-  char   *last_message_text;       /* Raw message text */
-  char   *last_message_actor_id;   /* Author's actor ID */
-  char   *last_message_actor_name; /* Author's display name */
-  char   *last_message_type;       /* Message type (system, comment, etc.) */
-  char   *last_message_params_json; /* JSON string of message parameters */
+  char       *last_message_text;       /* Raw message text */
+  char       *last_message_actor_id;   /* Author's actor ID */
+  char       *last_message_actor_name; /* Author's display name */
+  char       *last_message_type;       /* Interned via g_intern_string — do not g_free */
+  JsonObject *last_message_params;     /* Parsed message parameters (owned, parsed once) */
+
+  /* Cached subtitle (computed on first get_subtitle(), invalidated on update) */
+  char   *cached_subtitle;
 
   /* Federation invitation ID (>0 means this is a pending invitation) */
   gint64  invitation_id;
@@ -178,8 +118,9 @@ gnalk_conversation_data_finalize (GObject *object)
   g_free (self->last_message_text);
   g_free (self->last_message_actor_id);
   g_free (self->last_message_actor_name);
-  g_free (self->last_message_type);
-  g_free (self->last_message_params_json);
+  /* last_message_type is interned — do not free */
+  g_clear_pointer (&self->last_message_params, json_object_unref);
+  g_free (self->cached_subtitle);
 
   G_OBJECT_CLASS (gnalk_conversation_data_parent_class)->finalize (object);
 }
@@ -203,25 +144,6 @@ gnalk_conversation_data_init (GnalkConversationData *self)
 {
 }
 
-/* Helper to serialize message parameters to JSON string */
-static char *
-serialize_message_params (JsonObject *params)
-{
-  if (!params)
-    return NULL;
-
-  JsonNode *node = json_node_new (JSON_NODE_OBJECT);
-  json_node_set_object (node, params);
-
-  JsonGenerator *gen = json_generator_new ();
-  json_generator_set_root (gen, node);
-  char *json_str = json_generator_to_data (gen, NULL);
-
-  g_object_unref (gen);
-  json_node_free (node);
-
-  return json_str;
-}
 
 /* Helper to deserialize message parameters from JSON string */
 static JsonObject *
@@ -261,12 +183,18 @@ gnalk_conversation_data_new_from_json_with_user (JsonObject *room_data,
   self->token = g_strdup (json_object_get_string_member_with_default (room_data, "token", ""));
   self->title = g_strdup (json_object_get_string_member_with_default (room_data, "displayName", ""));
   self->name = g_strdup (json_object_get_string_member_with_default (room_data, "name", ""));
-  self->description = g_strdup (json_object_get_string_member_with_default (room_data, "description", ""));
   self->room_type = (gint) json_object_get_int_member_with_default (room_data, "type", 0);
-  self->user_status = g_strdup (json_object_get_string_member_with_default (room_data, "status", ""));
   self->actor_id = g_strdup (json_object_get_string_member_with_default (room_data, "actorId", ""));
-  self->remote_server = g_strdup (json_object_get_string_member_with_default (room_data, "remoteServer", ""));
-  self->remote_token = g_strdup (json_object_get_string_member_with_default (room_data, "remoteToken", ""));
+
+  /* Often-empty fields: store NULL instead of "" to avoid allocations */
+  const char *desc = json_object_get_string_member_with_default (room_data, "description", "");
+  self->description = (desc && *desc) ? g_strdup (desc) : NULL;
+  const char *status = json_object_get_string_member_with_default (room_data, "status", "");
+  self->user_status = (status && *status) ? g_strdup (status) : NULL;
+  const char *remote_srv = json_object_get_string_member_with_default (room_data, "remoteServer", "");
+  self->remote_server = (remote_srv && *remote_srv) ? g_strdup (remote_srv) : NULL;
+  const char *remote_tok = json_object_get_string_member_with_default (room_data, "remoteToken", "");
+  self->remote_token = (remote_tok && *remote_tok) ? g_strdup (remote_tok) : NULL;
 
   /* Extract raw last message data */
   JsonNode *last_message_node = json_object_get_member (room_data, "lastMessage");
@@ -276,28 +204,27 @@ gnalk_conversation_data_new_from_json_with_user (JsonObject *room_data,
 
       self->last_message_id = json_object_get_int_member_with_default (last_message, "id", 0);
       self->last_message_text = g_strdup (json_object_get_string_member_with_default (last_message, "message", ""));
-      self->last_message_type = g_strdup (json_object_get_string_member_with_default (last_message, "messageType", "comment"));
+      self->last_message_type = (char *) g_intern_string (json_object_get_string_member_with_default (last_message, "messageType", "comment"));
       self->last_message_actor_name = g_strdup (json_object_get_string_member_with_default (last_message, "actorDisplayName", ""));
       self->last_message_actor_id = g_strdup (json_object_get_string_member_with_default (last_message, "actorId", ""));
 
-      /* Serialize message parameters to JSON string for storage */
-      JsonObject *params = NULL;
+      /* Store parsed message parameters directly (no serialize/deserialize round-trip) */
+      self->last_message_params = NULL;
       if (json_object_has_member (last_message, "messageParameters"))
         {
           JsonNode *params_node = json_object_get_member (last_message, "messageParameters");
           if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
-            params = json_node_get_object (params_node);
+            self->last_message_params = json_object_ref (json_node_get_object (params_node));
         }
-      self->last_message_params_json = serialize_message_params (params);
     }
   else
     {
       self->last_message_id = 0;
-      self->last_message_text = g_strdup ("");
-      self->last_message_type = g_strdup ("");
-      self->last_message_actor_name = g_strdup ("");
-      self->last_message_actor_id = g_strdup ("");
-      self->last_message_params_json = NULL;
+      self->last_message_text = NULL;
+      self->last_message_type = NULL;
+      self->last_message_actor_name = NULL;
+      self->last_message_actor_id = NULL;
+      self->last_message_params = NULL;
     }
 
   self->last_activity = json_object_get_int_member_with_default (room_data, "lastActivity", 0);
@@ -335,66 +262,42 @@ gnalk_conversation_data_new_from_json (JsonObject    *room_data,
 }
 
 GnalkConversationData *
-gnalk_conversation_data_new_from_db (const char    *token,
-                                       const char    *title,
-                                       const char    *name,
-                                       const char    *user_status,
-                                       const char    *actor_id,
-                                       gint           room_type,
-                                       gint64         last_activity,
-                                       gint64         last_common_read_message,
-                                       gint           unread_messages,
-                                       gboolean       is_favorite,
-                                       gboolean       can_leave,
-                                       gboolean       can_delete,
-                                       const char    *description,
-                                       gint           participant_type,
-                                       gint           notification_level,
-                                       gint           call_notification_level,
-                                       gint64         last_read_message,
-                                       gint64         last_message_id,
-                                       const char    *last_message_text,
-                                       const char    *last_message_actor_id,
-                                       const char    *last_message_actor_name,
-                                       const char    *last_message_type,
-                                       const char    *last_message_params_json,
-                                       const char    *remote_server,
-                                       const char    *remote_token,
-                                       gint64         invitation_id,
-                                       GnalkSession *session)
+gnalk_conversation_data_new_from_db (const GnalkConversationDataInit *init)
 {
   GnalkConversationData *self = g_object_new (GNALK_TYPE_CONVERSATION_DATA, NULL);
 
-  self->session = session;  /* Weak reference, not owned */
-  self->token = g_strdup (token ? token : "");
-  self->title = g_strdup (title ? title : "");
-  self->name = g_strdup (name ? name : "");
-  self->user_status = g_strdup (user_status ? user_status : "");
-  self->actor_id = g_strdup (actor_id ? actor_id : "");
-  self->room_type = room_type;
-  self->last_activity = last_activity;
-  self->last_common_read_message = last_common_read_message;
-  self->unread_messages = unread_messages;
-  self->is_favorite = is_favorite;
-  self->can_leave = can_leave;
-  self->can_delete = can_delete;
-  self->description = g_strdup (description ? description : "");
-  self->participant_type = participant_type;
-  self->notification_level = notification_level;
-  self->call_notification_level = call_notification_level;
-  self->last_read_message = last_read_message;
-  self->remote_server = g_strdup (remote_server ? remote_server : "");
-  self->remote_token = g_strdup (remote_token ? remote_token : "");
-  self->invitation_id = invitation_id;
+  self->session = init->session;  /* Weak reference, not owned */
+  self->token = g_strdup (init->token ? init->token : "");
+  self->title = g_strdup (init->title ? init->title : "");
+  self->name = g_strdup (init->name ? init->name : "");
+  self->actor_id = g_strdup (init->actor_id ? init->actor_id : "");
+  self->room_type = init->room_type;
+  self->last_activity = init->last_activity;
+  self->last_common_read_message = init->last_common_read_message;
+  self->unread_messages = init->unread_messages;
+  self->is_favorite = init->is_favorite;
+  self->can_leave = init->can_leave;
+  self->can_delete = init->can_delete;
+  self->participant_type = init->participant_type;
+  self->notification_level = init->notification_level;
+  self->call_notification_level = init->call_notification_level;
+  self->last_read_message = init->last_read_message;
+  self->invitation_id = init->invitation_id;
   self->is_section_header = FALSE;
 
+  /* Often-empty fields: store NULL to avoid allocations */
+  self->description = (init->description && *init->description) ? g_strdup (init->description) : NULL;
+  self->user_status = (init->user_status && *init->user_status) ? g_strdup (init->user_status) : NULL;
+  self->remote_server = (init->remote_server && *init->remote_server) ? g_strdup (init->remote_server) : NULL;
+  self->remote_token = (init->remote_token && *init->remote_token) ? g_strdup (init->remote_token) : NULL;
+
   /* Raw last message data */
-  self->last_message_id = last_message_id;
-  self->last_message_text = g_strdup (last_message_text ? last_message_text : "");
-  self->last_message_actor_id = g_strdup (last_message_actor_id ? last_message_actor_id : "");
-  self->last_message_actor_name = g_strdup (last_message_actor_name ? last_message_actor_name : "");
-  self->last_message_type = g_strdup (last_message_type ? last_message_type : "");
-  self->last_message_params_json = g_strdup (last_message_params_json);
+  self->last_message_id = init->last_message_id;
+  self->last_message_text = (init->last_message_text && *init->last_message_text) ? g_strdup (init->last_message_text) : NULL;
+  self->last_message_actor_id = (init->last_message_actor_id && *init->last_message_actor_id) ? g_strdup (init->last_message_actor_id) : NULL;
+  self->last_message_actor_name = (init->last_message_actor_name && *init->last_message_actor_name) ? g_strdup (init->last_message_actor_name) : NULL;
+  self->last_message_type = (init->last_message_type && *init->last_message_type) ? (char *) g_intern_string (init->last_message_type) : NULL;
+  self->last_message_params = deserialize_message_params (init->last_message_params_json);
 
   return self;
 }
@@ -455,12 +358,17 @@ gnalk_conversation_data_get_name (GnalkConversationData *self)
 }
 
 /* Compute and return the formatted subtitle.
- * The caller must free the returned string. */
+ * The caller must free the returned string.
+ * The result is cached and only recomputed when the underlying data changes. */
 char *
 gnalk_conversation_data_get_subtitle (GnalkConversationData *self,
                                         const char             *current_user_id)
 {
   g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), NULL);
+
+  /* Return cached result if available */
+  if (self->cached_subtitle)
+    return g_strdup (self->cached_subtitle);
 
   /* If no last message text, return empty */
   if (!self->last_message_text || !*self->last_message_text)
@@ -470,21 +378,15 @@ gnalk_conversation_data_get_subtitle (GnalkConversationData *self,
   gboolean is_own_message = (current_user_id && self->last_message_actor_id &&
                              g_strcmp0 (current_user_id, self->last_message_actor_id) == 0);
 
-  /* Deserialize message parameters */
-  JsonObject *params = deserialize_message_params (self->last_message_params_json);
+  /* Build and cache the subtitle (params already parsed — no deserialization needed) */
+  self->cached_subtitle = build_subtitle (self->last_message_text,
+                                          self->last_message_type,
+                                          self->last_message_actor_name,
+                                          self->last_message_params,
+                                          self->room_type,
+                                          is_own_message);
 
-  /* Build the subtitle using the common helper */
-  char *subtitle = build_subtitle (self->last_message_text,
-                                   self->last_message_type,
-                                   self->last_message_actor_name,
-                                   params,
-                                   self->room_type,
-                                   is_own_message);
-
-  if (params)
-    json_object_unref (params);
-
-  return subtitle;
+  return g_strdup (self->cached_subtitle);
 }
 
 const char *
@@ -666,6 +568,9 @@ gnalk_conversation_data_update_from_json (GnalkConversationData *self,
   g_return_if_fail (GNALK_IS_CONVERSATION_DATA (self));
   g_return_if_fail (room_data != NULL);
 
+  /* Invalidate cached subtitle */
+  g_clear_pointer (&self->cached_subtitle, g_free);
+
   /* Update mutable fields */
   g_free (self->title);
   self->title = g_strdup (json_object_get_string_member_with_default (room_data, "displayName", ""));
@@ -681,8 +586,8 @@ gnalk_conversation_data_update_from_json (GnalkConversationData *self,
       g_free (self->last_message_text);
       self->last_message_text = g_strdup (json_object_get_string_member_with_default (last_message, "message", ""));
 
-      g_free (self->last_message_type);
-      self->last_message_type = g_strdup (json_object_get_string_member_with_default (last_message, "messageType", "comment"));
+      /* Interned — no g_free needed */
+      self->last_message_type = (char *) g_intern_string (json_object_get_string_member_with_default (last_message, "messageType", "comment"));
 
       g_free (self->last_message_actor_name);
       self->last_message_actor_name = g_strdup (json_object_get_string_member_with_default (last_message, "actorDisplayName", ""));
@@ -690,39 +595,39 @@ gnalk_conversation_data_update_from_json (GnalkConversationData *self,
       g_free (self->last_message_actor_id);
       self->last_message_actor_id = g_strdup (json_object_get_string_member_with_default (last_message, "actorId", ""));
 
-      /* Serialize message parameters */
-      JsonObject *params = NULL;
+      /* Store parsed message parameters directly */
+      g_clear_pointer (&self->last_message_params, json_object_unref);
       if (json_object_has_member (last_message, "messageParameters"))
         {
           JsonNode *params_node = json_object_get_member (last_message, "messageParameters");
           if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
-            params = json_node_get_object (params_node);
+            self->last_message_params = json_object_ref (json_node_get_object (params_node));
         }
-      g_free (self->last_message_params_json);
-      self->last_message_params_json = serialize_message_params (params);
     }
   else
     {
       self->last_message_id = 0;
       g_free (self->last_message_text);
-      self->last_message_text = g_strdup ("");
-      g_free (self->last_message_type);
-      self->last_message_type = g_strdup ("");
+      self->last_message_text = NULL;
+      /* Interned — no g_free needed */
+      self->last_message_type = NULL;
       g_free (self->last_message_actor_name);
-      self->last_message_actor_name = g_strdup ("");
+      self->last_message_actor_name = NULL;
       g_free (self->last_message_actor_id);
-      self->last_message_actor_id = g_strdup ("");
-      g_free (self->last_message_params_json);
-      self->last_message_params_json = NULL;
+      self->last_message_actor_id = NULL;
+      g_clear_pointer (&self->last_message_params, json_object_unref);
     }
 
+  const char *us = json_object_get_string_member_with_default (room_data, "status", "");
   g_free (self->user_status);
-  self->user_status = g_strdup (json_object_get_string_member_with_default (room_data, "status", ""));
+  self->user_status = (us && *us) ? g_strdup (us) : NULL;
 
+  const char *rs = json_object_get_string_member_with_default (room_data, "remoteServer", "");
   g_free (self->remote_server);
-  self->remote_server = g_strdup (json_object_get_string_member_with_default (room_data, "remoteServer", ""));
+  self->remote_server = (rs && *rs) ? g_strdup (rs) : NULL;
+  const char *rt = json_object_get_string_member_with_default (room_data, "remoteToken", "");
   g_free (self->remote_token);
-  self->remote_token = g_strdup (json_object_get_string_member_with_default (room_data, "remoteToken", ""));
+  self->remote_token = (rt && *rt) ? g_strdup (rt) : NULL;
 
   self->last_activity = json_object_get_int_member_with_default (room_data, "lastActivity", 0);
   self->last_common_read_message = json_object_get_int_member_with_default (room_data, "lastCommonReadMessage", 0);
@@ -749,23 +654,26 @@ gnalk_conversation_data_update_last_message (GnalkConversationData *self,
 {
   g_return_if_fail (GNALK_IS_CONVERSATION_DATA (self));
 
+  /* Invalidate cached subtitle */
+  g_clear_pointer (&self->cached_subtitle, g_free);
+
   self->last_activity = last_activity;
   self->last_message_id = last_message_id;
 
   g_free (self->last_message_text);
-  self->last_message_text = g_strdup (last_message_text ? last_message_text : "");
+  self->last_message_text = (last_message_text && *last_message_text) ? g_strdup (last_message_text) : NULL;
 
   g_free (self->last_message_actor_id);
-  self->last_message_actor_id = g_strdup (last_message_actor_id ? last_message_actor_id : "");
+  self->last_message_actor_id = (last_message_actor_id && *last_message_actor_id) ? g_strdup (last_message_actor_id) : NULL;
 
   g_free (self->last_message_actor_name);
-  self->last_message_actor_name = g_strdup (last_message_actor_name ? last_message_actor_name : "");
+  self->last_message_actor_name = (last_message_actor_name && *last_message_actor_name) ? g_strdup (last_message_actor_name) : NULL;
 
-  g_free (self->last_message_type);
-  self->last_message_type = g_strdup (last_message_type ? last_message_type : "");
+  /* Interned — no g_free needed */
+  self->last_message_type = (last_message_type && *last_message_type) ? (char *) g_intern_string (last_message_type) : NULL;
 
-  g_free (self->last_message_params_json);
-  self->last_message_params_json = g_strdup (last_message_params_json);
+  g_clear_pointer (&self->last_message_params, json_object_unref);
+  self->last_message_params = deserialize_message_params (last_message_params_json);
 
   /* Emit signal so row can update */
   g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
@@ -781,6 +689,9 @@ gnalk_conversation_data_update_from_data (GnalkConversationData *self,
   /* Don't update from self */
   if (self == source)
     return FALSE;
+
+  /* Invalidate cached subtitle (will be recomputed on next get_subtitle) */
+  g_clear_pointer (&self->cached_subtitle, g_free);
 
   gboolean changed = FALSE;
 
@@ -842,17 +753,18 @@ gnalk_conversation_data_update_from_data (GnalkConversationData *self,
       changed = TRUE;
     }
 
-  if (g_strcmp0 (self->last_message_type, source->last_message_type) != 0)
+  if (self->last_message_type != source->last_message_type)
     {
-      g_free (self->last_message_type);
-      self->last_message_type = g_strdup (source->last_message_type);
+      /* Interned — pointer comparison suffices, no g_free needed */
+      self->last_message_type = source->last_message_type;
       changed = TRUE;
     }
 
-  if (g_strcmp0 (self->last_message_params_json, source->last_message_params_json) != 0)
+  if (self->last_message_params != source->last_message_params)
     {
-      g_free (self->last_message_params_json);
-      self->last_message_params_json = g_strdup (source->last_message_params_json);
+      g_clear_pointer (&self->last_message_params, json_object_unref);
+      self->last_message_params = source->last_message_params
+        ? json_object_ref (source->last_message_params) : NULL;
       changed = TRUE;
     }
 
@@ -988,11 +900,11 @@ gnalk_conversation_data_get_last_message_type (GnalkConversationData *self)
   return self->last_message_type;
 }
 
-const char *
+char *
 gnalk_conversation_data_get_last_message_params_json (GnalkConversationData *self)
 {
   g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), NULL);
-  return self->last_message_params_json;
+  return gnalk_message_utils_serialize_json_object (self->last_message_params);
 }
 
 gint64

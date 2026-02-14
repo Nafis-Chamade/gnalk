@@ -1230,10 +1230,15 @@ on_participants_response (GnalkHttpClient *client G_GNUC_UNUSED,
       gtk_list_box_append (GTK_LIST_BOX (self->participants_listbox), row);
 
       /* Load avatar for users */
-      if (self->avatar_cache && g_strcmp0 (actor_type, "users") == 0 && actor_id && *actor_id)
+      if (self->avatar_cache && actor_id && *actor_id)
         {
-          gnalk_avatar_cache_get_user_avatar (self->avatar_cache, actor_id, 32,
-                                                on_participant_avatar_loaded, avatar_image);
+          if (g_strcmp0 (actor_type, "federated_users") == 0)
+            gnalk_avatar_cache_get_federated_user_avatar (self->avatar_cache,
+                gnalk_conversation_data_get_token (self->conversation), actor_id, 64,
+                on_participant_avatar_loaded, avatar_image);
+          else if (g_strcmp0 (actor_type, "users") == 0)
+            gnalk_avatar_cache_get_user_avatar (self->avatar_cache, actor_id, 32,
+                                                  on_participant_avatar_loaded, avatar_image);
         }
     }
 }
@@ -1395,7 +1400,8 @@ on_participant_row_activated (GtkListBox    *listbox G_GNUC_UNUSED,
   GnalkParticipantProfileDialog *dialog = gnalk_participant_profile_dialog_new ();
   gnalk_participant_profile_dialog_set_participant (dialog, actor_id, actor_type, display_name,
                                                      participant_type, status, status_icon,
-                                                     status_message, self->avatar_cache);
+                                                     status_message, self->avatar_cache,
+                                                     gnalk_conversation_data_get_token (self->conversation));
   adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (self));
 }
 

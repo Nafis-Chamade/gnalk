@@ -16,7 +16,8 @@ void gnalk_participants_list_set_participants (GnalkParticipantsList *self,
                                                  GnalkAvatarCache      *cache,
                                                  const char             *my_user_id,
                                                  gint                    my_participant_type,
-                                                 gint                    room_type);
+                                                 gint                    room_type,
+                                                 const char             *room_token);
 
 void gnalk_participants_list_set_online (GnalkParticipantsList *self,
                                            gboolean                is_online);

@@ -33,7 +33,8 @@ void gnalk_message_row_set_data (GnalkMessageRow  *self,
 /* Set row data from GnalkMessageData object (for list factory pattern) */
 void gnalk_message_row_set_from_data (GnalkMessageRow  *self,
                                         GnalkMessageData *data,
-                                        GnalkAvatarCache *avatar_cache);
+                                        GnalkAvatarCache *avatar_cache,
+                                        const char        *room_token);
 
 /* Reset row to initial state (for unbind in list factory) */
 void gnalk_message_row_reset (GnalkMessageRow *self);

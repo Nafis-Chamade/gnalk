@@ -8,44 +8,48 @@
 #pragma once
 
 #include "gnalk-window.h"
-#include "gnalk-login-view.h"
-#include "gnalk-conversation-sidebar.h"
-#include "gnalk-conversation-row.h"
-#include "gnalk-message-view.h"
-#include "gnalk-message-input.h"
-#include "gnalk-conversation-header.h"
-#include "gnalk-conversation-actions.h"
-#include "gnalk-user-status-menu.h"
-#include "gnalk-typing-indicator.h"
-#include "gnalk-incoming-call-banner.h"
-#include "gnalk-participants-list.h"
-#include "gnalk-network-status-bar.h"
-#include "gnalk-image-gallery.h"
-#include "gnalk-media-capture-dialog.h"
-#include "gnalk-http-client.h"
-#include "gnalk-avatar-cache.h"
-#include "gnalk-signaling.h"
-#include "gnalk-webrtc.h"
-#include "gnalk-push-client.h"
-#include "gnalk-sync-manager.h"
-#include "gnalk-message-controller.h"
-#include "gnalk-conversation-controller.h"
-#include "gnalk-participant-controller.h"
-#include "gnalk-session-manager.h"
-#include "gnalk-session.h"
-#include "gnalk-account-switcher.h"
-#include "gnalk-call-window.h"
-#include "gnalk-message-row.h"
-#include "gnalk-room-tab-manager.h"
 #include "gnalk-room-state.h"
-#include "gnalk-data-repository.h"
-#include "gnalk-sync-coordinator.h"
-#include "gnalk-room-controller.h"
-#include "gnalk-message-processor.h"
-#include "gnalk-message-search.h"
-#include "gnalk-conversation-info-dialog.h"
-#include "gnalk-participant-profile-dialog.h"
 #include <json-glib/json-glib.h>
+
+/* Forward declarations — each gnalk-window-*.c includes the full headers it needs */
+typedef struct _GnalkLoginView GnalkLoginView;
+typedef struct _GnalkConversationSidebar GnalkConversationSidebar;
+typedef struct _GnalkConversationRow GnalkConversationRow;
+typedef struct _GnalkMessageView GnalkMessageView;
+typedef struct _GnalkMessageInput GnalkMessageInput;
+typedef struct _GnalkConversationHeader GnalkConversationHeader;
+typedef struct _GnalkConversationActions GnalkConversationActions;
+typedef struct _GnalkUserStatusMenu GnalkUserStatusMenu;
+typedef struct _GnalkTypingIndicator GnalkTypingIndicator;
+typedef struct _GnalkIncomingCallBanner GnalkIncomingCallBanner;
+typedef struct _GnalkParticipantsList GnalkParticipantsList;
+typedef struct _GnalkNetworkStatusBar GnalkNetworkStatusBar;
+typedef struct _GnalkImageGallery GnalkImageGallery;
+typedef struct _GnalkMediaCaptureDialog GnalkMediaCaptureDialog;
+typedef struct _GnalkHttpClient GnalkHttpClient;
+typedef struct _GnalkAvatarCache GnalkAvatarCache;
+typedef struct _GnalkSignaling GnalkSignaling;
+typedef struct _GnalkWebrtc GnalkWebrtc;
+typedef struct _GnalkPushClient GnalkPushClient;
+typedef struct _GnalkSyncManager GnalkSyncManager;
+typedef struct _GnalkMessageController GnalkMessageController;
+typedef struct _GnalkConversationController GnalkConversationController;
+typedef struct _GnalkParticipantController GnalkParticipantController;
+typedef struct _GnalkSessionManager GnalkSessionManager;
+typedef struct _GnalkSession GnalkSession;
+typedef struct _GnalkAccountSwitcher GnalkAccountSwitcher;
+typedef struct _GnalkCallWindow GnalkCallWindow;
+typedef struct _GnalkMessageRow GnalkMessageRow;
+typedef struct _GnalkRoomTabManager GnalkRoomTabManager;
+typedef struct _GnalkRoomState GnalkRoomState;
+typedef struct _GnalkDataRepository GnalkDataRepository;
+typedef struct _GnalkSyncCoordinator GnalkSyncCoordinator;
+typedef struct _GnalkRoomController GnalkRoomController;
+typedef struct _GnalkMessageProcessor GnalkMessageProcessor;
+typedef struct _GnalkMessageSearch GnalkMessageSearch;
+typedef struct _GnalkConversationInfoDialog GnalkConversationInfoDialog;
+typedef struct _GnalkParticipantProfileDialog GnalkParticipantProfileDialog;
+typedef struct _GnalkConversationData GnalkConversationData;
 
 G_BEGIN_DECLS
 
@@ -132,6 +136,8 @@ struct _GnalkWindow
   GnalkAccountSwitcher  *account_switcher; /* Account switching UI */
 
   GListStore        *conversations_store;
+  GtkSortListModel  *conversations_sort_model;  /* Sorted view of conversations_store */
+  GtkCustomSorter   *conversations_sorter;      /* Sorter for conversations_sort_model */
   GListStore        *messages_store;
   GtkNoSelection    *messages_selection;  /* Keep reference to update model */
 
@@ -139,10 +145,14 @@ struct _GnalkWindow
   GnalkRoomTabManager *tab_manager;  /* Manages per-room message stores */
   GnalkRoomState *current_room;     /* Points to active tab's state (NULL if no room open) */
 
-  GnalkMessageDisplayMode message_display_mode;  /* Bubbles (narrow) or aligned (wide) */
+  int message_display_mode;  /* GnalkMessageDisplayMode: 0=bubbles, 1=aligned */
   char   *user_name;
   guint   typing_send_timer_id;  /* Timer for throttling typing messages */
   gboolean has_active_room;
+
+  /* Cached capabilities (set once at session switch, avoid per-bind app query) */
+  gint64 cached_edit_timeout;
+  gint64 cached_delete_timeout;
 
   /* Connection state */
   gboolean was_offline;              /* Was previously offline (for toast) */

@@ -167,6 +167,13 @@ void gnalk_http_client_get_user_avatar (GnalkHttpClient        *self,
                                           GnalkHttpBytesCallback  callback,
                                           gpointer                 user_data);
 
+void gnalk_http_client_get_federated_user_avatar (GnalkHttpClient        *self,
+                                                     const char              *room_token,
+                                                     const char              *cloud_id,
+                                                     int                      size,
+                                                     GnalkHttpBytesCallback  callback,
+                                                     gpointer                 user_data);
+
 void gnalk_http_client_get_file_preview (GnalkHttpClient        *self,
                                            const char              *file_id,
                                            int                      width,

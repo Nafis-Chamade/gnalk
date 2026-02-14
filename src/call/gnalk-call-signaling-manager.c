@@ -479,7 +479,8 @@ gnalk_call_signaling_on_tile_subscriber_signal (GnalkWebrtc *webrtc G_GNUC_UNUSE
     }
 
   /* Get the subscriber SID from the tile */
-  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, cb_data->session_id);
+  CallParticipantRecord *record = g_hash_table_lookup (self->participants, cb_data->session_id);
+  GnalkParticipantTile *tile = record ? record->tile : NULL;
   const char *subscriber_sid = tile ? gnalk_participant_tile_get_subscriber_sid (tile) : NULL;
 
   gnalk_call_signaling_send_to_peer_for_subscription (self, cb_data->session_id, subscriber_sid, type, data);
@@ -507,8 +508,9 @@ gnalk_call_signaling_on_screen_subscriber_signal (GnalkWebrtc *webrtc,
       return;
     }
 
-  /* Get the subscriber SID from screen_sids */
-  const char *subscriber_sid = g_hash_table_lookup (self->screen_sids, cb_data->session_id);
+  /* Get the subscriber SID from participant record */
+  CallParticipantRecord *screen_record = g_hash_table_lookup (self->participants, cb_data->session_id);
+  const char *subscriber_sid = screen_record ? screen_record->screen_subscriber_sid : NULL;
 
   g_message ("Screen subscriber signal: type=%s to session=%.30s..., sid=%s",
              type, cb_data->session_id, subscriber_sid ? subscriber_sid : "NULL");
@@ -607,10 +609,11 @@ gnalk_call_signaling_on_publisher_connection_state (GnalkWebrtc *webrtc,
             {
               const char *peer_id = g_ptr_array_index (self->peer_session_ids, i);
               /* Only request if we don't already have a tile for this peer */
-              if (!g_hash_table_contains (self->participant_tiles, peer_id))
+              CallParticipantRecord *peer_record = g_hash_table_lookup (self->participants, peer_id);
+              if (!peer_record || !peer_record->tile)
                 {
-                  const char *display_name = g_hash_table_lookup (self->peer_display_names, peer_id);
-                  const char *user_id = g_hash_table_lookup (self->peer_user_ids, peer_id);
+                  const char *display_name = peer_record ? peer_record->display_name : NULL;
+                  const char *user_id = peer_record ? peer_record->user_id : NULL;
                   gnalk_call_participant_add_tile (self, peer_id, display_name, user_id);
                   gnalk_call_signaling_request_offer_from_peer (self, peer_id);
                 }

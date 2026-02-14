@@ -6,10 +6,20 @@
 
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
+#include "gnalk-session.h"
+#include "gnalk-session-manager.h"
 #include "gnalk-account-manager.h"
 #include "gnalk-keyring.h"
 #include "gnalk-database.h"
 #include "gnalk-data-repository.h"
+#include "gnalk-room-tab-manager.h"
+#include "gnalk-login-view.h"
+#include "gnalk-message-controller.h"
+#include "gnalk-message-view.h"
+#include "gnalk-account-switcher.h"
+#include "gnalk-avatar-cache.h"
+#include "gnalk-user-status-menu.h"
+#include "gnalk-network-status-bar.h"
 #include "gnalk-goa.h"
 #include <glib/gi18n.h>
 
@@ -499,7 +509,8 @@ gnalk_window_show_offline_main_view (GnalkWindow *self)
             self->current_room = &tab->state;
           }
           self->has_active_room = TRUE;
-          gnalk_message_controller_set_room (self->message_controller, last_room);
+          if (self->message_controller)
+            gnalk_message_controller_set_room (self->message_controller, last_room);
 
           g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
 

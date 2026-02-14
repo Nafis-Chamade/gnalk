@@ -13,7 +13,12 @@
 #include "gnalk-window-private.h"
 #include "gnalk-conversation-info-dialog.h"
 #include "gnalk-video-player-dialog.h"
+#include "gnalk-image-gallery.h"
 #include "gnalk-message-data.h"
+#include "gnalk-message-row.h"
+#include "gnalk-message-controller.h"
+#include "gnalk-conversation-actions.h"
+#include "gnalk-media-capture-dialog.h"
 #include <glib/gi18n.h>
 
 /* ============ File Attachment Functions ============ */
@@ -506,11 +511,8 @@ on_image_gallery_image_cached (GnalkImageGallery *gallery G_GNUC_UNUSED,
 
               if (msg_file_id && g_strcmp0 (msg_file_id, file_id) == 0)
                 {
-                  /* Force re-bind by remove/insert so cache state is updated */
-                  g_object_ref (msg);
-                  g_list_store_remove (self->messages_store, i);
-                  g_list_store_insert (self->messages_store, i, msg);
-                  g_object_unref (msg);
+                  /* Update file cache state — UI update via notify::file-cached */
+                  gnalk_message_data_set_file_cached (msg, TRUE);
                   g_object_unref (msg);
                   break;
                 }

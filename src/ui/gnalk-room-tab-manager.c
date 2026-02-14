@@ -202,7 +202,7 @@ trim_tab_messages (GnalkRoomTab *tab,
       GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (tab->state.messages_store), i);
       if (msg)
         {
-          gnalk_message_row_set_from_data (measure_row, msg, NULL);
+          gnalk_message_row_set_from_data (measure_row, msg, NULL, NULL);
           above_height += measure_message_height (measure_row, viewport_width);
           keep_start = i;
           g_object_unref (msg);
@@ -215,7 +215,7 @@ trim_tab_messages (GnalkRoomTab *tab,
       GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (tab->state.messages_store), i);
       if (msg)
         {
-          gnalk_message_row_set_from_data (measure_row, msg, NULL);
+          gnalk_message_row_set_from_data (measure_row, msg, NULL, NULL);
           below_height += measure_message_height (measure_row, viewport_width);
           keep_end = i;
           g_object_unref (msg);

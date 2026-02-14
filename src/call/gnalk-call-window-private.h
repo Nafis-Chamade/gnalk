@@ -25,6 +25,17 @@
 
 G_BEGIN_DECLS
 
+/* Consolidated per-participant record (replaces 7 separate hash tables) */
+typedef struct {
+  char                  *display_name;         /* owned */
+  char                  *user_id;              /* owned */
+  GnalkParticipantTile  *tile;                 /* owned (ref-sunk) */
+  gboolean               hand_raised;
+  GnalkParticipantTile  *screen_tile;          /* owned (ref-sunk) */
+  GnalkWebrtc           *screen_subscriber;    /* owned */
+  char                  *screen_subscriber_sid; /* owned */
+} CallParticipantRecord;
+
 typedef enum {
   GNALK_LAYOUT_GRID,
   GNALK_LAYOUT_SPEAKER_FOCUS
@@ -64,7 +75,7 @@ struct _GnalkCallWindow
   GtkWidget *connecting_spinner;
 
   /* Multi-participant support */
-  GHashTable *participant_tiles;      /* session_id -> GnalkParticipantTile* */
+  GHashTable *participants;           /* session_id -> CallParticipantRecord* */
   GnalkParticipantTile *local_tile;  /* Our own tile */
   GnalkLayoutMode layout_mode;
   char *active_speaker_id;
@@ -95,8 +106,6 @@ struct _GnalkCallWindow
   char *session_id;
   char *signaling_session_id;
   GPtrArray *peer_session_ids;
-  GHashTable *peer_display_names;   /* session_id -> display_name */
-  GHashTable *peer_user_ids;        /* session_id -> user_id (for avatar loading) */
   GHashTable *user_display_names;   /* userId -> display_name (from HTTP API) */
 
   gboolean room_joined;
@@ -129,7 +138,6 @@ struct _GnalkCallWindow
   gboolean             is_federated; /* TRUE for federated calls (use /call/{token}/federation) */
 
   /* Hand raise state */
-  GHashTable          *raised_hands;      /* session_id -> GINT_TO_POINTER(1) */
   gboolean             hand_raised;       /* Our own hand state */
 
   /* Reaction animation */
@@ -139,10 +147,8 @@ struct _GnalkCallWindow
   gulong               hand_raised_handler_id;
   gulong               call_reaction_handler_id;
 
-  /* Screen sharing - incoming */
-  GHashTable          *screen_tiles;      /* session_id -> GnalkParticipantTile* */
-  GHashTable          *screen_subscribers; /* session_id -> GnalkWebrtc* */
-  GHashTable          *screen_sids;       /* session_id -> subscriber_sid */
+  /* Screen sharing - incoming (screen_tile, screen_subscriber, screen_subscriber_sid
+   * are stored per-participant in CallParticipantRecord) */
   gulong               screen_share_handler_id; /* Handler for screen-share-changed signal */
 };
 
@@ -162,6 +168,11 @@ enum {
 
 extern GParamSpec *gnalk_call_window_properties[];
 extern guint gnalk_call_window_signals[];
+
+/* ============ Participant record helpers ============ */
+
+CallParticipantRecord *gnalk_call_ensure_participant_record (GnalkCallWindow *self,
+                                                                const char       *session_id);
 
 /* ============ Preview manager functions (gnalk-call-preview-manager.c) ============ */
 

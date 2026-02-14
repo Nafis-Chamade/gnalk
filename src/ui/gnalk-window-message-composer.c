@@ -6,7 +6,13 @@
 
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
+#include "gnalk-session.h"
+#include "gnalk-account.h"
 #include "gnalk-message-controller.h"
+#include "gnalk-message-processor.h"
+#include "gnalk-message-view.h"
+#include "gnalk-message-input.h"
+#include "gnalk-conversation-actions.h"
 #include "gnalk-sync-manager.h"
 #include <json-glib/json-glib.h>
 
@@ -63,7 +69,10 @@ add_pending_file_message (GnalkWindow         *self,
 
   /* Add to message store immediately (optimistic UI) */
   if (self->messages_store)
-    g_list_store_append (self->messages_store, pending);
+    {
+      g_list_store_append (self->messages_store, pending);
+      gnalk_message_processor_index_message (self->message_processor, pending);
+    }
 
   g_object_unref (pending);
 }
@@ -239,16 +248,11 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
           GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (self->messages_store), j);
           if (gnalk_message_data_get_id (existing) == self->current_room->edit_message_id)
             {
-              /* Update message text and set edit timestamp to current time */
+              /* Update message text and set edit timestamp to current time.
+               * UI update happens via notify (message + last-edit-ts). */
               gnalk_message_data_set_message (existing, text);
               gint64 now = g_get_real_time () / G_USEC_PER_SEC;
               gnalk_message_data_set_last_edit_timestamp (existing, now);
-
-              /* Force rebind by removing and re-inserting */
-              g_object_ref (existing);
-              g_list_store_remove (self->messages_store, j);
-              g_list_store_insert (self->messages_store, j, existing);
-              g_object_unref (existing);
               g_object_unref (existing);
 
               /* Consider "near bottom" if within last 3 messages */
@@ -334,6 +338,7 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
 
   /* Add to message store at the end */
   g_list_store_append (self->messages_store, pending_data);
+  gnalk_message_processor_index_message (self->message_processor, pending_data);
   g_object_unref (pending_data);
 
   /* Scroll to bottom to show the new message */

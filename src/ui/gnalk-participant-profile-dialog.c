@@ -159,7 +159,8 @@ gnalk_participant_profile_dialog_set_participant (GnalkParticipantProfileDialog 
                                                     const char                     *status,
                                                     const char                     *status_icon,
                                                     const char                     *status_message,
-                                                    GnalkAvatarCache              *cache)
+                                                    GnalkAvatarCache              *cache,
+                                                    const char                     *room_token)
 {
   g_return_if_fail (GNALK_IS_PARTICIPANT_PROFILE_DIALOG (self));
 
@@ -214,10 +215,19 @@ gnalk_participant_profile_dialog_set_participant (GnalkParticipantProfileDialog 
     }
 
   /* Load avatar */
-  if (cache && actor_id && *actor_id && !is_federated)
+  if (cache && actor_id && *actor_id)
     {
       ProfileAvatarData *cb_data = g_new0 (ProfileAvatarData, 1);
       g_weak_ref_init (&cb_data->avatar_ref, self->avatar_image);
-      gnalk_avatar_cache_get_user_avatar (cache, actor_id, 256, on_profile_avatar_loaded, cb_data);
+      if (is_federated && room_token)
+        gnalk_avatar_cache_get_federated_user_avatar (cache, room_token, actor_id, 512,
+                                                         on_profile_avatar_loaded, cb_data);
+      else if (!is_federated)
+        gnalk_avatar_cache_get_user_avatar (cache, actor_id, 256, on_profile_avatar_loaded, cb_data);
+      else
+        {
+          g_weak_ref_clear (&cb_data->avatar_ref);
+          g_free (cb_data);
+        }
     }
 }

@@ -15,33 +15,37 @@ GnalkConversationData *gnalk_conversation_data_new_from_json (JsonObject    *roo
                                                                   GnalkSession *session);
 GnalkConversationData *gnalk_conversation_data_new_from_json_with_user (JsonObject *room_data,
                                                                            const char *current_user_id);
-GnalkConversationData *gnalk_conversation_data_new_from_db (const char    *token,
-                                                               const char    *title,
-                                                               const char    *name,
-                                                               const char    *user_status,
-                                                               const char    *actor_id,
-                                                               gint           room_type,
-                                                               gint64         last_activity,
-                                                               gint64         last_common_read_message,
-                                                               gint           unread_messages,
-                                                               gboolean       is_favorite,
-                                                               gboolean       can_leave,
-                                                               gboolean       can_delete,
-                                                               const char    *description,
-                                                               gint           participant_type,
-                                                               gint           notification_level,
-                                                               gint           call_notification_level,
-                                                               gint64         last_read_message,
-                                                               gint64         last_message_id,
-                                                               const char    *last_message_text,
-                                                               const char    *last_message_actor_id,
-                                                               const char    *last_message_actor_name,
-                                                               const char    *last_message_type,
-                                                               const char    *last_message_params_json,
-                                                               const char    *remote_server,
-                                                               const char    *remote_token,
-                                                               gint64         invitation_id,
-                                                               GnalkSession *session);
+typedef struct {
+  const char   *token;
+  const char   *title;
+  const char   *name;
+  const char   *user_status;
+  const char   *actor_id;
+  gint          room_type;
+  gint64        last_activity;
+  gint64        last_common_read_message;
+  gint          unread_messages;
+  gboolean      is_favorite;
+  gboolean      can_leave;
+  gboolean      can_delete;
+  const char   *description;
+  gint          participant_type;
+  gint          notification_level;
+  gint          call_notification_level;
+  gint64        last_read_message;
+  gint64        last_message_id;
+  const char   *last_message_text;
+  const char   *last_message_actor_id;
+  const char   *last_message_actor_name;
+  const char   *last_message_type;
+  const char   *last_message_params_json;
+  const char   *remote_server;
+  const char   *remote_token;
+  gint64        invitation_id;
+  GnalkSession *session;
+} GnalkConversationDataInit;
+
+GnalkConversationData *gnalk_conversation_data_new_from_db (const GnalkConversationDataInit *init);
 GnalkConversationData *gnalk_conversation_data_new_section_header (const char *title, gboolean is_favorite_section);
 GnalkConversationData *gnalk_conversation_data_new_invitation_header (void);
 
@@ -80,7 +84,7 @@ const char *gnalk_conversation_data_get_last_message_text (GnalkConversationData
 const char *gnalk_conversation_data_get_last_message_actor_id (GnalkConversationData *self);
 const char *gnalk_conversation_data_get_last_message_actor_name (GnalkConversationData *self);
 const char *gnalk_conversation_data_get_last_message_type (GnalkConversationData *self);
-const char *gnalk_conversation_data_get_last_message_params_json (GnalkConversationData *self);
+char *gnalk_conversation_data_get_last_message_params_json (GnalkConversationData *self);
 
 /* Session that owns this conversation (for multi-account support) */
 GnalkSession *gnalk_conversation_data_get_session (GnalkConversationData *self);

@@ -246,22 +246,28 @@ gnalk_participant_tile_class_init (GnalkParticipantTileClass *klass)
   object_class->finalize = gnalk_participant_tile_finalize;
 
   properties[PROP_SESSION_ID] =
-    g_param_spec_string ("session-id", NULL, NULL, NULL, G_PARAM_READWRITE);
+    g_param_spec_string ("session-id", NULL, NULL, NULL,
+                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   properties[PROP_DISPLAY_NAME] =
-    g_param_spec_string ("display-name", NULL, NULL, NULL, G_PARAM_READWRITE);
+    g_param_spec_string ("display-name", NULL, NULL, NULL,
+                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   properties[PROP_IS_LOCAL] =
-    g_param_spec_boolean ("is-local", NULL, NULL, FALSE, G_PARAM_READWRITE);
+    g_param_spec_boolean ("is-local", NULL, NULL, FALSE,
+                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   properties[PROP_VIDEO_ENABLED] =
-    g_param_spec_boolean ("video-enabled", NULL, NULL, TRUE, G_PARAM_READWRITE);
+    g_param_spec_boolean ("video-enabled", NULL, NULL, TRUE,
+                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   properties[PROP_AUDIO_ENABLED] =
-    g_param_spec_boolean ("audio-enabled", NULL, NULL, TRUE, G_PARAM_READWRITE);
+    g_param_spec_boolean ("audio-enabled", NULL, NULL, TRUE,
+                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   properties[PROP_ACTIVE_SPEAKER] =
-    g_param_spec_boolean ("active-speaker", NULL, NULL, FALSE, G_PARAM_READWRITE);
+    g_param_spec_boolean ("active-speaker", NULL, NULL, FALSE,
+                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -313,6 +319,9 @@ gnalk_participant_tile_set_session_id (GnalkParticipantTile *self,
 {
   g_return_if_fail (GNALK_IS_PARTICIPANT_TILE (self));
 
+  if (g_strcmp0 (self->session_id, session_id) == 0)
+    return;
+
   g_free (self->session_id);
   self->session_id = g_strdup (session_id);
   g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SESSION_ID]);
@@ -330,6 +339,9 @@ gnalk_participant_tile_set_display_name (GnalkParticipantTile *self,
                                            const char            *display_name)
 {
   g_return_if_fail (GNALK_IS_PARTICIPANT_TILE (self));
+
+  if (g_strcmp0 (self->display_name, display_name) == 0)
+    return;
 
   g_free (self->display_name);
   self->display_name = g_strdup (display_name);

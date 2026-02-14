@@ -2345,34 +2345,15 @@ on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
   /* Create guest conversation data and add to conversations list */
   {
     const char *room_name = self->guest_room_name ? self->guest_room_name : "Guest Room";
-    GnalkConversationData *conv = gnalk_conversation_data_new_from_db (
-        self->current_room_token,  /* token */
-        room_name,                 /* title */
-        room_name,                 /* name */
-        NULL,                      /* user_status */
-        NULL,                      /* actor_id */
-        3,                         /* room_type: public */
-        0,                         /* last_activity */
-        0,                         /* last_common_read_message */
-        0,                         /* unread_messages */
-        FALSE,                     /* is_favorite */
-        FALSE,                     /* can_leave (guests can't leave, they just close) */
-        FALSE,                     /* can_delete */
-        NULL,                      /* description */
-        6,                         /* participant_type: guest */
-        0,                         /* notification_level: default */
-        0,                         /* call_notification_level: default */
-        0,                         /* last_read_message */
-        0,                         /* last_message_id */
-        NULL,                      /* last_message_text */
-        NULL,                      /* last_message_actor_id */
-        NULL,                      /* last_message_actor_name */
-        NULL,                      /* last_message_type */
-        NULL,                      /* last_message_params_json */
-        NULL,                      /* remote_server */
-        NULL,                      /* remote_token */
-        0,                         /* invitation_id */
-        self);                     /* session */
+    GnalkConversationDataInit init = {
+        .token            = self->current_room_token,
+        .title            = room_name,
+        .name             = room_name,
+        .room_type        = 3,  /* public */
+        .participant_type = 6,  /* guest */
+        .session          = self,
+    };
+    GnalkConversationData *conv = gnalk_conversation_data_new_from_db (&init);
 
     g_list_store_append (self->conversations, conv);
     g_object_unref (conv);

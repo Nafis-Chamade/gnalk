@@ -9,6 +9,24 @@
 #include "gnalk-application.h"
 #include "gnalk-conversation-data.h"
 #include "gnalk-log.h"
+#include "gnalk-room-controller.h"
+#include "gnalk-session.h"
+#include "gnalk-message-view.h"
+#include "gnalk-conversation-header.h"
+#include "gnalk-typing-indicator.h"
+#include "gnalk-participants-list.h"
+#include "gnalk-avatar-cache.h"
+#include "gnalk-room-tab-manager.h"
+#include "gnalk-message-controller.h"
+#include "gnalk-message-processor.h"
+#include "gnalk-conversation-sidebar.h"
+#include "gnalk-http-client.h"
+#include "gnalk-call-window.h"
+#include "gnalk-incoming-call-banner.h"
+#include "gnalk-signaling.h"
+#include "gnalk-conversation-actions.h"
+#include "gnalk-message-input.h"
+#include "gnalk-participant-controller.h"
 #include <glib/gi18n.h>
 
 /* ============ Scroll State Callback ============ */
@@ -449,7 +467,7 @@ gnalk_window_on_sidebar_conversation_selected (GnalkConversationSidebar *sidebar
                                                  GnalkWindow              *self)
 {
   (void) sidebar;
-  GnalkConversationData *data = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), position);
+  GnalkConversationData *data = g_list_model_get_item (G_LIST_MODEL (self->conversations_sort_model), position);
 
   if (!data)
     return;
@@ -688,26 +706,21 @@ gnalk_window_on_invitations_updated (GnalkConversationController *controller,
 
           g_autofree char *subtitle = g_strdup_printf (_("Invitation from %s"), inviter);
 
-          GnalkConversationData *conv = gnalk_conversation_data_new_from_db (
-            local_token,        /* token */
-            room_name,          /* title */
-            room_name,          /* name */
-            NULL,               /* user_status */
-            NULL,               /* actor_id */
-            2,                  /* room_type: group */
-            g_get_real_time () / G_USEC_PER_SEC, /* last_activity: now */
-            0, 0, FALSE,        /* last_common_read, unread, is_favorite */
-            FALSE, FALSE,       /* can_leave, can_delete */
-            subtitle,           /* description */
-            0, 0, 0,            /* participant_type, notification_level, call_notification_level */
-            0, 0,               /* last_read_message, last_message_id */
-            subtitle,           /* last_message_text */
-            NULL, inviter,      /* last_message_actor_id, actor_name */
-            NULL, NULL,         /* last_message_type, params_json */
-            remote_server,      /* remote_server */
-            remote_token,       /* remote_token */
-            inv_id,             /* invitation_id */
-            self->active_session);
+          GnalkConversationDataInit init = {
+            .token                   = local_token,
+            .title                   = room_name,
+            .name                    = room_name,
+            .room_type               = 2,  /* group */
+            .last_activity           = g_get_real_time () / G_USEC_PER_SEC,
+            .description             = subtitle,
+            .last_message_text       = subtitle,
+            .last_message_actor_name = inviter,
+            .remote_server           = remote_server,
+            .remote_token            = remote_token,
+            .invitation_id           = inv_id,
+            .session                 = self->active_session,
+          };
+          GnalkConversationData *conv = gnalk_conversation_data_new_from_db (&init);
 
           gnalk_data_repository_save_conversation (repo, account_id, conv);
           g_object_unref (conv);

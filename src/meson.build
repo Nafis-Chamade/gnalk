@@ -56,6 +56,8 @@ utils_sources = [
   'utils/gnalk-goa.c',
   'utils/gnalk-background-generator.c',
   'utils/gnalk-async-op.c',
+  'utils/gnalk-system-message.c',
+  'utils/gnalk-message-utils.c',
 ]
 
 ui_sources = [

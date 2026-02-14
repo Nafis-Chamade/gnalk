@@ -1,8 +1,17 @@
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
+#include "gnalk-session.h"
 #include "gnalk-database.h"
 #include "gnalk-data-repository.h"
 #include "gnalk-message-data.h"
+#include "gnalk-message-row.h"
+#include "gnalk-message-view.h"
+#include "gnalk-message-input.h"
+#include "gnalk-message-controller.h"
+#include "gnalk-conversation-controller.h"
+#include "gnalk-conversation-actions.h"
+#include "gnalk-participant-controller.h"
+#include "gnalk-participants-list.h"
 #include "gnalk-account.h"
 #include <glib/gi18n.h>
 
@@ -80,7 +89,8 @@ gnalk_window_on_participant_controller_changed (GnalkParticipantController *cont
   gnalk_participants_list_set_participants (self->participants_list, participants,
                                               self->avatar_cache,
                                               my_user_id, my_participant_type,
-                                              self->current_room->room_type);
+                                              self->current_room->room_type,
+                                              self->current_room->room_token);
 
   /* For group rooms with participants, respect user preference and sync toggle */
   if (self->current_room->room_type != 1 && n_participants > 0)

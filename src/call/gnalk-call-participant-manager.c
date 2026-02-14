@@ -41,10 +41,11 @@ on_tile_avatar_loaded (GnalkAvatarCache *cache G_GNUC_UNUSED,
       return;
     }
 
-  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, data->session_id);
-  g_message ("on_tile_avatar_loaded: tile=%p for session=%s", (void *)tile, data->session_id);
-  if (tile)
-    gnalk_participant_tile_set_avatar (tile, GDK_PAINTABLE (texture));
+  CallParticipantRecord *record = g_hash_table_lookup (self->participants, data->session_id);
+  g_message ("on_tile_avatar_loaded: tile=%p for session=%s",
+             (void *)(record ? record->tile : NULL), data->session_id);
+  if (record && record->tile)
+    gnalk_participant_tile_set_avatar (record->tile, GDK_PAINTABLE (texture));
 
   tile_avatar_callback_data_free (data);
   g_object_unref (self);
@@ -66,19 +67,19 @@ gnalk_call_participant_on_tile_remote_video_frame (GnalkWebrtc *webrtc G_GNUC_UN
       return;
     }
 
-  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, cb_data->session_id);
-  if (tile)
+  CallParticipantRecord *record = g_hash_table_lookup (self->participants, cb_data->session_id);
+  if (record && record->tile)
     {
       static int frame_count = 0;
       if (frame_count++ % 100 == 0)
         g_message ("tile_remote_video_frame: received frame %d for session=%.30s...", frame_count, cb_data->session_id);
-      gnalk_participant_tile_update_video_frame (tile, texture);
+      gnalk_participant_tile_update_video_frame (record->tile, texture);
     }
   else
     {
-      g_message ("tile_remote_video_frame: tile not found for session_id=%s (hash_table has %u entries)",
+      g_message ("tile_remote_video_frame: tile not found for session_id=%s (participants has %u entries)",
                  cb_data->session_id ? cb_data->session_id : "NULL",
-                 g_hash_table_size (self->participant_tiles));
+                 g_hash_table_size (self->participants));
     }
 
   g_object_unref (self);
@@ -104,7 +105,8 @@ gnalk_call_participant_on_screen_remote_video_frame (GnalkWebrtc *webrtc G_GNUC_
       return;
     }
 
-  GnalkParticipantTile *tile = g_hash_table_lookup (self->screen_tiles, cb_data->session_id);
+  CallParticipantRecord *record = g_hash_table_lookup (self->participants, cb_data->session_id);
+  GnalkParticipantTile *tile = record ? record->screen_tile : NULL;
   if (tile)
     {
       if (cb_data->frame_count % 100 == 0)
@@ -178,12 +180,18 @@ gnalk_call_participant_add_tile (GnalkCallWindow *self,
                                    const char       *display_name,
                                    const char       *user_id)
 {
-  if (!session_id || g_hash_table_contains (self->participant_tiles, session_id))
+  CallParticipantRecord *record = session_id ?
+    g_hash_table_lookup (self->participants, session_id) : NULL;
+  if (!session_id || (record && record->tile))
     return;
 
   g_message ("Adding participant tile for session: %s (display_name=%s, user_id=%s)",
              session_id, display_name ? display_name : "NULL",
              user_id ? user_id : "NULL");
+
+  /* Ensure a record exists for this participant */
+  if (!record)
+    record = gnalk_call_ensure_participant_record (self, session_id);
 
   /* Create the tile widget */
   GnalkParticipantTile *tile = gnalk_participant_tile_new ();
@@ -233,28 +241,23 @@ gnalk_call_participant_add_tile (GnalkCallWindow *self,
   gnalk_participant_tile_set_webrtc (tile, subscriber);
   g_object_unref (subscriber);  /* Tile now owns it */
 
-  /* Store in hash table - take a reference since GTK widgets start with floating ref */
-  g_hash_table_insert (self->participant_tiles, g_strdup (session_id), g_object_ref_sink (tile));
+  /* Store tile on record - sink floating ref */
+  record->tile = g_object_ref_sink (tile);
 
-  /* Store user_id mapping and load avatar */
+  /* Store user_id and load avatar */
   if (user_id && *user_id)
     {
-      /* Copy user_id first since inserting into peer_user_ids may free the original
-       * if user_id came from a previous lookup in the same hash table */
-      g_autofree char *user_id_copy = g_strdup (user_id);
+      if (!record->user_id)
+        record->user_id = g_strdup (user_id);
 
-      /* Only insert if not already present (avoid freeing the source pointer) */
-      if (!g_hash_table_contains (self->peer_user_ids, session_id))
-        g_hash_table_insert (self->peer_user_ids, g_strdup (session_id), g_strdup (user_id_copy));
-
-      g_message ("add_participant_tile: loading avatar for user_id=%s, avatar_cache=%p", user_id_copy, (void *)self->avatar_cache);
+      g_message ("add_participant_tile: loading avatar for user_id=%s, avatar_cache=%p", user_id, (void *)self->avatar_cache);
 
       if (self->avatar_cache)
         {
           TileAvatarCallbackData *avatar_data = g_new0 (TileAvatarCallbackData, 1);
           g_weak_ref_init (&avatar_data->window_ref, self);
           avatar_data->session_id = g_strdup (session_id);
-          gnalk_avatar_cache_get_user_avatar (self->avatar_cache, user_id_copy, 128,
+          gnalk_avatar_cache_get_user_avatar (self->avatar_cache, user_id, 128,
                                                 on_tile_avatar_loaded, avatar_data);
         }
       else
@@ -267,8 +270,8 @@ gnalk_call_participant_add_tile (GnalkCallWindow *self,
       g_message ("add_participant_tile: no user_id provided for session=%s", session_id);
     }
 
-  g_message ("add_participant_tile: stored tile for session=%s, hash_table now has %u entries",
-             session_id, g_hash_table_size (self->participant_tiles));
+  g_message ("add_participant_tile: stored tile for session=%s, participants has %u entries",
+             session_id, g_hash_table_size (self->participants));
 
   /* Schedule layout recalculation - deferred to prevent crashes during rapid tile additions */
   gnalk_call_layout_schedule_recalculation (self);
@@ -286,60 +289,45 @@ gnalk_call_participant_remove_tile (GnalkCallWindow *self,
   if (!session_id)
     return;
 
-  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, session_id);
-  if (!tile)
+  CallParticipantRecord *record = g_hash_table_lookup (self->participants, session_id);
+  if (!record || !record->tile)
     {
       /* Log existing keys for debugging */
       GHashTableIter iter;
       gpointer key, value;
-      g_message ("Tile not found for session: %s (hash_table has %u entries)",
-                 session_id, g_hash_table_size (self->participant_tiles));
-      g_hash_table_iter_init (&iter, self->participant_tiles);
+      g_message ("Tile not found for session: %s (participants has %u entries)",
+                 session_id, g_hash_table_size (self->participants));
+      g_hash_table_iter_init (&iter, self->participants);
       while (g_hash_table_iter_next (&iter, &key, &value))
-        g_message ("  existing tile key: %s", (char *)key);
+        g_message ("  existing participant key: %s", (char *)key);
       return;
     }
 
   g_message ("Removing participant tile for session: %s", session_id);
 
   /* End WebRTC call if active */
-  GnalkWebrtc *webrtc = gnalk_participant_tile_get_webrtc (tile);
+  GnalkWebrtc *webrtc = gnalk_participant_tile_get_webrtc (record->tile);
   if (webrtc)
     gnalk_webrtc_end_call (webrtc);
 
-  /* Remove tile from its parent container BEFORE removing from hash table
-   * to avoid the container holding a reference to a partially destroyed widget */
-  gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (tile));
+  /* Remove tile from its parent container */
+  gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->tile));
 
-  /* Remove from hash table (this will unref the tile) */
-  g_hash_table_remove (self->participant_tiles, session_id);
+  /* Also clean up any screen share from this participant */
+  if (record->screen_tile)
+    {
+      g_message ("Also removing screen share tile for session: %s", session_id);
+      if (record->screen_subscriber)
+        gnalk_webrtc_end_call (record->screen_subscriber);
+      gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->screen_tile));
+    }
 
   /* Clear active speaker if it was this participant */
   if (self->active_speaker_id && g_strcmp0 (self->active_speaker_id, session_id) == 0)
-    {
-      g_clear_pointer (&self->active_speaker_id, g_free);
-    }
+    g_clear_pointer (&self->active_speaker_id, g_free);
 
-  /* Also clean up any screen share from this participant */
-  if (self->screen_tiles)
-    {
-      GnalkParticipantTile *screen_tile = g_hash_table_lookup (self->screen_tiles, session_id);
-      if (screen_tile)
-        {
-          g_message ("Also removing screen share tile for session: %s", session_id);
-          GnalkWebrtc *screen_webrtc = gnalk_participant_tile_get_webrtc (screen_tile);
-          if (screen_webrtc)
-            gnalk_webrtc_end_call (screen_webrtc);
-          gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (screen_tile));
-          g_hash_table_remove (self->screen_tiles, session_id);
-        }
-    }
-
-  /* Clean up screen subscriber for this participant */
-  if (self->screen_subscribers)
-    g_hash_table_remove (self->screen_subscribers, session_id);
-  if (self->screen_sids)
-    g_hash_table_remove (self->screen_sids, session_id);
+  /* Remove entire record (frees tile, screen_tile, screen_subscriber, etc.) */
+  g_hash_table_remove (self->participants, session_id);
 
   /* Schedule layout recalculation */
   gnalk_call_layout_schedule_recalculation (self);

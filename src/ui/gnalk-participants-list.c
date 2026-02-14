@@ -125,7 +125,9 @@ create_participant_item (GnalkParticipantsList *self,
                          const char             *user_id,
                          const char             *display_name,
                          const char             *status,
-                         GnalkAvatarCache      *cache)
+                         GnalkAvatarCache      *cache,
+                         const char             *room_token,
+                         gboolean                is_federated)
 {
   (void) self;
 
@@ -195,7 +197,11 @@ create_participant_item (GnalkParticipantsList *self,
     {
       AvatarCallbackData *cb_data = g_new0 (AvatarCallbackData, 1);
       g_weak_ref_init (&cb_data->avatar_ref, avatar);
-      gnalk_avatar_cache_get_user_avatar (cache, user_id, 64, on_avatar_loaded, cb_data);
+      if (is_federated && room_token)
+        gnalk_avatar_cache_get_federated_user_avatar (cache, room_token, user_id, 64,
+                                                         on_avatar_loaded, cb_data);
+      else
+        gnalk_avatar_cache_get_user_avatar (cache, user_id, 64, on_avatar_loaded, cb_data);
     }
 
   return box;
@@ -597,7 +603,8 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
                                             GnalkAvatarCache      *cache,
                                             const char             *my_user_id,
                                             gint                    my_participant_type,
-                                            gint                    room_type)
+                                            gint                    room_type,
+                                            const char             *room_token)
 {
   g_return_if_fail (GNALK_IS_PARTICIPANTS_LIST (self));
 
@@ -655,7 +662,8 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
 
       GtkWidget *item = create_participant_item (self, actor_id,
                                                   effective_name ? effective_name : display_name,
-                                                  is_federated ? NULL : status, cache);
+                                                  is_federated ? NULL : status, cache,
+                                                  room_token, is_federated);
 
       /* Set call icon from JSON data directly */
       update_participant_call_icon (item, in_call);

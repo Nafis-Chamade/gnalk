@@ -6,6 +6,9 @@
 
 #include "gnalk-window-private.h"
 #include "gnalk-http-client.h"
+#include "gnalk-message-data.h"
+#include "gnalk-message-view.h"
+#include "gnalk-conversation-data.h"
 #include <json-glib/json-glib.h>
 
 /* Forward declaration for internal callback */

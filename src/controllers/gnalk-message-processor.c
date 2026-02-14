@@ -31,9 +31,17 @@ struct _GnalkMessageProcessor
   gint64    account_id;
   char     *current_user_id;
   gboolean  loading_older;
+
+  /* Indexes for O(1) lookups (non-owning values, cleared on room change) */
+  GHashTable *msg_index;  /* gint64* (msg_id) → GnalkMessageData* */
+  GHashTable *ref_index;  /* const char* (reference_id) → GnalkMessageData* */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageProcessor, gnalk_message_processor, G_TYPE_OBJECT)
+
+/* Forward declarations for index helpers */
+static void msg_index_add   (GnalkMessageProcessor *self, GnalkMessageData *data);
+static void msg_index_clear (GnalkMessageProcessor *self);
 
 enum {
   SIGNAL_BATCH_INSERT_BEGIN,
@@ -55,6 +63,8 @@ static void
 gnalk_message_processor_finalize (GObject *object)
 {
   GnalkMessageProcessor *self = GNALK_MESSAGE_PROCESSOR (object);
+  g_clear_pointer (&self->msg_index, g_hash_table_unref);
+  g_clear_pointer (&self->ref_index, g_hash_table_unref);
   g_free (self->current_user_id);
   G_OBJECT_CLASS (gnalk_message_processor_parent_class)->finalize (object);
 }
@@ -117,7 +127,8 @@ gnalk_message_processor_class_init (GnalkMessageProcessorClass *klass)
 static void
 gnalk_message_processor_init (GnalkMessageProcessor *self)
 {
-  (void) self;
+  self->msg_index = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, NULL);
+  self->ref_index = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 }
 
 /* ============ Constructor ============ */
@@ -156,6 +167,8 @@ void
 gnalk_message_processor_set_room_state (GnalkMessageProcessor *self,
                                           GnalkRoomState         *state)
 {
+  if (self->current_room != state)
+    msg_index_clear (self);
   self->current_room = state;
 }
 
@@ -210,6 +223,40 @@ gnalk_message_processor_compare_by_id (gconstpointer a,
   return 0;
 }
 
+/* ============ Index helpers ============ */
+
+static void
+msg_index_add (GnalkMessageProcessor *self, GnalkMessageData *data)
+{
+  gint64 id = gnalk_message_data_get_id (data);
+  if (id > 0)
+    {
+      gint64 *key = g_new (gint64, 1);
+      *key = id;
+      g_hash_table_insert (self->msg_index, key, data);
+    }
+
+  const char *ref_id = gnalk_message_data_get_reference_id (data);
+  if (ref_id && *ref_id)
+    g_hash_table_insert (self->ref_index, g_strdup (ref_id), data);
+}
+
+static void
+msg_index_clear (GnalkMessageProcessor *self)
+{
+  g_hash_table_remove_all (self->msg_index);
+  g_hash_table_remove_all (self->ref_index);
+}
+
+void
+gnalk_message_processor_index_message (GnalkMessageProcessor *self,
+                                        GnalkMessageData      *data)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_PROCESSOR (self));
+  g_return_if_fail (data != NULL);
+  msg_index_add (self, data);
+}
+
 /* ============ Date separators and timestamps ============ */
 
 void
@@ -223,6 +270,8 @@ gnalk_message_processor_update_separators (GnalkMessageProcessor *self)
   GNALK_TRACE_UI ("update_date_separators_and_timestamps: processing %u messages", n_items);
 
   int prev_year = 0, prev_month = 0, prev_day = 0;
+  const char *prev_author = NULL;
+  gboolean prev_is_system = TRUE;  /* Treat "before first message" as system → first msg shows avatar */
 
   for (guint j = 0; j < n_items; j++)
     {
@@ -241,6 +290,16 @@ gnalk_message_processor_update_separators (GnalkMessageProcessor *self)
       /* Compute timestamp visibility */
       const char *curr_system = gnalk_message_data_get_system_message (msg_data);
       gboolean is_system = curr_system && *curr_system;
+
+      /* Compute avatar grouping: show avatar for first message in a group */
+      const char *curr_author = gnalk_message_data_get_author_id (msg_data);
+      gboolean show_avatar = TRUE;
+      if (!is_system && !prev_is_system &&
+          g_strcmp0 (curr_author, prev_author) == 0)
+        show_avatar = FALSE;
+      gnalk_message_data_set_show_avatar (msg_data, show_avatar);
+      prev_author = curr_author;  /* interned or stable within iteration */
+      prev_is_system = is_system;
       gboolean show_timestamp = TRUE;
 
       if (!is_system && j + 1 < n_items)
@@ -492,20 +551,9 @@ load_messages_from_db_finish (GObject      *source_object,
 
           gint64 msg_id = gnalk_message_data_get_id (data);
 
-          /* Check if message already exists in store (avoid duplicates) */
-          gboolean already_exists = FALSE;
-          guint n_existing = g_list_model_get_n_items (G_LIST_MODEL (store));
-          for (guint j = 0; j < n_existing; j++)
-            {
-              GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (store), j);
-              if (gnalk_message_data_get_id (existing) == msg_id)
-                {
-                  already_exists = TRUE;
-                  g_object_unref (existing);
-                  break;
-                }
-              g_object_unref (existing);
-            }
+          /* Check if message already exists via index (O(1)) */
+          gboolean already_exists = (msg_id > 0 &&
+                                     g_hash_table_contains (self->msg_index, &msg_id));
 
           if (!already_exists)
             {
@@ -531,6 +579,7 @@ load_messages_from_db_finish (GObject      *source_object,
 
               g_list_store_insert_sorted (store, data,
                                            gnalk_message_processor_compare_by_id, NULL);
+              msg_index_add (self, data);
               added_count++;
             }
           else
@@ -722,8 +771,12 @@ load_older_messages_from_db_finish (GObject      *source_object,
 
   /* Prepend all older messages at once using splice - O(n) instead of O(n^2) */
   if (messages_to_insert->len > 0)
-    g_list_store_splice (store, 0, 0,
-                         messages_to_insert->pdata, messages_to_insert->len);
+    {
+      g_list_store_splice (store, 0, 0,
+                           messages_to_insert->pdata, messages_to_insert->len);
+      for (guint i = 0; i < messages_to_insert->len; i++)
+        msg_index_add (self, g_ptr_array_index (messages_to_insert, i));
+    }
 
   /* Update oldest_loaded_message_id */
   GnalkMessageData *oldest = g_list_model_get_item (G_LIST_MODEL (older), 0);
@@ -848,6 +901,8 @@ gnalk_message_processor_process_older_from_server (GnalkMessageProcessor *self,
   GNALK_TRACE_STORE ("process_older_from_server: prepending %u messages to store", new_messages->len);
   g_list_store_splice (store, 0, 0,
                        new_messages->pdata, new_messages->len);
+  for (guint j = 0; j < new_messages->len; j++)
+    msg_index_add (self, g_ptr_array_index (new_messages, j));
 
   /* Update oldest_loaded_message_id from the oldest message received (now at index 0) */
   GnalkMessageData *oldest = g_ptr_array_index (new_messages, 0);
@@ -922,18 +977,9 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
               if (parent)
                 {
                   gint64 parent_id = json_object_get_int_member_with_default (parent, "id", 0);
-                  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (store));
-                  for (guint j = 0; j < n_items; j++)
-                    {
-                      GnalkMessageData *msg_data = g_list_model_get_item (G_LIST_MODEL (store), j);
-                      if (gnalk_message_data_get_id (msg_data) == parent_id)
-                        {
-                          gnalk_message_data_add_reaction (msg_data, emoji);
-                          g_object_unref (msg_data);
-                          break;
-                        }
-                      g_object_unref (msg_data);
-                    }
+                  GnalkMessageData *target = g_hash_table_lookup (self->msg_index, &parent_id);
+                  if (target)
+                    gnalk_message_data_add_reaction (target, emoji);
                 }
             }
           continue;
@@ -949,27 +995,13 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
               if (parent)
                 {
                   gint64 parent_id = json_object_get_int_member_with_default (parent, "id", 0);
-                  const char *new_message = json_object_get_string_member_with_default (parent, "message", "");
-                  gint64 edit_timestamp = json_object_get_int_member_with_default (parent, "lastEditTimestamp", 0);
-
-                  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (store));
-                  for (guint j = 0; j < n_items; j++)
+                  GnalkMessageData *target = g_hash_table_lookup (self->msg_index, &parent_id);
+                  if (target)
                     {
-                      GnalkMessageData *msg_data = g_list_model_get_item (G_LIST_MODEL (store), j);
-                      if (gnalk_message_data_get_id (msg_data) == parent_id)
-                        {
-                          gnalk_message_data_set_message (msg_data, new_message);
-                          gnalk_message_data_set_last_edit_timestamp (msg_data, edit_timestamp);
-
-                          g_object_ref (msg_data);
-                          g_list_store_remove (store, j);
-                          g_list_store_insert (store, j, msg_data);
-                          g_object_unref (msg_data);
-
-                          g_object_unref (msg_data);
-                          break;
-                        }
-                      g_object_unref (msg_data);
+                      const char *new_message = json_object_get_string_member_with_default (parent, "message", "");
+                      gint64 edit_timestamp = json_object_get_int_member_with_default (parent, "lastEditTimestamp", 0);
+                      gnalk_message_data_set_message (target, new_message);
+                      gnalk_message_data_set_last_edit_timestamp (target, edit_timestamp);
                     }
                 }
             }
@@ -986,25 +1018,11 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
               if (parent)
                 {
                   gint64 parent_id = json_object_get_int_member_with_default (parent, "id", 0);
-                  const char *deleted_message = json_object_get_string_member_with_default (parent, "message", "");
-
-                  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (store));
-                  for (guint j = 0; j < n_items; j++)
+                  GnalkMessageData *target = g_hash_table_lookup (self->msg_index, &parent_id);
+                  if (target)
                     {
-                      GnalkMessageData *msg_data = g_list_model_get_item (G_LIST_MODEL (store), j);
-                      if (gnalk_message_data_get_id (msg_data) == parent_id)
-                        {
-                          gnalk_message_data_set_message (msg_data, deleted_message);
-
-                          g_object_ref (msg_data);
-                          g_list_store_remove (store, j);
-                          g_list_store_insert (store, j, msg_data);
-                          g_object_unref (msg_data);
-
-                          g_object_unref (msg_data);
-                          break;
-                        }
-                      g_object_unref (msg_data);
+                      const char *deleted_message = json_object_get_string_member_with_default (parent, "message", "");
+                      gnalk_message_data_set_message (target, deleted_message);
                     }
                 }
             }
@@ -1031,136 +1049,125 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
 
       if (ref_id && *ref_id)
         {
-          guint n_items = g_list_model_get_n_items (G_LIST_MODEL (store));
-          for (guint j = 0; j < n_items; j++)
+          GnalkMessageData *existing = g_hash_table_lookup (self->ref_index, ref_id);
+          if (existing)
             {
-              GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (store), j);
-              const char *existing_ref = gnalk_message_data_get_reference_id (existing);
+              /* Found matching pending message - update it.
+               * Set parameters before message so notify::message handler
+               * renders with current parameters. freeze/thaw batches all notifications. */
+              gint64 timestamp = json_object_get_int_member_with_default (msg, "timestamp", 0);
 
-              if (existing_ref && g_strcmp0 (existing_ref, ref_id) == 0)
+              g_object_freeze_notify (G_OBJECT (existing));
+
+              /* Copy messageParameters from server first (contains file info) */
+              if (json_object_has_member (msg, "messageParameters"))
                 {
-                  /* Found matching pending message - update it */
-                  gint64 timestamp = json_object_get_int_member_with_default (msg, "timestamp", 0);
-                  gnalk_message_data_confirm_sent (existing, msg_id, timestamp);
-
-                  const char *server_message = json_object_get_string_member_with_default (msg, "message", NULL);
-                  if (server_message)
-                    gnalk_message_data_set_message (existing, server_message);
-
-                  /* Copy messageParameters from server (contains file info) */
-                  if (json_object_has_member (msg, "messageParameters"))
+                  JsonNode *params_node = json_object_get_member (msg, "messageParameters");
+                  if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
                     {
-                      JsonNode *params_node = json_object_get_member (msg, "messageParameters");
-                      if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
-                        {
-                          JsonObject *params = json_node_get_object (params_node);
-                          gnalk_message_data_set_message_parameters (existing, params);
-                        }
+                      JsonObject *params = json_node_get_object (params_node);
+                      gnalk_message_data_set_message_parameters (existing, params);
                     }
+                }
 
-                  /* If this was a file upload, copy the local file to cache with correct file_id */
-                  const char *local_path = gnalk_message_data_get_upload_file_path (existing);
-                  if (local_path && *local_path && json_object_has_member (msg, "messageParameters"))
+              gnalk_message_data_confirm_sent (existing, msg_id, timestamp);
+
+              const char *server_message = json_object_get_string_member_with_default (msg, "message", NULL);
+              if (server_message)
+                gnalk_message_data_set_message (existing, server_message);
+
+              g_object_thaw_notify (G_OBJECT (existing));
+
+              /* If this was a file upload, copy the local file to cache with correct file_id */
+              const char *local_path = gnalk_message_data_get_upload_file_path (existing);
+              if (local_path && *local_path && json_object_has_member (msg, "messageParameters"))
+                {
+                  JsonNode *params_node = json_object_get_member (msg, "messageParameters");
+                  JsonObject *params = (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
+                    ? json_node_get_object (params_node) : NULL;
+                  if (params && json_object_has_member (params, "file"))
                     {
-                      JsonNode *params_node = json_object_get_member (msg, "messageParameters");
-                      JsonObject *params = (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
-                        ? json_node_get_object (params_node) : NULL;
-                      if (params && json_object_has_member (params, "file"))
+                      JsonObject *file = json_object_get_object_member (params, "file");
+                      if (file)
                         {
-                          JsonObject *file = json_object_get_object_member (params, "file");
-                          if (file)
+                          const char *file_id = json_object_get_string_member_with_default (file, "id", NULL);
+                          const char *file_name = json_object_get_string_member_with_default (file, "name", NULL);
+                          if (file_id && file_name)
                             {
-                              const char *file_id = json_object_get_string_member_with_default (file, "id", NULL);
-                              const char *file_name = json_object_get_string_member_with_default (file, "name", NULL);
-                              if (file_id && file_name)
-                                {
-                                  g_autofree char *cache_dir = g_build_filename (g_get_user_cache_dir (), "gnalk", NULL);
-                                  g_mkdir_with_parents (cache_dir, 0700);
-                                  g_autofree char *safe_name = g_strdup_printf ("%s_%s", file_id, file_name);
-                                  g_autofree char *cache_path = g_build_filename (cache_dir, safe_name, NULL);
+                              g_autofree char *cache_dir = g_build_filename (g_get_user_cache_dir (), "gnalk", NULL);
+                              g_mkdir_with_parents (cache_dir, 0700);
+                              g_autofree char *safe_name = g_strdup_printf ("%s_%s", file_id, file_name);
+                              g_autofree char *cache_path = g_build_filename (cache_dir, safe_name, NULL);
 
-                                  g_autoptr(GFile) src = g_file_new_for_path (local_path);
-                                  g_autoptr(GFile) dst = g_file_new_for_path (cache_path);
-                                  g_autoptr(GError) copy_error = NULL;
-                                  if (!g_file_copy (src, dst, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &copy_error))
-                                    g_debug ("Failed to copy uploaded file to cache: %s", copy_error->message);
-                                  else
-                                    g_debug ("Copied uploaded file to cache: %s", cache_path);
-                                }
+                              g_autoptr(GFile) src = g_file_new_for_path (local_path);
+                              g_autoptr(GFile) dst = g_file_new_for_path (cache_path);
+                              g_autoptr(GError) copy_error = NULL;
+                              if (!g_file_copy (src, dst, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &copy_error))
+                                g_debug ("Failed to copy uploaded file to cache: %s", copy_error->message);
+                              else
+                                g_debug ("Copied uploaded file to cache: %s", cache_path);
                             }
                         }
                     }
+                }
 
-                  /* Save confirmed message to database */
-                  if (self->database && self->account_id > 0 && self->current_room)
-                    gnalk_database_save_message (self->database, self->account_id,
-                                                  self->current_room->room_token, existing);
+              /* Save confirmed message to database */
+              if (self->database && self->account_id > 0 && self->current_room)
+                gnalk_database_save_message (self->database, self->account_id,
+                                              self->current_room->room_token, existing);
 
-                  /* Force UI update by remove/insert at same position */
-                  g_object_ref (existing);
-                  g_list_store_remove (store, j);
-                  g_list_store_insert (store, j, existing);
-                  g_object_unref (existing);
+              /* Update indexes: remove from ref_index, add to msg_index */
+              g_hash_table_remove (self->ref_index, ref_id);
+              if (msg_id > 0)
+                {
+                  gint64 *key = g_new (gint64, 1);
+                  *key = msg_id;
+                  g_hash_table_insert (self->msg_index, key, existing);
+                }
 
-                  /* Check if any pending messages remain - if not, re-sort the list */
+              /* Check if any pending messages remain - if not, re-sort the list */
+              {
+                gboolean has_pending = FALSE;
+                guint n = g_list_model_get_n_items (G_LIST_MODEL (store));
+                for (guint k = 0; k < n; k++)
                   {
-                    gboolean has_pending = FALSE;
-                    guint n = g_list_model_get_n_items (G_LIST_MODEL (store));
-                    for (guint k = 0; k < n; k++)
+                    GnalkMessageData *m = g_list_model_get_item (G_LIST_MODEL (store), k);
+                    if (gnalk_message_data_get_id (m) == 0 || gnalk_message_data_get_is_uploading (m))
                       {
-                        GnalkMessageData *m = g_list_model_get_item (G_LIST_MODEL (store), k);
-                        if (gnalk_message_data_get_id (m) == 0 || gnalk_message_data_get_is_uploading (m))
-                          {
-                            has_pending = TRUE;
-                            g_object_unref (m);
-                            break;
-                          }
+                        has_pending = TRUE;
                         g_object_unref (m);
+                        break;
                       }
-
-                    if (!has_pending)
-                      g_list_store_sort (store, gnalk_message_processor_compare_by_id, NULL);
+                    g_object_unref (m);
                   }
 
-                  found_pending = TRUE;
-                  g_object_unref (existing);
-                  break;
-                }
-              g_object_unref (existing);
+                if (!has_pending)
+                  g_list_store_sort (store, gnalk_message_processor_compare_by_id, NULL);
+              }
+
+              found_pending = TRUE;
             }
         }
 
       if (!found_pending)
         {
-          /* Check if message with this ID already exists (avoid duplicates) */
-          guint n_items = g_list_model_get_n_items (G_LIST_MODEL (store));
-          gboolean already_exists = FALSE;
-          for (guint j = 0; j < n_items; j++)
-            {
-              GnalkMessageData *existing = g_list_model_get_item (G_LIST_MODEL (store), j);
-              if (gnalk_message_data_get_id (existing) == msg_id)
-                {
-                  gint64 new_edit_ts = json_object_get_int_member_with_default (msg, "lastEditTimestamp", 0);
-                  gint64 existing_edit_ts = gnalk_message_data_get_last_edit_timestamp (existing);
-                  if (new_edit_ts > existing_edit_ts)
-                    {
-                      const char *new_message = json_object_get_string_member_with_default (msg, "message", "");
-                      gnalk_message_data_set_message (existing, new_message);
-                      gnalk_message_data_set_last_edit_timestamp (existing, new_edit_ts);
+          /* Check if message with this ID already exists via index (O(1)) */
+          GnalkMessageData *existing = (msg_id > 0)
+            ? g_hash_table_lookup (self->msg_index, &msg_id) : NULL;
 
-                      g_object_ref (existing);
-                      g_list_store_remove (store, j);
-                      g_list_store_insert (store, j, existing);
-                      g_object_unref (existing);
-                    }
-                  already_exists = TRUE;
-                  g_object_unref (existing);
-                  break;
+          if (existing)
+            {
+              gint64 new_edit_ts = json_object_get_int_member_with_default (msg, "lastEditTimestamp", 0);
+              gint64 existing_edit_ts = gnalk_message_data_get_last_edit_timestamp (existing);
+              if (new_edit_ts > existing_edit_ts)
+                {
+                  const char *new_message = json_object_get_string_member_with_default (msg, "message", "");
+                  gnalk_message_data_set_message (existing, new_message);
+                  gnalk_message_data_set_last_edit_timestamp (existing, new_edit_ts);
                 }
-              g_object_unref (existing);
             }
 
-          if (!already_exists)
+          if (!existing)
             {
               GnalkMessageData *msg_data = gnalk_message_data_new_from_json (msg, current_user);
 
@@ -1180,6 +1187,7 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
               guint before_count = g_list_model_get_n_items (G_LIST_MODEL (store));
               g_list_store_insert_sorted (store, msg_data,
                                            gnalk_message_processor_compare_by_id, NULL);
+              msg_index_add (self, msg_data);
               guint after_count = g_list_model_get_n_items (G_LIST_MODEL (store));
               GNALK_TRACE_MESSAGES ("process_json: inserted msg %"G_GINT64_FORMAT" (store %u -> %u)",
                                       msg_id, before_count, after_count);
@@ -1281,9 +1289,10 @@ gnalk_message_processor_load_context (GnalkMessageProcessor *self,
   self->current_room->in_context_mode = TRUE;
   self->current_room->context_target_message_id = target_message_id;
 
-  /* Disconnect model, clear store */
+  /* Disconnect model, clear store and indexes */
   g_signal_emit (self, signals[SIGNAL_BATCH_INSERT_BEGIN], 0);
   g_list_store_remove_all (store);
+  msg_index_clear (self);
 
   /* Parse and insert messages */
   gint64 oldest_id = G_MAXINT64;
@@ -1314,6 +1323,7 @@ gnalk_message_processor_load_context (GnalkMessageProcessor *self,
 
       g_list_store_insert_sorted (store, msg_data,
                                    gnalk_message_processor_compare_by_id, NULL);
+      msg_index_add (self, msg_data);
       g_object_unref (msg_data);
     }
 
@@ -1363,9 +1373,10 @@ gnalk_message_processor_restore_live (GnalkMessageProcessor *self)
   self->current_room->context_target_message_id = 0;
   self->current_room->context_newest_id = 0;
 
-  /* Clear store */
+  /* Clear store and indexes */
   g_signal_emit (self, signals[SIGNAL_BATCH_INSERT_BEGIN], 0);
   g_list_store_remove_all (self->current_room->messages_store);
+  msg_index_clear (self);
   g_signal_emit (self, signals[SIGNAL_BATCH_INSERT_END], 0);
 
   /* Reload from DB (same as opening a room fresh) */

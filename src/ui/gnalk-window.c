@@ -16,6 +16,32 @@
 #include "gnalk-data-repository.h"
 #include "gnalk-app-state.h"
 #include "gnalk-sync-coordinator.h"
+#include "gnalk-session.h"
+#include "gnalk-session-manager.h"
+#include "gnalk-login-view.h"
+#include "gnalk-conversation-sidebar.h"
+#include "gnalk-message-view.h"
+#include "gnalk-message-input.h"
+#include "gnalk-conversation-header.h"
+#include "gnalk-conversation-actions.h"
+#include "gnalk-user-status-menu.h"
+#include "gnalk-typing-indicator.h"
+#include "gnalk-incoming-call-banner.h"
+#include "gnalk-participants-list.h"
+#include "gnalk-network-status-bar.h"
+#include "gnalk-message-search.h"
+#include "gnalk-account-switcher.h"
+#include "gnalk-call-window.h"
+#include "gnalk-room-tab-manager.h"
+#include "gnalk-signaling.h"
+#include "gnalk-avatar-cache.h"
+#include "gnalk-message-controller.h"
+#include "gnalk-conversation-controller.h"
+#include "gnalk-participant-controller.h"
+#include "gnalk-room-controller.h"
+#include "gnalk-message-processor.h"
+#include "gnalk-sync-manager.h"
+#include "gnalk-participant-profile-dialog.h"
 #include <glib/gi18n.h>
 
 /* AttachmentInfo and UploadQueueItem helper functions */
@@ -923,7 +949,8 @@ on_participant_clicked (GnalkParticipantsList *list G_GNUC_UNUSED,
   GnalkParticipantProfileDialog *dialog = gnalk_participant_profile_dialog_new ();
   gnalk_participant_profile_dialog_set_participant (dialog, actor_id, actor_type, display_name,
                                                      participant_type, status, status_icon,
-                                                     status_message, self->avatar_cache);
+                                                     status_message, self->avatar_cache,
+                                                     self->current_room ? self->current_room->room_token : NULL);
   adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (self));
 }
 
@@ -1026,13 +1053,13 @@ on_msg_list_item_setup (GtkListItemFactory *factory,
   /* Create a new message row widget */
   GnalkMessageRow *row = gnalk_message_row_new ();
 
-  /* Connect signals */
-  g_signal_connect (row, "reaction-requested", G_CALLBACK (gnalk_window_on_reaction_requested), self);
-  g_signal_connect (row, "quote-requested", G_CALLBACK (gnalk_window_on_quote_requested), self);
-  g_signal_connect (row, "edit-requested", G_CALLBACK (gnalk_window_on_edit_requested), self);
-  g_signal_connect (row, "delete-requested", G_CALLBACK (gnalk_window_on_delete_requested), self);
-  g_signal_connect (row, "scroll-to-message-requested", G_CALLBACK (gnalk_window_on_scroll_to_message_requested), self);
-  g_signal_connect (row, "file-clicked", G_CALLBACK (gnalk_window_on_file_clicked), self);
+  /* Connect signals — g_signal_connect_object auto-disconnects when self is destroyed */
+  g_signal_connect_object (row, "reaction-requested", G_CALLBACK (gnalk_window_on_reaction_requested), self, 0);
+  g_signal_connect_object (row, "quote-requested", G_CALLBACK (gnalk_window_on_quote_requested), self, 0);
+  g_signal_connect_object (row, "edit-requested", G_CALLBACK (gnalk_window_on_edit_requested), self, 0);
+  g_signal_connect_object (row, "delete-requested", G_CALLBACK (gnalk_window_on_delete_requested), self, 0);
+  g_signal_connect_object (row, "scroll-to-message-requested", G_CALLBACK (gnalk_window_on_scroll_to_message_requested), self, 0);
+  g_signal_connect_object (row, "file-clicked", G_CALLBACK (gnalk_window_on_file_clicked), self, 0);
 
   gtk_list_item_set_child (item, GTK_WIDGET (row));
 }
@@ -1046,45 +1073,17 @@ on_msg_list_item_bind (GtkListItemFactory *factory,
   GnalkMessageData *data = GNALK_MESSAGE_DATA (gtk_list_item_get_item (item));
   GnalkMessageRow *row = GNALK_MESSAGE_ROW (gtk_list_item_get_child (item));
 
-  /* Set edit/delete timeouts from capabilities */
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  gint64 edit_timeout = gnalk_application_get_chat_edit_timeout (app);
-  gint64 delete_timeout = gnalk_application_get_chat_delete_timeout (app);
-  gnalk_message_row_set_edit_timeout (row, edit_timeout);
-  gnalk_message_row_set_delete_timeout (row, delete_timeout);
+  /* Set edit/delete timeouts from cached capabilities (set once at session switch) */
+  gnalk_message_row_set_edit_timeout (row, self->cached_edit_timeout);
+  gnalk_message_row_set_delete_timeout (row, self->cached_delete_timeout);
 
   /* Populate the row from the data object first (sets is_self, is_system, etc.) */
   /* Note: gtk_list_item_get_item returns transfer-none, don't unref */
-  gnalk_message_row_set_from_data (row, data, self->avatar_cache);
+  gnalk_message_row_set_from_data (row, data, self->avatar_cache,
+                                     self->current_room ? self->current_room->room_token : NULL);
 
-  /* Determine if this is the first message of a group (for avatar grouping).
-   * This is purely about message grouping - display mode visibility is handled by apply_layout. */
-  guint pos = gtk_list_item_get_position (item);
-  gboolean show_avatar = TRUE;  /* First of group by default */
-  const char *curr_system = gnalk_message_data_get_system_message (data);
-  gboolean is_system_message = curr_system && *curr_system;
-
-  /* Message grouping: hide avatar for consecutive messages from same author */
-  if (pos > 0 && !is_system_message)
-    {
-      GnalkMessageData *prev = g_list_model_get_item (G_LIST_MODEL (self->messages_store), pos - 1);
-      if (prev)
-        {
-          const char *prev_author = gnalk_message_data_get_author_id (prev);
-          const char *curr_author = gnalk_message_data_get_author_id (data);
-          const char *prev_system = gnalk_message_data_get_system_message (prev);
-
-          /* Hide avatar if same author and previous wasn't a system message */
-          if (g_strcmp0 (prev_author, curr_author) == 0 &&
-              (!prev_system || !*prev_system))
-            {
-              show_avatar = FALSE;
-            }
-          g_object_unref (prev);
-        }
-    }
-
-  /* Use pre-computed timestamp visibility from data model */
+  /* Use pre-computed display flags from MessageProcessor */
+  gboolean show_avatar = gnalk_message_data_get_show_avatar (data);
   gboolean show_timestamp = gnalk_message_data_get_show_timestamp (data);
 
   /* Set all state before display mode (which calls apply_layout) */
@@ -1105,17 +1104,24 @@ on_msg_list_item_bind (GtkListItemFactory *factory,
         gnalk_message_row_set_bubble_color (row, &color);
     }
 
-  /* Check if file is already cached and show icon */
+  /* Check if file is already cached — read from data first, syscall only if needed */
   const char *file_id = gnalk_message_row_get_file_id (row);
-  const char *file_name = gnalk_message_row_get_file_name (row);
   if (file_id && *file_id)
     {
-      g_autofree char *cache_dir = g_build_filename (g_get_user_cache_dir (), "gnalk", NULL);
-      const char *name = (file_name && *file_name) ? file_name : "download";
-      g_autofree char *safe_name = g_strdup_printf ("%s_%s", file_id, name);
-      g_autofree char *cache_path = g_build_filename (cache_dir, safe_name, NULL);
+      gboolean cached = gnalk_message_data_get_file_cached (data);
+      if (!cached)
+        {
+          const char *file_name = gnalk_message_row_get_file_name (row);
+          g_autofree char *cache_dir = g_build_filename (g_get_user_cache_dir (), "gnalk", NULL);
+          const char *name = (file_name && *file_name) ? file_name : "download";
+          g_autofree char *safe_name = g_strdup_printf ("%s_%s", file_id, name);
+          g_autofree char *cache_path = g_build_filename (cache_dir, safe_name, NULL);
 
-      gnalk_message_row_set_file_cached (row, g_file_test (cache_path, G_FILE_TEST_EXISTS));
+          cached = g_file_test (cache_path, G_FILE_TEST_EXISTS);
+          if (cached)
+            gnalk_message_data_set_file_cached (data, TRUE);
+        }
+      gnalk_message_row_set_file_cached (row, cached);
     }
 
   /* Apply unread visual state */
@@ -1493,12 +1499,7 @@ gnalk_window_on_message_controller_sent (GnalkMessageController *controller G_GN
                 gnalk_data_repository_save_message (repo, account_id, self->current_room->room_token, msg_data);
             }
 
-          /* Force UI update by remove/insert at same position (preserve order while pending) */
-          g_object_ref (msg_data);
-          g_list_store_remove (self->messages_store, i);
-          g_list_store_insert (self->messages_store, i, msg_data);
-          g_object_unref (msg_data);
-
+          /* UI update happens via notify from confirm_sent (status change) */
           g_debug ("Message confirmed sent via controller: ref=%s id=%ld", reference_id, message_id);
           g_object_unref (msg_data);
 
@@ -1568,14 +1569,8 @@ gnalk_window_on_message_controller_deleted (GnalkMessageController *controller G
           deleted_pos = i;
           near_bottom = (i >= n_items - 3);
 
-          /* Just change message text to deleted */
+          /* Change message text — UI update happens via notify::message */
           gnalk_message_data_set_message (msg, _("Message deleted by you"));
-
-          /* Force list view to rebind by remove/insert */
-          g_object_ref (msg);
-          g_list_store_remove (self->messages_store, i);
-          g_list_store_insert (self->messages_store, i, msg);
-          g_object_unref (msg);
           g_object_unref (msg);
           break;
         }
@@ -1618,13 +1613,8 @@ gnalk_window_on_message_controller_reaction_added (GnalkMessageController *contr
       GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
       if (gnalk_message_data_get_id (msg) == message_id)
         {
+          /* UI update happens via notify::reactions */
           gnalk_message_data_add_reaction (msg, emoji);
-
-          /* Force list view to rebind by remove/insert */
-          g_object_ref (msg);
-          g_list_store_remove (self->messages_store, i);
-          g_list_store_insert (self->messages_store, i, msg);
-          g_object_unref (msg);
 
           /* Schedule scroll restoration after layout update */
           ScrollToPositionData *scroll_data = g_new (ScrollToPositionData, 1);
@@ -1653,14 +1643,9 @@ gnalk_window_on_message_controller_upload_completed (GnalkMessageController *con
 
       if (ref && g_strcmp0 (ref, reference_id) == 0)
         {
+          /* UI update happens via notify (is-uploading + status) */
           gnalk_message_data_set_is_uploading (msg, FALSE);
           gnalk_message_data_set_status (msg, GNALK_MESSAGE_DATA_STATUS_SENT);
-
-          /* Force UI update by remove/insert */
-          g_object_ref (msg);
-          g_list_store_remove (self->messages_store, i);
-          g_list_store_insert (self->messages_store, i, msg);
-          g_object_unref (msg);
 
           g_object_unref (msg);
           break;
@@ -1691,14 +1676,9 @@ gnalk_window_on_message_controller_upload_failed (GnalkMessageController *contro
 
       if (ref && g_strcmp0 (ref, reference_id) == 0)
         {
+          /* UI update happens via notify (is-uploading + status) */
           gnalk_message_data_set_is_uploading (msg, FALSE);
           gnalk_message_data_set_status (msg, GNALK_MESSAGE_DATA_STATUS_FAILED);
-
-          /* Force UI update by remove/insert */
-          g_object_ref (msg);
-          g_list_store_remove (self->messages_store, i);
-          g_list_store_insert (self->messages_store, i, msg);
-          g_object_unref (msg);
 
           g_object_unref (msg);
           break;
@@ -1861,6 +1841,8 @@ gnalk_window_finalize (GObject *object)
   /* These are always owned by the window */
   g_clear_object (&self->avatar_cache);
   g_clear_object (&self->webrtc);
+  g_clear_object (&self->conversations_sort_model);
+  g_clear_object (&self->conversations_sorter);
   g_clear_object (&self->conversations_store);
   g_clear_object (&self->messages_store);
   g_clear_object (&self->search_results_store);
@@ -2251,8 +2233,14 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect_swapped (self->invitation_decline_button, "clicked",
                              G_CALLBACK (on_invitation_decline_clicked), self);
 
-  /* Conversation list - uses data/widget separation pattern */
-  GtkNoSelection *conv_selection = gtk_no_selection_new (G_LIST_MODEL (self->conversations_store));
+  /* Conversation list - uses GtkSortListModel for incremental sorting */
+  self->conversations_sorter = gtk_custom_sorter_new (
+      (GCompareDataFunc) gnalk_window_compare_conversations_by_activity, NULL, NULL);
+  self->conversations_sort_model = gtk_sort_list_model_new (
+      G_LIST_MODEL (g_object_ref (self->conversations_store)),
+      GTK_SORTER (g_object_ref (self->conversations_sorter)));
+  GtkNoSelection *conv_selection = gtk_no_selection_new (
+      G_LIST_MODEL (g_object_ref (self->conversations_sort_model)));
   GtkListItemFactory *conv_factory = gtk_signal_list_item_factory_new ();
   g_signal_connect (conv_factory, "setup", G_CALLBACK (gnalk_window_on_conv_list_item_setup), self);
   g_signal_connect (conv_factory, "bind", G_CALLBACK (gnalk_window_on_conv_list_item_bind), self);

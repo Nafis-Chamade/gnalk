@@ -212,14 +212,14 @@ gnalk_call_screen_share_on_toggled (GtkToggleButton  *button,
 void
 gnalk_call_screen_share_send_offers_to_all (GnalkCallWindow *self)
 {
-  if (!self->participant_tiles)
+  if (!self->participants)
     return;
 
   GHashTableIter iter;
   gpointer key, value;
   int count = 0;
 
-  g_hash_table_iter_init (&iter, self->participant_tiles);
+  g_hash_table_iter_init (&iter, self->participants);
   while (g_hash_table_iter_next (&iter, &key, &value))
     {
       const char *session_id = (const char *)key;
@@ -273,28 +273,26 @@ gnalk_call_screen_share_on_signaling_changed (GnalkSignaling  *signaling G_GNUC_
   if (is_sharing)
     {
       /* Create screen tile for incoming screen share */
-      if (!g_hash_table_contains (self->screen_tiles, session_id))
+      CallParticipantRecord *record = gnalk_call_ensure_participant_record (self, session_id);
+      if (!record->screen_tile)
         {
           /* Create a tile for the screen share */
-          GnalkParticipantTile *tile = gnalk_participant_tile_new ();
-          gnalk_participant_tile_set_is_screen_share (tile, TRUE);
-          gnalk_participant_tile_set_video_enabled (tile, TRUE);
-          gnalk_participant_tile_set_session_id (tile, session_id);
+          GnalkParticipantTile *screen_tile = gnalk_participant_tile_new ();
+          gnalk_participant_tile_set_is_screen_share (screen_tile, TRUE);
+          gnalk_participant_tile_set_video_enabled (screen_tile, TRUE);
+          gnalk_participant_tile_set_session_id (screen_tile, session_id);
 
-          const char *display_name = g_hash_table_lookup (self->peer_display_names, session_id);
-          if (display_name)
+          if (record->display_name)
             {
-              g_autofree char *label = g_strdup_printf ("%s's screen", display_name);
-              gnalk_participant_tile_set_display_name (tile, label);
+              g_autofree char *label = g_strdup_printf ("%s's screen", record->display_name);
+              gnalk_participant_tile_set_display_name (screen_tile, label);
             }
           else
             {
-              gnalk_participant_tile_set_display_name (tile, "Screen Share");
+              gnalk_participant_tile_set_display_name (screen_tile, "Screen Share");
             }
 
-          g_hash_table_insert (self->screen_tiles,
-                               g_strdup (session_id),
-                               tile);
+          record->screen_tile = g_object_ref_sink (screen_tile);
 
           /* Create subscriber WebRTC for the screen stream */
           GnalkWebrtc *subscriber = gnalk_webrtc_new ();
@@ -334,9 +332,7 @@ gnalk_call_screen_share_on_signaling_changed (GnalkSignaling  *signaling G_GNUC_
           /* Enable continuous keyframe requests for screen share quality */
           gnalk_webrtc_enable_continuous_pli (subscriber, TRUE, 2000);
 
-          g_hash_table_insert (self->screen_subscribers,
-                               g_strdup (session_id),
-                               subscriber);
+          record->screen_subscriber = subscriber;
 
           /* Request screen offer from the peer (for non-MCU mode) */
           gnalk_call_signaling_request_screen_offer_from_peer (self, session_id);
@@ -346,24 +342,24 @@ gnalk_call_screen_share_on_signaling_changed (GnalkSignaling  *signaling G_GNUC_
     }
   else
     {
-      /* Remove screen tile */
-      GnalkParticipantTile *tile = g_hash_table_lookup (self->screen_tiles, session_id);
-      if (tile)
+      /* Remove screen tile and subscriber */
+      CallParticipantRecord *record = g_hash_table_lookup (self->participants, session_id);
+      if (record)
         {
-          /* Use remove_tile_from_parent to handle grid/speaker layouts */
-          gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (tile));
-          g_hash_table_remove (self->screen_tiles, session_id);
-        }
+          if (record->screen_tile)
+            {
+              gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->screen_tile));
+              g_clear_object (&record->screen_tile);
+            }
 
-      /* Clean up subscriber */
-      GnalkWebrtc *subscriber = g_hash_table_lookup (self->screen_subscribers, session_id);
-      if (subscriber)
-        {
-          gnalk_webrtc_end_call (subscriber);
-          g_hash_table_remove (self->screen_subscribers, session_id);
-        }
+          if (record->screen_subscriber)
+            {
+              gnalk_webrtc_end_call (record->screen_subscriber);
+              g_clear_object (&record->screen_subscriber);
+            }
 
-      g_hash_table_remove (self->screen_sids, session_id);
+          g_clear_pointer (&record->screen_subscriber_sid, g_free);
+        }
 
       gnalk_call_layout_recalculate (self);
     }

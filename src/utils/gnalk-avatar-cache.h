@@ -26,6 +26,13 @@ void gnalk_avatar_cache_get_user_avatar (GnalkAvatarCache   *self,
                                            GnalkAvatarCallback callback,
                                            gpointer             user_data);
 
+void gnalk_avatar_cache_get_federated_user_avatar (GnalkAvatarCache   *self,
+                                                      const char          *room_token,
+                                                      const char          *cloud_id,
+                                                      int                  size,
+                                                      GnalkAvatarCallback callback,
+                                                      gpointer             user_data);
+
 void gnalk_avatar_cache_get_file_preview (GnalkAvatarCache   *self,
                                             const char          *file_id,
                                             int                  width,

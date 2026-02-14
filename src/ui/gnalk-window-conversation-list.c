@@ -7,10 +7,16 @@
 
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
+#include "gnalk-session.h"
 #include "gnalk-account-manager.h"
 #include "gnalk-database.h"
 #include "gnalk-data-repository.h"
+#include "gnalk-sync-coordinator.h"
 #include "gnalk-conversation-row.h"
+#include "gnalk-conversation-sidebar.h"
+#include "gnalk-conversation-header.h"
+#include "gnalk-participants-list.h"
+#include "gnalk-message-view.h"
 #include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
 
@@ -308,9 +314,10 @@ load_conversations_from_db_finish (GObject      *source_object,
 
   g_object_unref (cached);
 
-  /* Sort if something changed - avoids unnecessary work on unchanged data */
+  /* Notify the sort model that items may have changed order.
+   * GtkSortListModel does incremental re-sorting (no full invalidation). */
   if (has_changes || is_initial_load)
-    g_list_store_sort (self->conversations_store, gnalk_window_compare_conversations_by_activity, NULL);
+    gtk_sorter_changed (GTK_SORTER (self->conversations_sorter), GTK_SORTER_CHANGE_DIFFERENT);
 
   g_message ("Loaded %u conversations from database (changes: %s)", n_cached, has_changes ? "yes" : "no");
 
@@ -335,12 +342,6 @@ load_conversations_from_db_finish (GObject      *source_object,
             g_object_unref (conv);
         }
     }
-
-  /* Force GTK to re-bind items since update_from_data modifies data in-place
-   * but doesn't emit property notifications. This ensures widgets refresh. */
-  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
-  if (n_items > 0)
-    g_list_model_items_changed (G_LIST_MODEL (self->conversations_store), 0, n_items, n_items);
 
   /* Scroll to top only on initial load - preserves scroll position on refresh */
   if (is_initial_load)
@@ -562,7 +563,7 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
         {
           /* This is a Talk conversation - id is the room token */
           token_str = g_strdup_printf ("room:%s", item_id);
-          subtitle = "Open conversation";
+          subtitle = _("Open conversation");
           room_type = 2;  /* Group conversation */
         }
       else
@@ -572,12 +573,12 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
           if (existing_token)
             {
               token_str = g_strdup (existing_token);
-              subtitle = "Open conversation";
+              subtitle = _("Open conversation");
             }
           else
             {
               token_str = g_strdup_printf ("user:%s:%s", source, item_id);
-              subtitle = "Start new conversation";
+              subtitle = _("Start new conversation");
             }
           room_type = 1;  /* One-to-one */
         }
@@ -727,41 +728,54 @@ gnalk_window_update_conversation_active_states (GnalkWindow *self,
 }
 
 void
-gnalk_window_on_conv_list_item_setup (GtkListItemFactory *factory,
+gnalk_window_on_conv_list_item_setup (GtkListItemFactory *factory G_GNUC_UNUSED,
                                        GtkListItem        *item,
                                        gpointer            user_data)
 {
-  /* Don't create widget here - we'll create the appropriate widget in bind */
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  /* Create a GtkStack with both widget types - reused across bind/unbind cycles */
+  GtkStack *stack = GTK_STACK (gtk_stack_new ());
+  gtk_stack_set_hhomogeneous (stack, TRUE);
+  gtk_stack_set_vhomogeneous (stack, FALSE);
+
+  /* Section header label */
+  GtkWidget *label = gtk_label_new (NULL);
+  gtk_label_set_xalign (GTK_LABEL (label), 0);
+  gtk_widget_add_css_class (label, "conversation-section-header");
+  gtk_stack_add_named (stack, label, "header");
+
+  /* Conversation row with signals connected once */
+  GnalkConversationRow *row = gnalk_conversation_row_new ();
+  g_signal_connect (row, "leave-requested", G_CALLBACK (gnalk_window_on_conv_leave_requested), self);
+  g_signal_connect (row, "delete-requested", G_CALLBACK (gnalk_window_on_conv_delete_requested), self);
+  g_signal_connect (row, "favorite-toggled", G_CALLBACK (gnalk_window_on_conv_favorite_toggled), self);
+  gtk_stack_add_named (stack, GTK_WIDGET (row), "row");
+
+  gtk_list_item_set_child (item, GTK_WIDGET (stack));
 }
 
 void
-gnalk_window_on_conv_list_item_bind (GtkListItemFactory *factory,
+gnalk_window_on_conv_list_item_bind (GtkListItemFactory *factory G_GNUC_UNUSED,
                                       GtkListItem        *item,
                                       gpointer            user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
   GnalkConversationData *data = GNALK_CONVERSATION_DATA (gtk_list_item_get_item (item));
+  GtkStack *stack = GTK_STACK (gtk_list_item_get_child (item));
 
   if (gnalk_conversation_data_is_section_header (data))
     {
-      /* Create section header label */
-      GtkWidget *label = gtk_label_new (gnalk_conversation_data_get_title (data));
-      gtk_label_set_xalign (GTK_LABEL (label), 0);
-      gtk_widget_add_css_class (label, "conversation-section-header");
-      gtk_list_item_set_child (item, label);
+      GtkWidget *label = gtk_stack_get_child_by_name (stack, "header");
+      gtk_label_set_text (GTK_LABEL (label), gnalk_conversation_data_get_title (data));
+      gtk_stack_set_visible_child_name (stack, "header");
       gtk_list_item_set_activatable (item, FALSE);
       gtk_list_item_set_selectable (item, FALSE);
     }
   else
     {
-      /* Create conversation row */
-      GnalkConversationRow *row = gnalk_conversation_row_new ();
-
-      /* Connect context menu signals */
-      g_signal_connect (row, "leave-requested", G_CALLBACK (gnalk_window_on_conv_leave_requested), self);
-      g_signal_connect (row, "delete-requested", G_CALLBACK (gnalk_window_on_conv_delete_requested), self);
-      g_signal_connect (row, "favorite-toggled", G_CALLBACK (gnalk_window_on_conv_favorite_toggled), self);
-
+      GnalkConversationRow *row = GNALK_CONVERSATION_ROW (
+          gtk_stack_get_child_by_name (stack, "row"));
       gnalk_conversation_row_set_from_data (row, data, self->avatar_cache);
 
       /* Set active state based on current room */
@@ -773,23 +787,24 @@ gnalk_window_on_conv_list_item_bind (GtkListItemFactory *factory,
       if (token)
         g_hash_table_insert (self->bound_conversation_rows, g_strdup (token), row);
 
-      gtk_list_item_set_child (item, GTK_WIDGET (row));
+      gtk_stack_set_visible_child_name (stack, "row");
       gtk_list_item_set_activatable (item, TRUE);
       gtk_list_item_set_selectable (item, TRUE);
     }
 }
 
 void
-gnalk_window_on_conv_list_item_unbind (GtkListItemFactory *factory,
+gnalk_window_on_conv_list_item_unbind (GtkListItemFactory *factory G_GNUC_UNUSED,
                                         GtkListItem        *item,
                                         gpointer            user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
-  GtkWidget *child = gtk_list_item_get_child (item);
+  GtkStack *stack = GTK_STACK (gtk_list_item_get_child (item));
+  GtkWidget *row_widget = gtk_stack_get_child_by_name (stack, "row");
 
-  if (child && GNALK_IS_CONVERSATION_ROW (child))
+  if (GNALK_IS_CONVERSATION_ROW (row_widget))
     {
-      GnalkConversationRow *row = GNALK_CONVERSATION_ROW (child);
+      GnalkConversationRow *row = GNALK_CONVERSATION_ROW (row_widget);
       const char *token = gnalk_conversation_row_get_token (row);
 
       /* Remove from tracking hash table */
@@ -798,7 +813,7 @@ gnalk_window_on_conv_list_item_unbind (GtkListItemFactory *factory,
 
       gnalk_conversation_row_reset (row);
     }
-  gtk_list_item_set_child (item, NULL);
+  /* Do NOT call gtk_list_item_set_child(NULL) — the stack persists for reuse */
 }
 
 /* Search results list factory callbacks - proper data/widget separation */

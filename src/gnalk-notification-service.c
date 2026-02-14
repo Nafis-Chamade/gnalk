@@ -1,6 +1,7 @@
 #include "gnalk-notification-service.h"
 #include "gnalk-config.h"
 #include "gnalk-log.h"
+#include <glib/gi18n.h>
 
 #ifdef HAVE_LIBPORTAL
 #include <libportal-gtk4/portal-gtk4.h>
@@ -111,7 +112,7 @@ build_notification_buttons (const char *room_token)
   /* Mark as read button */
   GVariantBuilder mark_read_button;
   g_variant_builder_init (&mark_read_button, G_VARIANT_TYPE ("a{sv}"));
-  g_variant_builder_add (&mark_read_button, "{sv}", "label", g_variant_new_string ("Mark as Read"));
+  g_variant_builder_add (&mark_read_button, "{sv}", "label", g_variant_new_string (_("Mark as Read")));
   g_variant_builder_add (&mark_read_button, "{sv}", "action", g_variant_new_string ("app.mark-read"));
   g_variant_builder_add (&mark_read_button, "{sv}", "target", g_variant_new_string (room_token));
   g_variant_builder_add (&buttons, "a{sv}", &mark_read_button);
@@ -153,7 +154,7 @@ gnalk_notification_service_notify_message (GnalkNotificationService *self,
   g_variant_builder_init (&notification, G_VARIANT_TYPE ("a{sv}"));
 
   /* Title: room name, sender name, or fallback */
-  const char *title = room_name ? room_name : (sender_name ? sender_name : "New message");
+  const char *title = room_name ? room_name : (sender_name ? sender_name : _("New message"));
   g_variant_builder_add (&notification, "{sv}", "title", g_variant_new_string (title));
 
   /* Body: if sender provided, prepend "sender: "; otherwise use message as-is */
@@ -199,7 +200,7 @@ gnalk_notification_service_notify_message (GnalkNotificationService *self,
   if (!app)
     return;
 
-  const char *notif_title = room_name ? room_name : (sender_name ? sender_name : "New message");
+  const char *notif_title = room_name ? room_name : (sender_name ? sender_name : _("New message"));
   g_autoptr(GNotification) notification = g_notification_new (notif_title);
 
   g_autofree char *body = NULL;
@@ -218,7 +219,7 @@ gnalk_notification_service_notify_message (GnalkNotificationService *self,
   g_notification_set_default_action_and_target (notification, "app.open-room", "s", room_token);
 
   /* Add mark-read button */
-  g_notification_add_button_with_target (notification, "Mark as Read", "app.mark-read", "s", room_token);
+  g_notification_add_button_with_target (notification, _("Mark as Read"), "app.mark-read", "s", room_token);
 
   if (sender_avatar)
     g_notification_set_icon (notification, sender_avatar);
@@ -273,8 +274,8 @@ gnalk_notification_service_notify_call (GnalkNotificationService *self,
                        g_strdup (hash_key),
                        g_strdup (notification_id));
 
-  const char *title = (room_name && *room_name) ? room_name : "Incoming call";
-  const char *body = caller_name ? caller_name : "Active call";
+  const char *title = (room_name && *room_name) ? room_name : _("Incoming call");
+  const char *body = caller_name ? caller_name : _("Active call");
 
 #ifdef HAVE_LIBPORTAL
   GVariantBuilder notification;

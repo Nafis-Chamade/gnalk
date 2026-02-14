@@ -39,6 +39,7 @@ void gnalk_participant_profile_dialog_set_participant (GnalkParticipantProfileDi
                                                         const char                     *status,
                                                         const char                     *status_icon,
                                                         const char                     *status_message,
-                                                        GnalkAvatarCache              *cache);
+                                                        GnalkAvatarCache              *cache,
+                                                        const char                     *room_token);
 
 G_END_DECLS

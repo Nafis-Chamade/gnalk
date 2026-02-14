@@ -43,8 +43,21 @@ gnalk_call_layout_schedule_recalculation (GnalkCallWindow *self)
 static void
 update_grid_layout (GnalkCallWindow *self)
 {
-  guint count = g_hash_table_size (self->participant_tiles);
-  guint screen_count = g_hash_table_size (self->screen_tiles);
+  guint count = 0;
+  guint screen_count = 0;
+  {
+    GHashTableIter count_iter;
+    gpointer k, v;
+    g_hash_table_iter_init (&count_iter, self->participants);
+    while (g_hash_table_iter_next (&count_iter, &k, &v))
+      {
+        CallParticipantRecord *rec = v;
+        if (rec->tile)
+          count++;
+        if (rec->screen_tile)
+          screen_count++;
+      }
+  }
   if (self->local_tile)
     count++;
   count += screen_count;
@@ -85,12 +98,14 @@ update_grid_layout (GnalkCallWindow *self)
   /* Add screen share tiles first (most important) */
   GHashTableIter iter;
   gpointer key, value;
-  g_hash_table_iter_init (&iter, self->screen_tiles);
+  g_hash_table_iter_init (&iter, self->participants);
   while (g_hash_table_iter_next (&iter, &key, &value))
     {
-      GnalkParticipantTile *tile = GNALK_PARTICIPANT_TILE (value);
+      CallParticipantRecord *record = value;
+      if (!record->screen_tile)
+        continue;
       gtk_grid_attach (GTK_GRID (self->video_grid),
-                       GTK_WIDGET (tile),
+                       GTK_WIDGET (record->screen_tile),
                        col, row, 1, 1);
       col++;
       if (col >= cols)
@@ -115,12 +130,14 @@ update_grid_layout (GnalkCallWindow *self)
     }
 
   /* Add remote participant tiles */
-  g_hash_table_iter_init (&iter, self->participant_tiles);
+  g_hash_table_iter_init (&iter, self->participants);
   while (g_hash_table_iter_next (&iter, &key, &value))
     {
-      GnalkParticipantTile *tile = GNALK_PARTICIPANT_TILE (value);
+      CallParticipantRecord *record = value;
+      if (!record->tile)
+        continue;
       gtk_grid_attach (GTK_GRID (self->video_grid),
-                       GTK_WIDGET (tile),
+                       GTK_WIDGET (record->tile),
                        col, row, 1, 1);
       col++;
       if (col >= cols)
@@ -135,9 +152,8 @@ update_grid_layout (GnalkCallWindow *self)
 static void
 update_speaker_layout (GnalkCallWindow *self)
 {
-  g_message ("update_speaker_layout: participant_tiles=%u, screen_tiles=%u, local_tile=%p, active_speaker=%s",
-             g_hash_table_size (self->participant_tiles),
-             g_hash_table_size (self->screen_tiles),
+  g_message ("update_speaker_layout: participants=%u, local_tile=%p, active_speaker=%s",
+             g_hash_table_size (self->participants),
              (void *)self->local_tile,
              self->active_speaker_id ? self->active_speaker_id : "none");
 
@@ -152,27 +168,44 @@ update_speaker_layout (GnalkCallWindow *self)
   GnalkParticipantTile *main_tile = NULL;
 
   /* If there's a screen share, show it as main */
-  if (g_hash_table_size (self->screen_tiles) > 0)
-    {
-      GHashTableIter iter;
-      gpointer key, value;
-      g_hash_table_iter_init (&iter, self->screen_tiles);
-      if (g_hash_table_iter_next (&iter, &key, &value))
-        main_tile = GNALK_PARTICIPANT_TILE (value);
-    }
+  {
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init (&iter, self->participants);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+      {
+        CallParticipantRecord *record = value;
+        if (record->screen_tile)
+          {
+            main_tile = record->screen_tile;
+            break;
+          }
+      }
+  }
 
   /* Otherwise use active speaker */
   if (!main_tile && self->active_speaker_id)
-    main_tile = g_hash_table_lookup (self->participant_tiles, self->active_speaker_id);
+    {
+      CallParticipantRecord *speaker_record = g_hash_table_lookup (self->participants, self->active_speaker_id);
+      if (speaker_record && speaker_record->tile)
+        main_tile = speaker_record->tile;
+    }
 
   /* Fall back to first remote participant if no active speaker */
-  if (!main_tile && g_hash_table_size (self->participant_tiles) > 0)
+  if (!main_tile)
     {
       GHashTableIter iter;
       gpointer key, value;
-      g_hash_table_iter_init (&iter, self->participant_tiles);
-      if (g_hash_table_iter_next (&iter, &key, &value))
-        main_tile = GNALK_PARTICIPANT_TILE (value);
+      g_hash_table_iter_init (&iter, self->participants);
+      while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+          CallParticipantRecord *record = value;
+          if (record->tile)
+            {
+              main_tile = record->tile;
+              break;
+            }
+        }
     }
 
   /* If no remote participants, show local in main */
@@ -198,29 +231,26 @@ update_speaker_layout (GnalkCallWindow *self)
   GHashTableIter iter;
   gpointer key, value;
 
-  /* Add screen tiles to strip (except main) */
-  g_hash_table_iter_init (&iter, self->screen_tiles);
+  /* Add screen tiles and participant tiles to strip (except main) */
+  g_hash_table_iter_init (&iter, self->participants);
   while (g_hash_table_iter_next (&iter, &key, &value))
     {
-      GnalkParticipantTile *tile = GNALK_PARTICIPANT_TILE (value);
-      if (tile != main_tile)
-        {
-          gtk_widget_remove_css_class (GTK_WIDGET (tile), "speaker-main-tile");
-          gtk_widget_add_css_class (GTK_WIDGET (tile), "speaker-strip-tile");
-          gtk_box_append (GTK_BOX (self->speaker_strip), GTK_WIDGET (tile));
-        }
-    }
+      CallParticipantRecord *record = value;
 
-  /* Add participant tiles to strip (except main) */
-  g_hash_table_iter_init (&iter, self->participant_tiles);
-  while (g_hash_table_iter_next (&iter, &key, &value))
-    {
-      GnalkParticipantTile *tile = GNALK_PARTICIPANT_TILE (value);
-      if (tile != main_tile)
+      /* Screen tile to strip if present and not main */
+      if (record->screen_tile && record->screen_tile != main_tile)
         {
-          gtk_widget_remove_css_class (GTK_WIDGET (tile), "speaker-main-tile");
-          gtk_widget_add_css_class (GTK_WIDGET (tile), "speaker-strip-tile");
-          gtk_box_append (GTK_BOX (self->speaker_strip), GTK_WIDGET (tile));
+          gtk_widget_remove_css_class (GTK_WIDGET (record->screen_tile), "speaker-main-tile");
+          gtk_widget_add_css_class (GTK_WIDGET (record->screen_tile), "speaker-strip-tile");
+          gtk_box_append (GTK_BOX (self->speaker_strip), GTK_WIDGET (record->screen_tile));
+        }
+
+      /* Participant tile to strip if present and not main */
+      if (record->tile && record->tile != main_tile)
+        {
+          gtk_widget_remove_css_class (GTK_WIDGET (record->tile), "speaker-main-tile");
+          gtk_widget_add_css_class (GTK_WIDGET (record->tile), "speaker-strip-tile");
+          gtk_box_append (GTK_BOX (self->speaker_strip), GTK_WIDGET (record->tile));
         }
     }
 }
@@ -265,14 +295,15 @@ gnalk_call_layout_recalculate (GnalkCallWindow *self)
 
   GHashTableIter iter;
   gpointer key, value;
-  g_hash_table_iter_init (&iter, self->participant_tiles);
+  g_hash_table_iter_init (&iter, self->participants);
   while (g_hash_table_iter_next (&iter, &key, &value))
-    gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (value));
-
-  /* Also remove screen tiles */
-  g_hash_table_iter_init (&iter, self->screen_tiles);
-  while (g_hash_table_iter_next (&iter, &key, &value))
-    gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (value));
+    {
+      CallParticipantRecord *record = value;
+      if (record->tile)
+        gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->tile));
+      if (record->screen_tile)
+        gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->screen_tile));
+    }
 
   if (self->layout_mode == GNALK_LAYOUT_GRID)
     {

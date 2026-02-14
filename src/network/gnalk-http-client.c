@@ -65,21 +65,12 @@ gnalk_http_error_type_from_error (GError *error,
 
 typedef struct
 {
-  GWeakRef            client_ref;  /* Weak reference to client */
-  SoupMessage        *message;
-  char               *url;
-  GnalkHttpCallback  callback;
-  gpointer            user_data;
+  GWeakRef      client_ref;  /* Weak reference to client */
+  SoupMessage  *message;
+  char         *url;
+  GCallback     callback;    /* GnalkHttpCallback, GnalkHttpBytesCallback, or GnalkHttpBoolCallback */
+  gpointer      user_data;
 } HttpCallbackData;
-
-typedef struct
-{
-  GWeakRef                 client_ref;  /* Weak reference to client */
-  SoupMessage             *message;
-  char                    *url;
-  GnalkHttpBytesCallback  callback;
-  gpointer                 user_data;
-} HttpBytesCallbackData;
 
 static void
 gnalk_http_client_finalize (GObject *object)
@@ -363,7 +354,7 @@ on_json_response (GObject      *source,
         }
 
       if (data->callback)
-        data->callback (client, NULL, error, data->user_data);
+        ((GnalkHttpCallback) data->callback) (client, NULL, error, data->user_data);
       g_object_unref (client);
       http_callback_data_free_deferred (data);
       return;
@@ -380,7 +371,7 @@ on_json_response (GObject      *source,
   if (status == SOUP_STATUS_NOT_MODIFIED || size == 0)
     {
       if (data->callback)
-        data->callback (client, NULL, NULL, data->user_data);
+        ((GnalkHttpCallback) data->callback) (client, NULL, NULL, data->user_data);
       g_object_unref (client);
       http_callback_data_free_deferred (data);
       return;
@@ -403,7 +394,7 @@ on_json_response (GObject      *source,
                                                      status,
                                                      reason);
       if (data->callback)
-        data->callback (client, NULL, status_error, data->user_data);
+        ((GnalkHttpCallback) data->callback) (client, NULL, status_error, data->user_data);
       g_object_unref (client);
       http_callback_data_free_deferred (data);
       return;
@@ -413,7 +404,7 @@ on_json_response (GObject      *source,
   if (!json_parser_load_from_data (parser, body, size, &error))
     {
       if (data->callback)
-        data->callback (client, NULL, error, data->user_data);
+        ((GnalkHttpCallback) data->callback) (client, NULL, error, data->user_data);
       g_object_unref (client);
       http_callback_data_free_deferred (data);
       return;
@@ -421,31 +412,9 @@ on_json_response (GObject      *source,
 
   root = json_parser_get_root (parser);
   if (data->callback)
-    data->callback (client, root, NULL, data->user_data);
+    ((GnalkHttpCallback) data->callback) (client, root, NULL, data->user_data);
   g_object_unref (client);
   http_callback_data_free_deferred (data);
-}
-
-static void
-http_bytes_callback_data_free (HttpBytesCallbackData *data)
-{
-  g_weak_ref_clear (&data->client_ref);
-  g_clear_object (&data->message);
-  g_free (data->url);
-  g_free (data);
-}
-
-static gboolean
-http_bytes_callback_data_free_idle (gpointer user_data)
-{
-  http_bytes_callback_data_free (user_data);
-  return G_SOURCE_REMOVE;
-}
-
-static void
-http_bytes_callback_data_free_deferred (HttpBytesCallbackData *data)
-{
-  g_idle_add (http_bytes_callback_data_free_idle, data);
 }
 
 static void
@@ -453,7 +422,7 @@ on_bytes_response (GObject      *source,
                    GAsyncResult *result,
                    gpointer      user_data)
 {
-  HttpBytesCallbackData *data = user_data;
+  HttpCallbackData *data = user_data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GBytes) bytes = NULL;
   SoupMessage *msg = data->message;
@@ -465,7 +434,7 @@ on_bytes_response (GObject      *source,
   /* Check for cancellation first - client may be gone */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      http_bytes_callback_data_free_deferred (data);
+      http_callback_data_free_deferred (data);
       return;
     }
 
@@ -474,7 +443,7 @@ on_bytes_response (GObject      *source,
   if (!client)
     {
       g_debug ("HTTP client destroyed during bytes request, discarding response");
-      http_bytes_callback_data_free_deferred (data);
+      http_callback_data_free_deferred (data);
       return;
     }
 
@@ -490,9 +459,9 @@ on_bytes_response (GObject      *source,
         }
 
       if (data->callback)
-        data->callback (client, NULL, NULL, error, data->user_data);
+        ((GnalkHttpBytesCallback) data->callback) (client, NULL, NULL, error, data->user_data);
       g_object_unref (client);
-      http_bytes_callback_data_free_deferred (data);
+      http_callback_data_free_deferred (data);
       return;
     }
 
@@ -523,16 +492,16 @@ on_bytes_response (GObject      *source,
                                                      "HTTP error %u",
                                                      status);
       if (data->callback)
-        data->callback (client, NULL, NULL, status_error, data->user_data);
+        ((GnalkHttpBytesCallback) data->callback) (client, NULL, NULL, status_error, data->user_data);
       g_object_unref (client);
-      http_bytes_callback_data_free_deferred (data);
+      http_callback_data_free_deferred (data);
       return;
     }
 
   if (data->callback)
-    data->callback (client, bytes, content_type, NULL, data->user_data);
+    ((GnalkHttpBytesCallback) data->callback) (client, bytes, content_type, NULL, data->user_data);
   g_object_unref (client);
-  http_bytes_callback_data_free_deferred (data);
+  http_callback_data_free_deferred (data);
 }
 
 void
@@ -549,7 +518,7 @@ gnalk_http_client_get_server_status (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -622,7 +591,7 @@ on_json_response_with_timeout (GObject      *source,
                      (gint) GNALK_HTTP_ERROR_TIMEOUT, "Request timed out");
 
       if (data->callback)
-        data->callback (client, NULL, timeout_error, data->user_data);
+        ((GnalkHttpCallback) data->callback) (client, NULL, timeout_error, data->user_data);
       g_object_unref (client);
       http_callback_data_free (data);
       return;
@@ -647,7 +616,7 @@ gnalk_http_client_get_server_status_with_timeout (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   /* Create a separate cancellable for this request with timeout */
@@ -677,7 +646,7 @@ gnalk_http_client_get_user_info (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -700,7 +669,7 @@ gnalk_http_client_get_conversations (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -722,7 +691,7 @@ gnalk_http_client_get_capabilities (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -744,7 +713,7 @@ gnalk_http_client_get_signaling_settings (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -792,7 +761,7 @@ gnalk_http_client_get_messages (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   /* Use room_cancellable so this can be cancelled when switching rooms */
@@ -826,7 +795,7 @@ gnalk_http_client_get_message_context (GnalkHttpClient  *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -868,7 +837,7 @@ gnalk_http_client_search_messages (GnalkHttpClient  *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   /* Use cancellable (not room_cancellable) since search is not tied to polling */
@@ -916,7 +885,7 @@ gnalk_http_client_send_message (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -954,7 +923,7 @@ gnalk_http_client_edit_message (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -982,7 +951,7 @@ gnalk_http_client_delete_message (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1016,7 +985,7 @@ gnalk_http_client_mark_chat_read (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1042,7 +1011,7 @@ gnalk_http_client_join_room (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1068,7 +1037,7 @@ gnalk_http_client_leave_room (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1096,7 +1065,7 @@ gnalk_http_client_get_participants (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   /* Use room_cancellable so this can be cancelled when switching rooms */
@@ -1153,7 +1122,7 @@ gnalk_http_client_start_call (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1179,7 +1148,7 @@ gnalk_http_client_leave_call (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1207,11 +1176,11 @@ gnalk_http_client_get_room_avatar (GnalkHttpClient        *self,
       return;
     }
 
-  HttpBytesCallbackData *data = g_new0 (HttpBytesCallbackData, 1);
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1239,11 +1208,48 @@ gnalk_http_client_get_user_avatar (GnalkHttpClient        *self,
       return;
     }
 
-  HttpBytesCallbackData *data = g_new0 (HttpBytesCallbackData, 1);
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
+  data->user_data = user_data;
+
+  soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
+                                     self->cancellable, on_bytes_response, data);
+  g_object_unref (msg);
+}
+
+void
+gnalk_http_client_get_federated_user_avatar (GnalkHttpClient        *self,
+                                                const char              *room_token,
+                                                const char              *cloud_id,
+                                                int                      size,
+                                                GnalkHttpBytesCallback  callback,
+                                                gpointer                 user_data)
+{
+  g_return_if_fail (GNALK_IS_HTTP_CLIENT (self));
+  g_return_if_fail (room_token != NULL);
+  g_return_if_fail (cloud_id != NULL);
+
+  g_autofree char *encoded_cloud_id = g_uri_escape_string (cloud_id, NULL, FALSE);
+  g_autofree char *endpoint = g_strdup_printf (
+      "/ocs/v2.php/apps/spreed/api/v1/proxy/%s/user-avatar/%d?cloudId=%s&darkTheme=0",
+      room_token, size, encoded_cloud_id);
+
+  SoupMessage *msg = create_bytes_message (self, "GET", endpoint);
+  if (!msg)
+    {
+      g_autoptr(GError) error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_FAILED, "Failed to create request");
+      callback (self, NULL, NULL, error, user_data);
+      return;
+    }
+
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
+  g_weak_ref_init (&data->client_ref, self);
+  data->message = g_object_ref (msg);
+  data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1273,11 +1279,11 @@ gnalk_http_client_get_file_preview (GnalkHttpClient        *self,
       return;
     }
 
-  HttpBytesCallbackData *data = g_new0 (HttpBytesCallbackData, 1);
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1309,11 +1315,11 @@ gnalk_http_client_download_file (GnalkHttpClient        *self,
       return;
     }
 
-  HttpBytesCallbackData *data = g_new0 (HttpBytesCallbackData, 1);
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1378,7 +1384,7 @@ gnalk_http_client_add_reaction (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1410,7 +1416,7 @@ gnalk_http_client_set_user_status (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1441,7 +1447,7 @@ gnalk_http_client_send_heartbeat (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1471,7 +1477,7 @@ gnalk_http_client_search_contacts (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1523,7 +1529,7 @@ gnalk_http_client_create_conversation (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1551,7 +1557,7 @@ gnalk_http_client_leave_conversation (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1579,7 +1585,7 @@ gnalk_http_client_delete_conversation (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1609,7 +1615,7 @@ gnalk_http_client_set_conversation_favorite (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1639,7 +1645,7 @@ gnalk_http_client_search_users (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1684,7 +1690,7 @@ gnalk_http_client_set_room_description (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1732,7 +1738,7 @@ gnalk_http_client_add_participant (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1760,7 +1766,7 @@ gnalk_http_client_get_room_info (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1810,7 +1816,7 @@ gnalk_http_client_join_room_as_guest (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1857,7 +1863,7 @@ gnalk_http_client_set_guest_name (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -1874,30 +1880,12 @@ gnalk_http_client_get_user_id (GnalkHttpClient *self)
   return self->user_id;
 }
 
-typedef struct
-{
-  GWeakRef                client_ref;  /* Weak reference to client */
-  SoupMessage            *message;
-  char                   *url;
-  GnalkHttpBoolCallback  callback;
-  gpointer                user_data;
-} HttpBoolCallbackData;
-
-static void
-http_bool_callback_data_free (HttpBoolCallbackData *data)
-{
-  g_weak_ref_clear (&data->client_ref);
-  g_clear_object (&data->message);
-  g_free (data->url);
-  g_free (data);
-}
-
 static void
 on_head_response (GObject      *source,
                   GAsyncResult *result,
                   gpointer      user_data)
 {
-  HttpBoolCallbackData *data = user_data;
+  HttpCallbackData *data = user_data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GInputStream) stream = NULL;
   SoupMessage *msg = data->message;
@@ -1908,7 +1896,7 @@ on_head_response (GObject      *source,
   /* Check for cancellation first - client may be gone */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      http_bool_callback_data_free (data);
+      http_callback_data_free (data);
       return;
     }
 
@@ -1917,7 +1905,7 @@ on_head_response (GObject      *source,
   if (!client)
     {
       g_debug ("HTTP client destroyed during HEAD request, discarding response");
-      http_bool_callback_data_free (data);
+      http_callback_data_free (data);
       return;
     }
 
@@ -1925,9 +1913,9 @@ on_head_response (GObject      *source,
     {
       gnalk_log_http_response (client->user_id, 0, error->message, NULL, data->url);
       if (data->callback)
-        data->callback (client, FALSE, error, data->user_data);
+        ((GnalkHttpBoolCallback) data->callback) (client, FALSE, error, data->user_data);
       g_object_unref (client);
-      http_bool_callback_data_free (data);
+      http_callback_data_free (data);
       return;
     }
 
@@ -1940,9 +1928,9 @@ on_head_response (GObject      *source,
   gboolean exists = SOUP_STATUS_IS_SUCCESSFUL (status);
 
   if (data->callback)
-    data->callback (client, exists, NULL, data->user_data);
+    ((GnalkHttpBoolCallback) data->callback) (client, exists, NULL, data->user_data);
   g_object_unref (client);
-  http_bool_callback_data_free (data);
+  http_callback_data_free (data);
 }
 
 void
@@ -1969,11 +1957,11 @@ gnalk_http_client_check_file_exists (GnalkHttpClient      *self,
       return;
     }
 
-  HttpBoolCallbackData *data = g_new0 (HttpBoolCallbackData, 1);
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   /* Use send_async for HEAD (no body) */
@@ -1987,7 +1975,7 @@ on_upload_response (GObject      *source,
                     GAsyncResult *result,
                     gpointer      user_data)
 {
-  HttpBoolCallbackData *data = user_data;
+  HttpCallbackData *data = user_data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GBytes) bytes = NULL;
   SoupMessage *msg = data->message;
@@ -1998,7 +1986,7 @@ on_upload_response (GObject      *source,
   /* Check for cancellation first - client may be gone */
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
-      http_bool_callback_data_free (data);
+      http_callback_data_free (data);
       return;
     }
 
@@ -2007,7 +1995,7 @@ on_upload_response (GObject      *source,
   if (!client)
     {
       g_debug ("HTTP client destroyed during upload request, discarding response");
-      http_bool_callback_data_free (data);
+      http_callback_data_free (data);
       return;
     }
 
@@ -2015,9 +2003,9 @@ on_upload_response (GObject      *source,
     {
       gnalk_log_http_response (client->user_id, 0, error->message, NULL, data->url);
       if (data->callback)
-        data->callback (client, FALSE, error, data->user_data);
+        ((GnalkHttpBoolCallback) data->callback) (client, FALSE, error, data->user_data);
       g_object_unref (client);
-      http_bool_callback_data_free (data);
+      http_callback_data_free (data);
       return;
     }
 
@@ -2051,16 +2039,16 @@ on_upload_response (GObject      *source,
                                                      "Upload failed: HTTP %u %s",
                                                      status, reason);
       if (data->callback)
-        data->callback (client, FALSE, status_error, data->user_data);
+        ((GnalkHttpBoolCallback) data->callback) (client, FALSE, status_error, data->user_data);
       g_object_unref (client);
-      http_bool_callback_data_free (data);
+      http_callback_data_free (data);
       return;
     }
 
   if (data->callback)
-    data->callback (client, TRUE, NULL, data->user_data);
+    ((GnalkHttpBoolCallback) data->callback) (client, TRUE, NULL, data->user_data);
   g_object_unref (client);
-  http_bool_callback_data_free (data);
+  http_callback_data_free (data);
 }
 
 void
@@ -2102,11 +2090,11 @@ gnalk_http_client_upload_file (GnalkHttpClient      *self,
   /* Set request body */
   soup_message_set_request_body_from_bytes (msg, content_type, file_bytes);
 
-  HttpBoolCallbackData *data = g_new0 (HttpBoolCallbackData, 1);
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2186,7 +2174,7 @@ gnalk_http_client_share_to_conversation (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2233,7 +2221,7 @@ gnalk_http_client_set_room_name (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2287,11 +2275,11 @@ gnalk_http_client_upload_room_avatar (GnalkHttpClient      *self,
   g_autofree char *log_body = g_strdup_printf ("[multipart avatar %zu bytes]", size);
   gnalk_log_http_request (self->user_id, "POST", url, log_body);
 
-  HttpBoolCallbackData *data = g_new0 (HttpBoolCallbackData, 1);
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup (url);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2336,7 +2324,7 @@ gnalk_http_client_set_notification_level (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2381,7 +2369,7 @@ gnalk_http_client_set_call_notifications (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2413,7 +2401,7 @@ gnalk_http_client_get_shared_items (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2443,7 +2431,7 @@ gnalk_http_client_remove_attendee (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2488,7 +2476,7 @@ gnalk_http_client_promote_moderator (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2518,7 +2506,7 @@ gnalk_http_client_demote_moderator (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2546,7 +2534,7 @@ gnalk_http_client_get_signaling_settings_for_room (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2581,7 +2569,7 @@ gnalk_http_client_start_call_federation (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2608,7 +2596,7 @@ gnalk_http_client_leave_call_federation (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2635,7 +2623,7 @@ gnalk_http_client_get_federation_invitations (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2663,7 +2651,7 @@ gnalk_http_client_accept_federation_invitation (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
@@ -2691,7 +2679,7 @@ gnalk_http_client_decline_federation_invitation (GnalkHttpClient   *self,
   g_weak_ref_init (&data->client_ref, self);
   data->message = g_object_ref (msg);
   data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
-  data->callback = callback;
+  data->callback = (GCallback) callback;
   data->user_data = user_data;
 
   soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,

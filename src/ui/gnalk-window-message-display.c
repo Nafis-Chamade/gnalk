@@ -12,11 +12,15 @@
 
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
+#include "gnalk-session.h"
 #include "gnalk-data-repository.h"
 #include "gnalk-database.h"
 #include "gnalk-message-data.h"
 #include "gnalk-message-processor.h"
 #include "gnalk-message-controller.h"
+#include "gnalk-message-view.h"
+#include "gnalk-participant-controller.h"
+#include "gnalk-incoming-call-banner.h"
 #include "gnalk-log.h"
 #include <json-glib/json-glib.h>
 #include <glib/gi18n.h>

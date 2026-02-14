@@ -16,6 +16,35 @@ G_DEFINE_FINAL_TYPE (GnalkCallWindow, gnalk_call_window, ADW_TYPE_WINDOW)
 #define N_SIGNALS GNALK_CALL_WINDOW_N_SIGNALS
 
 static void
+call_participant_record_free (gpointer data)
+{
+  CallParticipantRecord *record = data;
+  g_free (record->display_name);
+  g_free (record->user_id);
+  if (record->tile)
+    g_object_unref (record->tile);
+  if (record->screen_tile)
+    g_object_unref (record->screen_tile);
+  if (record->screen_subscriber)
+    g_object_unref (record->screen_subscriber);
+  g_free (record->screen_subscriber_sid);
+  g_free (record);
+}
+
+CallParticipantRecord *
+gnalk_call_ensure_participant_record (GnalkCallWindow *self,
+                                        const char       *session_id)
+{
+  CallParticipantRecord *record = g_hash_table_lookup (self->participants, session_id);
+  if (!record)
+    {
+      record = g_new0 (CallParticipantRecord, 1);
+      g_hash_table_insert (self->participants, g_strdup (session_id), record);
+    }
+  return record;
+}
+
+static void
 gnalk_call_window_get_property (GObject    *object,
                                  guint       prop_id,
                                  GValue     *value,
@@ -76,15 +105,13 @@ on_hand_raised (GnalkSignaling  *signaling G_GNUC_UNUSED,
   if (!session_id)
     return;
 
-  if (state)
-    g_hash_table_insert (self->raised_hands, g_strdup (session_id), GINT_TO_POINTER (1));
-  else
-    g_hash_table_remove (self->raised_hands, session_id);
-
-  /* Update tile overlay */
-  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, session_id);
-  if (tile)
-    gnalk_participant_tile_set_hand_raised (tile, state);
+  CallParticipantRecord *record = g_hash_table_lookup (self->participants, session_id);
+  if (record)
+    {
+      record->hand_raised = state;
+      if (record->tile)
+        gnalk_participant_tile_set_hand_raised (record->tile, state);
+    }
 }
 
 typedef struct {
@@ -111,10 +138,10 @@ on_reaction_fade_timeout (gpointer user_data)
       GnalkCallWindow *self = GNALK_CALL_WINDOW (window_obj);
       self->reaction_fade_timeout_id = 0;
 
-      GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles,
-                                                         data->session_id);
-      if (tile)
-        gnalk_participant_tile_set_reaction (tile, NULL);
+      CallParticipantRecord *record = g_hash_table_lookup (self->participants,
+                                                            data->session_id);
+      if (record && record->tile)
+        gnalk_participant_tile_set_reaction (record->tile, NULL);
     }
 
   reaction_fade_data_free (data);
@@ -130,11 +157,11 @@ on_call_reaction (GnalkSignaling  *signaling G_GNUC_UNUSED,
   if (!session_id || !emoji || !*emoji)
     return;
 
-  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, session_id);
-  if (!tile)
+  CallParticipantRecord *record = g_hash_table_lookup (self->participants, session_id);
+  if (!record || !record->tile)
     return;
 
-  gnalk_participant_tile_set_reaction (tile, emoji);
+  gnalk_participant_tile_set_reaction (record->tile, emoji);
 
   /* Cancel previous fade timeout if any */
   if (self->reaction_fade_timeout_id > 0)
@@ -301,10 +328,8 @@ gnalk_call_window_finalize (GObject *object)
   g_free (self->publisher_sid);
   g_free (self->active_speaker_id);
   g_clear_pointer (&self->peer_session_ids, g_ptr_array_unref);
-  g_clear_pointer (&self->peer_display_names, g_hash_table_unref);
-  g_clear_pointer (&self->peer_user_ids, g_hash_table_unref);
+  g_clear_pointer (&self->participants, g_hash_table_unref);
   g_clear_pointer (&self->user_display_names, g_hash_table_unref);
-  g_clear_pointer (&self->participant_tiles, g_hash_table_unref);
 
   /* Disconnect signal handlers before clearing state */
   if (self->signaling)
@@ -332,12 +357,7 @@ gnalk_call_window_finalize (GObject *object)
       self->reaction_fade_timeout_id = 0;
     }
 
-  g_clear_pointer (&self->raised_hands, g_hash_table_unref);
-
-  /* Clean up screen sharing state */
-  g_clear_pointer (&self->screen_tiles, g_hash_table_unref);
-  g_clear_pointer (&self->screen_subscribers, g_hash_table_unref);
-  g_clear_pointer (&self->screen_sids, g_hash_table_unref);
+  /* Screen sharing state is cleaned up via participants hash table */
   g_clear_object (&self->screen_capture);
   g_clear_object (&self->screen_publisher);
   g_free (self->screen_publisher_sid);
@@ -434,22 +454,10 @@ gnalk_call_window_init (GnalkCallWindow *self)
 {
   self->call_status = g_strdup (_("Connecting..."));
   self->peer_session_ids = g_ptr_array_new_with_free_func (g_free);
-  self->peer_display_names = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                                     g_free, g_free);
-  self->peer_user_ids = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                                g_free, g_free);
+  self->participants = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                               g_free, call_participant_record_free);
   self->user_display_names = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                      g_free, g_free);
-  self->participant_tiles = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                                    g_free, g_object_unref);
-  self->raised_hands = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                               g_free, NULL);
-  self->screen_tiles = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                               g_free, g_object_unref);
-  self->screen_subscribers = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                                     g_free, g_object_unref);
-  self->screen_sids = g_hash_table_new_full (g_str_hash, g_str_equal,
-                                              g_free, g_free);
   self->preview_margin_start = 12;
   self->preview_margin_top = 12;
   /* Read camera position from settings (0=Front, 1=Back, 2=Generic) */
@@ -684,16 +692,19 @@ on_signaling_message (GnalkSignaling *signaling,
                       JsonObject *user_obj = json_object_get_object_member (participant, "user");
                       if (user_obj)
                         {
+                          CallParticipantRecord *record = gnalk_call_ensure_participant_record (self, session_id);
                           const char *displayname = json_object_get_string_member_with_default (user_obj, "displayname", NULL);
                           if (displayname)
                             {
-                              g_hash_table_insert (self->peer_display_names, g_strdup (session_id), g_strdup (displayname));
+                              g_free (record->display_name);
+                              record->display_name = g_strdup (displayname);
                               g_message ("Stored display name '%s' for session %s", displayname, session_id);
                             }
                           const char *userid = json_object_get_string_member_with_default (user_obj, "userid", NULL);
                           if (userid)
                             {
-                              g_hash_table_insert (self->peer_user_ids, g_strdup (session_id), g_strdup (userid));
+                              g_free (record->user_id);
+                              record->user_id = g_strdup (userid);
                               g_message ("Stored userid '%s' for session %s (for avatar loading)", userid, session_id);
                             }
                         }
@@ -782,10 +793,13 @@ on_signaling_message (GnalkSignaling *signaling,
 
                           if (in_call == 0)
                             {
+                              {
+                              CallParticipantRecord *pr = g_hash_table_lookup (self->participants, session_id);
                               g_message ("Peer left call: session_id=%s, tile_exists=%d, peer_tracked=%d",
                                          session_id,
-                                         g_hash_table_contains (self->participant_tiles, session_id),
+                                         pr && pr->tile ? 1 : 0,
                                          self->peer_session_ids->len > 0);
+                              }
 
                               /* Peer left the call - remove from tracking */
                               for (guint j = 0; j < self->peer_session_ids->len; j++)
@@ -821,10 +835,15 @@ on_signaling_message (GnalkSignaling *signaling,
                                   const char *user_id = json_object_get_string_member_with_default (user, "userId", NULL);
                                   if (user_id)
                                     {
-                                      g_hash_table_insert (self->peer_user_ids, g_strdup (session_id), g_strdup (user_id));
+                                      CallParticipantRecord *record = gnalk_call_ensure_participant_record (self, session_id);
+                                      g_free (record->user_id);
+                                      record->user_id = g_strdup (user_id);
                                       const char *name = g_hash_table_lookup (self->user_display_names, user_id);
                                       if (name)
-                                        g_hash_table_insert (self->peer_display_names, g_strdup (session_id), g_strdup (name));
+                                        {
+                                          g_free (record->display_name);
+                                          record->display_name = g_strdup (name);
+                                        }
                                     }
                                   g_message ("New peer in call: %s (user_id=%s)", session_id, user_id ? user_id : "NULL");
                                 }
@@ -880,14 +899,15 @@ on_signaling_message (GnalkSignaling *signaling,
                               /* In MCU mode, add tile and request the peer's stream */
                               if (self->has_mcu)
                                 {
+                                  CallParticipantRecord *record = g_hash_table_lookup (self->participants, session_id);
                                   /* Only add if we don't already have a tile for this peer */
-                                  if (!g_hash_table_contains (self->participant_tiles, session_id))
+                                  if (!record || !record->tile)
                                     {
                                       if (self->publisher_connected)
                                         {
                                           /* Already connected, add tile and subscribe immediately */
-                                          const char *display_name = g_hash_table_lookup (self->peer_display_names, session_id);
-                                          const char *peer_user_id = g_hash_table_lookup (self->peer_user_ids, session_id);
+                                          const char *display_name = record ? record->display_name : NULL;
+                                          const char *peer_user_id = record ? record->user_id : NULL;
                                           /* Fall back to user_display_names lookup by userId */
                                           if (!display_name && peer_user_id)
                                             display_name = g_hash_table_lookup (self->user_display_names, peer_user_id);
@@ -941,7 +961,8 @@ on_signaling_message (GnalkSignaling *signaling,
                   if (g_strcmp0 (room_type, "screen") == 0 && sender_session_id)
                     {
                       /* Route screen share offer to screen subscriber - create on-the-fly if needed */
-                      GnalkWebrtc *screen_sub = g_hash_table_lookup (self->screen_subscribers, sender_session_id);
+                      CallParticipantRecord *screen_record = gnalk_call_ensure_participant_record (self, sender_session_id);
+                      GnalkWebrtc *screen_sub = screen_record->screen_subscriber;
 
                       if (!screen_sub)
                         {
@@ -953,10 +974,9 @@ on_signaling_message (GnalkSignaling *signaling,
                           gnalk_participant_tile_set_video_enabled (screen_tile, TRUE);  /* Enable frozen check */
                           gnalk_participant_tile_set_session_id (screen_tile, sender_session_id);
 
-                          const char *display_name = g_hash_table_lookup (self->peer_display_names, sender_session_id);
-                          if (display_name)
+                          if (screen_record->display_name)
                             {
-                              g_autofree char *label = g_strdup_printf ("%s's screen", display_name);
+                              g_autofree char *label = g_strdup_printf ("%s's screen", screen_record->display_name);
                               gnalk_participant_tile_set_display_name (screen_tile, label);
                             }
                           else
@@ -964,10 +984,8 @@ on_signaling_message (GnalkSignaling *signaling,
                               gnalk_participant_tile_set_display_name (screen_tile, "Screen Share");
                             }
 
-                          /* Store in hash table - sink floating ref and own the tile */
-                          g_hash_table_insert (self->screen_tiles,
-                                               g_strdup (sender_session_id),
-                                               g_object_ref_sink (screen_tile));
+                          /* Store screen tile on record - sink floating ref */
+                          screen_record->screen_tile = g_object_ref_sink (screen_tile);
 
                           /* Create subscriber WebRTC */
                           screen_sub = gnalk_webrtc_new ();
@@ -1007,9 +1025,7 @@ on_signaling_message (GnalkSignaling *signaling,
                           /* Enable continuous keyframe requests for screen share quality */
                           gnalk_webrtc_enable_continuous_pli (screen_sub, TRUE, 2000);
 
-                          g_hash_table_insert (self->screen_subscribers,
-                                               g_strdup (sender_session_id),
-                                               screen_sub);
+                          screen_record->screen_subscriber = screen_sub;
 
                           gnalk_call_layout_recalculate (self);
                         }
@@ -1018,7 +1034,7 @@ on_signaling_message (GnalkSignaling *signaling,
                        * If the new offer has a DIFFERENT sid, we must accept it - the peer
                        * may have restarted their screen share or the server reassigned the session.
                        * Ignoring new sids causes signaling failures ("processing_failed"). */
-                      const char *existing_sid = g_hash_table_lookup (self->screen_sids, sender_session_id);
+                      const char *existing_sid = screen_record->screen_subscriber_sid;
                       if (existing_sid && existing_sid[0] != '\0' &&
                           offer_sid && g_strcmp0 (existing_sid, offer_sid) == 0)
                         {
@@ -1040,17 +1056,17 @@ on_signaling_message (GnalkSignaling *signaling,
                               g_message ("Routing screen share offer to screen_subscriber for %.30s...", sender_session_id);
                             }
                           /* Store/update SID for sending answer back */
-                          g_hash_table_insert (self->screen_sids,
-                                               g_strdup (sender_session_id),
-                                               g_strdup (offer_sid ? offer_sid : ""));
+                          g_free (screen_record->screen_subscriber_sid);
+                          screen_record->screen_subscriber_sid = g_strdup (offer_sid ? offer_sid : "");
                           gnalk_webrtc_handle_offer (screen_sub, sdp);
                         }
                     }
                   else
                     {
                       /* Check if this offer is for a tile subscription (from peer we requested) */
-                      GnalkParticipantTile *tile = sender_session_id ?
-                        g_hash_table_lookup (self->participant_tiles, sender_session_id) : NULL;
+                      CallParticipantRecord *offer_record = sender_session_id ?
+                        g_hash_table_lookup (self->participants, sender_session_id) : NULL;
+                      GnalkParticipantTile *tile = offer_record ? offer_record->tile : NULL;
 
                       if (tile)
                         {
@@ -1127,10 +1143,9 @@ on_signaling_message (GnalkSignaling *signaling,
                             }
                           else if (sender_session_id)
                             {
-                              /* We're receiving - check if candidate's SID matches the offer we accepted.
-                               * Janus sends candidates from multiple publishers with different SIDs,
-                               * but we only want candidates for the session we're actually subscribing to. */
-                              const char *stored_sid = g_hash_table_lookup (self->screen_sids, sender_session_id);
+                              /* We're receiving - check if candidate's SID matches the offer we accepted. */
+                              CallParticipantRecord *ice_record = g_hash_table_lookup (self->participants, sender_session_id);
+                              const char *stored_sid = ice_record ? ice_record->screen_subscriber_sid : NULL;
                               if (stored_sid && candidate_sid && g_strcmp0 (stored_sid, candidate_sid) != 0)
                                 {
                                   g_message ("Ignoring screen ICE candidate with mismatched sid (have %s, got %s)",
@@ -1138,8 +1153,7 @@ on_signaling_message (GnalkSignaling *signaling,
                                 }
                               else
                                 {
-                                  /* SID matches or no SID check needed - route to screen subscriber */
-                                  GnalkWebrtc *screen_sub = g_hash_table_lookup (self->screen_subscribers, sender_session_id);
+                                  GnalkWebrtc *screen_sub = ice_record ? ice_record->screen_subscriber : NULL;
                                   if (screen_sub)
                                     {
                                       g_message ("Routing screen ICE candidate to screen_subscriber for %.30s...", sender_session_id);
@@ -1151,8 +1165,9 @@ on_signaling_message (GnalkSignaling *signaling,
                       else
                         {
                           /* Video/audio candidates - route to correct WebRTC instance based on sender */
-                          GnalkParticipantTile *tile = sender_session_id ?
-                            g_hash_table_lookup (self->participant_tiles, sender_session_id) : NULL;
+                          CallParticipantRecord *ice_record = sender_session_id ?
+                            g_hash_table_lookup (self->participants, sender_session_id) : NULL;
+                          GnalkParticipantTile *tile = ice_record ? ice_record->tile : NULL;
 
                           if (tile)
                             {
@@ -1171,34 +1186,33 @@ on_signaling_message (GnalkSignaling *signaling,
                 {
                   /* Remote participant muted their media */
                   const char *media_name = json_object_get_string_member_with_default (payload, "name", "");
-                  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, sender_session_id);
-                  if (tile)
+                  CallParticipantRecord *mute_record = g_hash_table_lookup (self->participants, sender_session_id);
+                  if (mute_record && mute_record->tile)
                     {
                       g_message ("Peer %s muted %s", sender_session_id, media_name);
                       if (g_strcmp0 (media_name, "video") == 0)
-                        gnalk_participant_tile_set_video_enabled (tile, FALSE);
+                        gnalk_participant_tile_set_video_enabled (mute_record->tile, FALSE);
                       else if (g_strcmp0 (media_name, "audio") == 0)
-                        gnalk_participant_tile_set_audio_enabled (tile, FALSE);
+                        gnalk_participant_tile_set_audio_enabled (mute_record->tile, FALSE);
                     }
                 }
               else if (g_strcmp0 (data_type, "unmute") == 0 && payload && sender_session_id)
                 {
                   /* Remote participant unmuted their media */
                   const char *media_name = json_object_get_string_member_with_default (payload, "name", "");
-                  GnalkParticipantTile *tile = g_hash_table_lookup (self->participant_tiles, sender_session_id);
-                  if (tile)
+                  CallParticipantRecord *unmute_record = g_hash_table_lookup (self->participants, sender_session_id);
+                  if (unmute_record && unmute_record->tile)
                     {
                       g_message ("Peer %s unmuted %s", sender_session_id, media_name);
                       if (g_strcmp0 (media_name, "video") == 0)
                         {
-                          gnalk_participant_tile_set_video_enabled (tile, TRUE);
-                          /* Request a keyframe when video is unmuted to ensure proper decoding */
-                          GnalkWebrtc *subscriber = gnalk_participant_tile_get_webrtc (tile);
+                          gnalk_participant_tile_set_video_enabled (unmute_record->tile, TRUE);
+                          GnalkWebrtc *subscriber = gnalk_participant_tile_get_webrtc (unmute_record->tile);
                           if (subscriber)
                             gnalk_webrtc_request_keyframe (subscriber);
                         }
                       else if (g_strcmp0 (media_name, "audio") == 0)
-                        gnalk_participant_tile_set_audio_enabled (tile, TRUE);
+                        gnalk_participant_tile_set_audio_enabled (unmute_record->tile, TRUE);
                     }
                 }
             }
@@ -1458,26 +1472,35 @@ gnalk_call_window_end_call (GnalkCallWindow *self)
   if (self->webrtc)
     gnalk_webrtc_end_call (self->webrtc);
 
-  /* End all subscriber WebRTC connections and clear tiles */
-  if (self->participant_tiles)
+  /* End all subscriber WebRTC connections, clear tiles and screen shares */
+  if (self->participants)
     {
-      g_message ("end_call: clearing %u participant tiles", g_hash_table_size (self->participant_tiles));
+      g_message ("end_call: clearing %u participant records", g_hash_table_size (self->participants));
       GHashTableIter iter;
       gpointer key, value;
-      g_hash_table_iter_init (&iter, self->participant_tiles);
+      g_hash_table_iter_init (&iter, self->participants);
       while (g_hash_table_iter_next (&iter, &key, &value))
         {
-          g_message ("end_call: cleaning up tile for session=%s", (char *)key);
-          GnalkParticipantTile *tile = GNALK_PARTICIPANT_TILE (value);
-          GnalkWebrtc *subscriber = gnalk_participant_tile_get_webrtc (tile);
-          if (subscriber)
-            gnalk_webrtc_end_call (subscriber);
-          /* Unparent tile from container before removing from hash table
-           * to prevent container from holding stale references */
-          gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (tile));
+          CallParticipantRecord *record = value;
+          g_message ("end_call: cleaning up participant session=%s", (char *)key);
+
+          /* Clean up main tile */
+          if (record->tile)
+            {
+              GnalkWebrtc *subscriber = gnalk_participant_tile_get_webrtc (record->tile);
+              if (subscriber)
+                gnalk_webrtc_end_call (subscriber);
+              gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->tile));
+            }
+
+          /* Clean up screen tile and subscriber */
+          if (record->screen_subscriber)
+            gnalk_webrtc_end_call (record->screen_subscriber);
+          if (record->screen_tile)
+            gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->screen_tile));
         }
-      g_hash_table_remove_all (self->participant_tiles);
-      g_message ("end_call: all tiles cleared, hash_table now has %u entries", g_hash_table_size (self->participant_tiles));
+      g_hash_table_remove_all (self->participants);
+      g_message ("end_call: all participants cleared");
     }
 
   /* Unparent local tile as well */
@@ -1502,31 +1525,6 @@ gnalk_call_window_end_call (GnalkCallWindow *self)
     }
   g_clear_pointer (&self->screen_publisher_sid, g_free);
   self->is_sharing_screen = FALSE;
-
-  /* End all screen subscriber WebRTC connections and clear screen tiles */
-  if (self->screen_tiles)
-    {
-      g_message ("end_call: clearing %u screen tiles", g_hash_table_size (self->screen_tiles));
-      GHashTableIter screen_iter;
-      gpointer screen_key, screen_value;
-      g_hash_table_iter_init (&screen_iter, self->screen_tiles);
-      while (g_hash_table_iter_next (&screen_iter, &screen_key, &screen_value))
-        {
-          g_message ("end_call: cleaning up screen tile for session=%s", (char *)screen_key);
-          GnalkParticipantTile *tile = GNALK_PARTICIPANT_TILE (screen_value);
-          GnalkWebrtc *subscriber = gnalk_participant_tile_get_webrtc (tile);
-          if (subscriber)
-            gnalk_webrtc_end_call (subscriber);
-          gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (tile));
-        }
-      g_hash_table_remove_all (self->screen_tiles);
-    }
-
-  if (self->screen_subscribers)
-    g_hash_table_remove_all (self->screen_subscribers);
-
-  if (self->screen_sids)
-    g_hash_table_remove_all (self->screen_sids);
 
   /* Reset screen share button state */
   if (self->screen_share_button)

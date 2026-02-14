@@ -1,4 +1,5 @@
 #include "gnalk-message-data.h"
+#include "gnalk-message-utils.h"
 
 struct _GnalkMessageData
 {
@@ -12,11 +13,12 @@ struct _GnalkMessageData
   char   *author_id;
   char   *author_name;
   char   *reference_id;
-  char   *system_message;
-  char   *actor_type;
+  char   *system_message;    /* Interned via g_intern_string — do not g_free */
+  char   *actor_type;        /* Interned via g_intern_string — do not g_free */
   gboolean is_own;
   gboolean show_date_header;
   gboolean show_timestamp;
+  gboolean show_avatar;     /* First message of a group (for avatar grouping) */
   GnalkMessageDataStatus status;
 
   JsonObject *reactions;
@@ -35,6 +37,9 @@ struct _GnalkMessageData
   char    *upload_file_name;
   char    *upload_file_path;
   char    *upload_mime_type;
+
+  /* File cache state (set when file is downloaded to local cache) */
+  gboolean file_cached;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageData, gnalk_message_data, G_TYPE_OBJECT)
@@ -42,6 +47,13 @@ G_DEFINE_FINAL_TYPE (GnalkMessageData, gnalk_message_data, G_TYPE_OBJECT)
 enum {
   PROP_0,
   PROP_IS_UNREAD,
+  PROP_MESSAGE,
+  PROP_STATUS,
+  PROP_REACTIONS,
+  PROP_LAST_EDIT_TS,
+  PROP_IS_UPLOADING,
+  PROP_UPLOAD_PROGRESS,
+  PROP_FILE_CACHED,
   N_PROPS
 };
 
@@ -59,6 +71,27 @@ gnalk_message_data_get_property (GObject    *object,
     {
     case PROP_IS_UNREAD:
       g_value_set_boolean (value, self->is_unread);
+      break;
+    case PROP_MESSAGE:
+      g_value_set_string (value, self->message);
+      break;
+    case PROP_STATUS:
+      g_value_set_int (value, (gint) self->status);
+      break;
+    case PROP_REACTIONS:
+      g_value_set_boxed (value, self->reactions);
+      break;
+    case PROP_LAST_EDIT_TS:
+      g_value_set_int64 (value, self->last_edit_timestamp);
+      break;
+    case PROP_IS_UPLOADING:
+      g_value_set_boolean (value, self->is_uploading);
+      break;
+    case PROP_UPLOAD_PROGRESS:
+      g_value_set_double (value, self->upload_progress);
+      break;
+    case PROP_FILE_CACHED:
+      g_value_set_boolean (value, self->file_cached);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -92,8 +125,7 @@ gnalk_message_data_finalize (GObject *object)
   g_free (self->author_id);
   g_free (self->author_name);
   g_free (self->reference_id);
-  g_free (self->system_message);
-  g_free (self->actor_type);
+  /* system_message and actor_type are interned — do not free */
   g_free (self->upload_file_name);
   g_free (self->upload_file_path);
   g_free (self->upload_mime_type);
@@ -118,11 +150,41 @@ gnalk_message_data_class_init (GnalkMessageDataClass *klass)
   object_class->set_property = gnalk_message_data_set_property;
 
   properties[PROP_IS_UNREAD] =
-    g_param_spec_boolean ("is-unread",
-                          "Is Unread",
-                          "Whether the message is unread",
+    g_param_spec_boolean ("is-unread", NULL, NULL, FALSE,
+                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_MESSAGE] =
+    g_param_spec_string ("message", NULL, NULL, NULL,
+                         G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_STATUS] =
+    g_param_spec_int ("status", NULL, NULL,
+                      0, G_MAXINT, 0,
+                      G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_REACTIONS] =
+    g_param_spec_boxed ("reactions", NULL, NULL,
+                        JSON_TYPE_OBJECT,
+                        G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_LAST_EDIT_TS] =
+    g_param_spec_int64 ("last-edit-timestamp", NULL, NULL,
+                        0, G_MAXINT64, 0,
+                        G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_IS_UPLOADING] =
+    g_param_spec_boolean ("is-uploading", NULL, NULL, FALSE,
+                          G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_UPLOAD_PROGRESS] =
+    g_param_spec_double ("upload-progress", NULL, NULL,
+                         0.0, 1.0, 0.0,
+                         G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_FILE_CACHED] =
+    g_param_spec_boolean ("file-cached", NULL, NULL,
                           FALSE,
-                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
+                          G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -148,9 +210,12 @@ gnalk_message_data_new_from_json (JsonObject *message_data,
   self->message = g_strdup (json_object_get_string_member_with_default (message_data, "message", ""));
   self->author_id = g_strdup (json_object_get_string_member_with_default (message_data, "actorId", ""));
   self->author_name = g_strdup (json_object_get_string_member_with_default (message_data, "actorDisplayName", ""));
-  self->reference_id = g_strdup (json_object_get_string_member_with_default (message_data, "referenceId", ""));
-  self->system_message = g_strdup (json_object_get_string_member_with_default (message_data, "systemMessage", ""));
-  self->actor_type = g_strdup (json_object_get_string_member_with_default (message_data, "actorType", "users"));
+
+  const char *ref = json_object_get_string_member_with_default (message_data, "referenceId", "");
+  self->reference_id = (ref && *ref) ? g_strdup (ref) : NULL;
+
+  self->system_message = (char *) g_intern_string (json_object_get_string_member_with_default (message_data, "systemMessage", ""));
+  self->actor_type = (char *) g_intern_string (json_object_get_string_member_with_default (message_data, "actorType", "users"));
 
   self->is_own = current_user_id && g_strcmp0 (self->author_id, current_user_id) == 0;
 
@@ -216,7 +281,7 @@ gnalk_message_data_new_pending (const char *message_text,
   self->message = g_strdup (message_text ? message_text : "");
   self->author_id = g_strdup (author_id ? author_id : "");
   self->author_name = g_strdup (author_name ? author_name : "");
-  self->reference_id = g_strdup (reference_id ? reference_id : "");
+  self->reference_id = (reference_id && *reference_id) ? g_strdup (reference_id) : NULL;
   self->reply_to = reply_to;
   self->is_own = TRUE;
   self->status = GNALK_MESSAGE_DATA_STATUS_SENDING;
@@ -391,7 +456,10 @@ gnalk_message_data_set_status (GnalkMessageData       *self,
                                  GnalkMessageDataStatus  status)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  if (self->status == status)
+    return;
   self->status = status;
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATUS]);
 }
 
 void
@@ -409,10 +477,16 @@ gnalk_message_data_confirm_sent (GnalkMessageData *self,
 {
   g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
 
+  g_object_freeze_notify (G_OBJECT (self));
   self->id = message_id;
   if (timestamp > 0)
     self->timestamp = timestamp;
-  self->status = GNALK_MESSAGE_DATA_STATUS_SENT;
+  if (self->status != GNALK_MESSAGE_DATA_STATUS_SENT)
+    {
+      self->status = GNALK_MESSAGE_DATA_STATUS_SENT;
+      g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATUS]);
+    }
+  g_object_thaw_notify (G_OBJECT (self));
 }
 
 void
@@ -437,6 +511,8 @@ gnalk_message_data_add_reaction (GnalkMessageData *self,
     {
       json_object_set_int_member (self->reactions, emoji, 1);
     }
+
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_REACTIONS]);
 }
 
 void
@@ -470,6 +546,21 @@ gnalk_message_data_get_show_timestamp (GnalkMessageData *self)
 }
 
 void
+gnalk_message_data_set_show_avatar (GnalkMessageData *self,
+                                      gboolean           show)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  self->show_avatar = show;
+}
+
+gboolean
+gnalk_message_data_get_show_avatar (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), TRUE);
+  return self->show_avatar;
+}
+
+void
 gnalk_message_data_set_parent (GnalkMessageData *self,
                                  JsonObject        *parent)
 {
@@ -494,9 +585,11 @@ gnalk_message_data_set_message (GnalkMessageData *self,
                                   const char        *message)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
-
+  if (g_strcmp0 (self->message, message) == 0)
+    return;
   g_free (self->message);
   self->message = g_strdup (message ? message : "");
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MESSAGE]);
 }
 
 void
@@ -504,7 +597,10 @@ gnalk_message_data_set_last_edit_timestamp (GnalkMessageData *self,
                                               gint64             timestamp)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  if (self->last_edit_timestamp == timestamp)
+    return;
   self->last_edit_timestamp = timestamp;
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LAST_EDIT_TS]);
 }
 
 void
@@ -513,8 +609,8 @@ gnalk_message_data_set_system_message (GnalkMessageData *self,
 {
   g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
 
-  g_free (self->system_message);
-  self->system_message = g_strdup (system_message);
+  /* Interned — no g_free needed */
+  self->system_message = (char *) g_intern_string (system_message ? system_message : "");
 }
 
 /* Unread message support */
@@ -559,7 +655,7 @@ gnalk_message_data_new_pending_file (const char *caption,
   self->message = g_strdup ((caption && *caption) ? caption : (file_name ? file_name : ""));
   self->author_id = g_strdup (author_id ? author_id : "");
   self->author_name = g_strdup (author_name ? author_name : "");
-  self->reference_id = g_strdup (reference_id ? reference_id : "");
+  self->reference_id = (reference_id && *reference_id) ? g_strdup (reference_id) : NULL;
   self->reply_to = reply_to;
   self->is_own = TRUE;
   self->status = GNALK_MESSAGE_DATA_STATUS_SENDING;
@@ -586,7 +682,10 @@ gnalk_message_data_set_is_uploading (GnalkMessageData *self,
                                        gboolean           uploading)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  if (self->is_uploading == uploading)
+    return;
   self->is_uploading = uploading;
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_UPLOADING]);
 }
 
 double
@@ -601,7 +700,29 @@ gnalk_message_data_set_upload_progress (GnalkMessageData *self,
                                           double             progress)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
-  self->upload_progress = CLAMP (progress, 0.0, 1.0);
+  double clamped = CLAMP (progress, 0.0, 1.0);
+  if (self->upload_progress == clamped)
+    return;
+  self->upload_progress = clamped;
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_UPLOAD_PROGRESS]);
+}
+
+gboolean
+gnalk_message_data_get_file_cached (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
+  return self->file_cached;
+}
+
+void
+gnalk_message_data_set_file_cached (GnalkMessageData *self,
+                                       gboolean           cached)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  if (self->file_cached == cached)
+    return;
+  self->file_cached = cached;
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FILE_CACHED]);
 }
 
 const char *
@@ -626,25 +747,6 @@ gnalk_message_data_get_upload_mime_type (GnalkMessageData *self)
 }
 
 /* Database serialization */
-
-static char *
-serialize_json_object (JsonObject *obj)
-{
-  if (!obj)
-    return NULL;
-
-  JsonNode *node = json_node_new (JSON_NODE_OBJECT);
-  json_node_set_object (node, obj);
-
-  JsonGenerator *gen = json_generator_new ();
-  json_generator_set_root (gen, node);
-  char *json = json_generator_to_data (gen, NULL);
-
-  g_object_unref (gen);
-  json_node_free (node);
-
-  return json;
-}
 
 static JsonObject *
 parse_json_object (const char *json_str)
@@ -673,21 +775,21 @@ char *
 gnalk_message_data_serialize_reactions (GnalkMessageData *self)
 {
   g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), NULL);
-  return serialize_json_object (self->reactions);
+  return gnalk_message_utils_serialize_json_object (self->reactions);
 }
 
 char *
 gnalk_message_data_serialize_parent (GnalkMessageData *self)
 {
   g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), NULL);
-  return serialize_json_object (self->parent);
+  return gnalk_message_utils_serialize_json_object (self->parent);
 }
 
 char *
 gnalk_message_data_serialize_parameters (GnalkMessageData *self)
 {
   g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), NULL);
-  return serialize_json_object (self->message_parameters);
+  return gnalk_message_utils_serialize_json_object (self->message_parameters);
 }
 
 GnalkMessageData *
@@ -716,9 +818,9 @@ gnalk_message_data_new_from_db (gint64                   id,
   self->message = g_strdup (message ? message : "");
   self->author_id = g_strdup (author_id ? author_id : "");
   self->author_name = g_strdup (author_name ? author_name : "");
-  self->reference_id = g_strdup (reference_id ? reference_id : "");
-  self->system_message = g_strdup (system_message ? system_message : "");
-  self->actor_type = g_strdup (actor_type ? actor_type : "users");
+  self->reference_id = (reference_id && *reference_id) ? g_strdup (reference_id) : NULL;
+  self->system_message = (char *) g_intern_string (system_message ? system_message : "");
+  self->actor_type = (char *) g_intern_string (actor_type ? actor_type : "users");
   self->is_own = is_own;
   self->status = status;
 

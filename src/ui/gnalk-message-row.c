@@ -1,12 +1,14 @@
 #include "gnalk-message-row.h"
 #include "gnalk-message-data.h"
 #include "gnalk-markdown.h"
+#include "gnalk-message-utils.h"
 #include "gnalk-audio-player.h"
 #include "gnalk-video-thumbnail.h"
 #include "gnalk-date-separator.h"
 #include "gnalk-quote-widget.h"
 #include "gnalk-upload-preview.h"
 #include "gnalk-file-preview.h"
+#include "gnalk-system-message.h"
 #include <adwaita.h>
 #include <glib/gi18n.h>
 #include <time.h>
@@ -113,16 +115,93 @@ static gboolean is_single_emoji (const char *text);
 static void on_avatar_loaded (GnalkAvatarCache *cache, GdkTexture *texture, gpointer user_data);
 static void apply_layout (GnalkMessageRow *self);
 
-/* Callback for when bound data's is-unread property changes */
+/* Callback for when any bound data property changes (notify-based refresh) */
 static void
-on_data_unread_changed (GObject    *data,
-                        GParamSpec *pspec G_GNUC_UNUSED,
-                        gpointer    user_data)
+on_bound_data_notify (GObject    *data_obj,
+                      GParamSpec *pspec,
+                      gpointer    user_data)
 {
   GnalkMessageRow *self = GNALK_MESSAGE_ROW (user_data);
-  GnalkMessageData *msg_data = GNALK_MESSAGE_DATA (data);
+  GnalkMessageData *data = GNALK_MESSAGE_DATA (data_obj);
+  const char *name = pspec->name;
 
-  gnalk_message_row_set_unread (self, gnalk_message_data_get_is_unread (msg_data));
+  if (g_strcmp0 (name, "is-unread") == 0)
+    {
+      gnalk_message_row_set_unread (self, gnalk_message_data_get_is_unread (data));
+    }
+  else if (g_strcmp0 (name, "message") == 0)
+    {
+      const char *message_text = gnalk_message_data_get_message (data);
+      JsonObject *params = gnalk_message_data_get_message_parameters (data);
+      g_autofree char *display_message = gnalk_message_utils_replace_parameters (
+          message_text, params, self->is_system ? self->author_name : NULL);
+
+      g_free (self->message);
+      self->message = g_strdup (display_message);
+
+      gboolean render_md = gnalk_message_data_get_render_markdown (data);
+      if (render_md && display_message && *display_message)
+        {
+          g_autofree char *markup = gnalk_markdown_to_pango (display_message, params);
+          gtk_label_set_markup (GTK_LABEL (self->message_label), markup);
+        }
+      else
+        {
+          g_autofree char *escaped = gnalk_markdown_escape_pango (display_message ? display_message : "");
+          gtk_label_set_markup (GTK_LABEL (self->message_label), escaped);
+        }
+
+      gtk_widget_remove_css_class (self->message_label, "message-emoji-only");
+      if (!self->is_system && is_single_emoji (display_message))
+        gtk_widget_add_css_class (self->message_label, "message-emoji-only");
+    }
+  else if (g_strcmp0 (name, "status") == 0)
+    {
+      GnalkMessageDataStatus data_status = gnalk_message_data_get_status (data);
+      switch (data_status)
+        {
+        case GNALK_MESSAGE_DATA_STATUS_SENDING:
+          self->status = GNALK_MESSAGE_STATUS_SENDING;
+          break;
+        case GNALK_MESSAGE_DATA_STATUS_SENT:
+          self->status = GNALK_MESSAGE_STATUS_SENT;
+          break;
+        case GNALK_MESSAGE_DATA_STATUS_READ:
+          self->status = GNALK_MESSAGE_STATUS_READ;
+          break;
+        case GNALK_MESSAGE_DATA_STATUS_FAILED:
+          self->status = GNALK_MESSAGE_STATUS_FAILED;
+          break;
+        default:
+          self->status = GNALK_MESSAGE_STATUS_NONE;
+          break;
+        }
+      if (self->is_self && !self->is_system)
+        update_status_icon (self);
+    }
+  else if (g_strcmp0 (name, "reactions") == 0)
+    {
+      JsonObject *reactions = gnalk_message_data_get_reactions (data);
+      if (reactions)
+        gnalk_message_row_set_reactions (self, reactions);
+      else
+        gtk_widget_set_visible (self->reactions_label, FALSE);
+    }
+  else if (g_strcmp0 (name, "last-edit-ts") == 0)
+    {
+      gint64 last_edit = gnalk_message_data_get_last_edit_timestamp (data);
+      gtk_widget_set_visible (self->edited_label, last_edit > 0);
+    }
+  else if (g_strcmp0 (name, "is-uploading") == 0)
+    {
+      if (!gnalk_message_data_get_is_uploading (data))
+        gnalk_upload_preview_set_complete (self->upload_preview);
+    }
+  else if (g_strcmp0 (name, "file-cached") == 0)
+    {
+      gboolean cached = gnalk_message_data_get_file_cached (data);
+      gnalk_file_preview_set_cached (self->file_preview, cached);
+    }
 }
 
 /* Helper to set all content widgets to a given alignment */
@@ -316,13 +395,16 @@ gnalk_message_row_class_init (GnalkMessageRowClass *klass)
   object_class->finalize = gnalk_message_row_finalize;
 
   properties[PROP_AUTHOR_NAME] =
-    g_param_spec_string ("author-name", NULL, NULL, "", G_PARAM_READWRITE);
+    g_param_spec_string ("author-name", NULL, NULL, "",
+                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   properties[PROP_MESSAGE] =
-    g_param_spec_string ("message", NULL, NULL, "", G_PARAM_READWRITE);
+    g_param_spec_string ("message", NULL, NULL, "",
+                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   properties[PROP_TIMESTAMP] =
-    g_param_spec_string ("timestamp", NULL, NULL, "", G_PARAM_READWRITE);
+    g_param_spec_string ("timestamp", NULL, NULL, "",
+                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -938,94 +1020,31 @@ gnalk_message_row_set_data (GnalkMessageRow  *self,
 
   if (self->is_system)
     {
-      /* Start with the original message */
-      display_message = g_strdup (message_text);
-
-      /* Replace {actor} with actor name */
-      g_autoptr(GRegex) actor_regex = g_regex_new ("\\{actor\\}", 0, 0, NULL);
-      if (actor_regex)
-        {
-          g_autofree char *tmp = display_message;
-          display_message = g_regex_replace_literal (actor_regex, tmp, -1, 0, actor_name, 0, NULL);
-          if (!display_message)
-            display_message = g_strdup (tmp);
-        }
-
-      /* Parse messageParameters for user1, user2, etc. (may be [] instead of {}) */
+      const char *sys_type = json_object_get_string_member_with_default (
+          message_data, "systemMessage", "");
+      JsonObject *params = NULL;
       if (json_object_has_member (message_data, "messageParameters"))
         {
-          JsonNode *params_node = json_object_get_member (message_data, "messageParameters");
-          if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
-            {
-              JsonObject *params = json_node_get_object (params_node);
-              if (params)
-                {
-                  JsonObjectIter iter;
-                  const char *param_key;
-                  JsonNode *param_node;
-
-                  json_object_iter_init (&iter, params);
-                  while (json_object_iter_next (&iter, &param_key, &param_node))
-                    {
-                      /* Handle user parameters (user1, user2, etc.) and other types like call, file */
-                      if (JSON_NODE_HOLDS_OBJECT (param_node))
-                        {
-                          JsonObject *param_obj = json_node_get_object (param_node);
-                          const char *name = json_object_get_string_member_with_default (param_obj, "name", NULL);
-
-                          if (name)
-                            {
-                              /* Build pattern like {user1}, {call1}, {file}, etc. */
-                              g_autofree char *pattern = g_strdup_printf ("\\{%s\\}", param_key);
-                              g_autoptr(GRegex) param_regex = g_regex_new (pattern, 0, 0, NULL);
-
-                              if (param_regex)
-                                {
-                                  g_autofree char *tmp = display_message;
-                                  display_message = g_regex_replace_literal (param_regex, tmp, -1, 0, name, 0, NULL);
-                                  if (!display_message)
-                                    display_message = g_strdup (tmp);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+          JsonNode *n = json_object_get_member (message_data, "messageParameters");
+          if (n && JSON_NODE_HOLDS_OBJECT (n))
+            params = json_node_get_object (n);
         }
+      display_message = gnalk_system_message_format (
+          sys_type, actor_name, self->is_self, params);
+      if (!display_message)
+        display_message = g_strdup (message_text);
     }
   else
     {
-      display_message = g_strdup (message_text);
-
-      /* Replace {file} placeholder with filename for file messages */
+      /* Replace {file} and other parameters using centralized utility */
+      JsonObject *params = NULL;
       if (json_object_has_member (message_data, "messageParameters"))
         {
           JsonNode *params_node = json_object_get_member (message_data, "messageParameters");
           if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
-            {
-              JsonObject *params = json_node_get_object (params_node);
-              if (params && json_object_has_member (params, "file"))
-                {
-                  JsonNode *file_node = json_object_get_member (params, "file");
-                  if (file_node && JSON_NODE_HOLDS_OBJECT (file_node))
-                    {
-                      JsonObject *file_obj = json_node_get_object (file_node);
-                      const char *file_name = json_object_get_string_member_with_default (file_obj, "name", NULL);
-                      if (file_name)
-                        {
-                          g_autoptr(GRegex) file_regex = g_regex_new ("\\{file\\}", 0, 0, NULL);
-                          if (file_regex)
-                            {
-                              g_autofree char *tmp = display_message;
-                              display_message = g_regex_replace_literal (file_regex, tmp, -1, 0, file_name, 0, NULL);
-                              if (!display_message)
-                                display_message = g_strdup (tmp);
-                            }
-                        }
-                    }
-                }
-            }
+            params = json_node_get_object (params_node);
         }
+      display_message = gnalk_message_utils_replace_parameters (message_text, params, NULL);
     }
 
   g_free (self->author_name);
@@ -1656,7 +1675,8 @@ gnalk_message_row_confirm_sent (GnalkMessageRow *self,
 void
 gnalk_message_row_set_from_data (GnalkMessageRow  *self,
                                    GnalkMessageData *data,
-                                   GnalkAvatarCache *avatar_cache)
+                                   GnalkAvatarCache *avatar_cache,
+                                   const char        *room_token)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_ROW (self));
   g_return_if_fail (GNALK_IS_MESSAGE_DATA (data));
@@ -1690,81 +1710,12 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
   g_autofree char *ts_str = format_timestamp (timestamp);
   g_autofree char *display_message = NULL;
 
-  if (self->is_system)
-    {
-      /* Start with the original message */
-      display_message = g_strdup (message_text);
-
-      /* Replace {actor} with actor name */
-      g_autoptr(GRegex) actor_regex = g_regex_new ("\\{actor\\}", 0, 0, NULL);
-      if (actor_regex)
-        {
-          g_autofree char *tmp = display_message;
-          display_message = g_regex_replace_literal (actor_regex, tmp, -1, 0, actor_name, 0, NULL);
-          if (!display_message)
-            display_message = g_strdup (tmp);
-        }
-
-      /* Parse messageParameters for user1, user2, etc. */
-      JsonObject *params = gnalk_message_data_get_message_parameters (data);
-      if (params)
-        {
-          JsonObjectIter iter;
-          const char *param_key;
-          JsonNode *param_node;
-
-          json_object_iter_init (&iter, params);
-          while (json_object_iter_next (&iter, &param_key, &param_node))
-            {
-              if (JSON_NODE_HOLDS_OBJECT (param_node))
-                {
-                  JsonObject *param_obj = json_node_get_object (param_node);
-                  const char *name = json_object_get_string_member_with_default (param_obj, "name", NULL);
-
-                  if (name)
-                    {
-                      g_autofree char *pattern = g_strdup_printf ("\\{%s\\}", param_key);
-                      g_autoptr(GRegex) param_regex = g_regex_new (pattern, 0, 0, NULL);
-
-                      if (param_regex)
-                        {
-                          g_autofree char *tmp = display_message;
-                          display_message = g_regex_replace_literal (param_regex, tmp, -1, 0, name, 0, NULL);
-                          if (!display_message)
-                            display_message = g_strdup (tmp);
-                        }
-                    }
-                }
-            }
-        }
-    }
-  else
-    {
-      display_message = g_strdup (message_text);
-
-      /* Replace {file} placeholder with filename for file messages */
-      JsonObject *params = gnalk_message_data_get_message_parameters (data);
-      if (params && json_object_has_member (params, "file"))
-        {
-          JsonNode *file_node = json_object_get_member (params, "file");
-          if (file_node && JSON_NODE_HOLDS_OBJECT (file_node))
-            {
-              JsonObject *file_obj = json_node_get_object (file_node);
-              const char *file_name = json_object_get_string_member_with_default (file_obj, "name", NULL);
-              if (file_name)
-                {
-                  g_autoptr(GRegex) file_regex = g_regex_new ("\\{file\\}", 0, 0, NULL);
-                  if (file_regex)
-                    {
-                      g_autofree char *tmp = display_message;
-                      display_message = g_regex_replace_literal (file_regex, tmp, -1, 0, file_name, 0, NULL);
-                      if (!display_message)
-                        display_message = g_strdup (tmp);
-                    }
-                }
-            }
-        }
-    }
+  {
+    /* Replace all message parameters using centralized utility */
+    JsonObject *params = gnalk_message_data_get_message_parameters (data);
+    display_message = gnalk_message_utils_replace_parameters (
+        message_text, params, self->is_system ? actor_name : NULL);
+  }
 
   g_free (self->author_name);
   g_free (self->message);
@@ -1779,8 +1730,8 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
   gboolean render_md = gnalk_message_data_get_render_markdown (data);
   if (render_md && display_message && *display_message)
     {
-      JsonObject *params = gnalk_message_data_get_message_parameters (data);
-      g_autofree char *markup = gnalk_markdown_to_pango (display_message, params);
+      JsonObject *md_params = gnalk_message_data_get_message_parameters (data);
+      g_autofree char *markup = gnalk_markdown_to_pango (display_message, md_params);
       gtk_label_set_markup (GTK_LABEL (self->message_label), markup);
     }
   else
@@ -1843,9 +1794,11 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
           gtk_image_set_pixel_size (GTK_IMAGE (self->avatar), 32);
           gtk_widget_remove_css_class (self->avatar_frame, "bot-avatar");
 
-          if (gnalk_message_data_is_federated (data))
-            gtk_image_set_from_icon_name (GTK_IMAGE (self->avatar), "avatar-default-symbolic");
-          else
+          if (gnalk_message_data_is_federated (data) && room_token)
+            gnalk_avatar_cache_get_federated_user_avatar (avatar_cache, room_token, actor_id, 64,
+                                                            on_avatar_loaded,
+                                                            avatar_callback_data_new (self));
+          else if (!gnalk_message_data_is_federated (data))
             gnalk_avatar_cache_get_user_avatar (avatar_cache, actor_id, 64, on_avatar_loaded,
                                                  avatar_callback_data_new (self));
         }
@@ -2033,15 +1986,15 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       gtk_widget_set_visible (self->message_bubble, TRUE);
     }
 
-  /* Connect to data's is-unread property changes */
+  /* Connect to data's property changes for live updates */
   if (self->bound_data)
     {
       g_signal_handler_disconnect (self->bound_data, self->unread_handler_id);
       g_clear_object (&self->bound_data);
     }
   self->bound_data = g_object_ref (data);
-  self->unread_handler_id = g_signal_connect (data, "notify::is-unread",
-                                               G_CALLBACK (on_data_unread_changed), self);
+  self->unread_handler_id = g_signal_connect (data, "notify",
+                                               G_CALLBACK (on_bound_data_notify), self);
 }
 
 void

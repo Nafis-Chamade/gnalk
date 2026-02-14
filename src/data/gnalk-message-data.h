@@ -101,6 +101,9 @@ gboolean gnalk_message_data_get_show_date_header (GnalkMessageData *self);
 void gnalk_message_data_set_show_timestamp (GnalkMessageData *self,
                                              gboolean           show);
 gboolean gnalk_message_data_get_show_timestamp (GnalkMessageData *self);
+void gnalk_message_data_set_show_avatar (GnalkMessageData *self,
+                                           gboolean           show);
+gboolean gnalk_message_data_get_show_avatar (GnalkMessageData *self);
 void gnalk_message_data_set_parent       (GnalkMessageData *self,
                                            JsonObject        *parent);
 
@@ -128,5 +131,10 @@ void         gnalk_message_data_set_upload_progress  (GnalkMessageData *self,
 const char  *gnalk_message_data_get_upload_file_name (GnalkMessageData *self);
 const char  *gnalk_message_data_get_upload_file_path (GnalkMessageData *self);
 const char  *gnalk_message_data_get_upload_mime_type (GnalkMessageData *self);
+
+/* File cache state */
+gboolean     gnalk_message_data_get_file_cached     (GnalkMessageData *self);
+void         gnalk_message_data_set_file_cached     (GnalkMessageData *self,
+                                                        gboolean           cached);
 
 G_END_DECLS

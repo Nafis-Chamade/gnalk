@@ -2,6 +2,8 @@
 #include "gnalk-markdown.h"
 #include "gnalk-session.h"
 #include "gnalk-account.h"
+#include "gnalk-message-utils.h"
+#include <glib/gi18n.h>
 
 struct _GnalkConversationRow
 {
@@ -153,10 +155,12 @@ gnalk_conversation_row_class_init (GnalkConversationRowClass *klass)
   object_class->finalize = gnalk_conversation_row_finalize;
 
   properties[PROP_TITLE] =
-    g_param_spec_string ("title", NULL, NULL, "", G_PARAM_READWRITE);
+    g_param_spec_string ("title", NULL, NULL, "",
+                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   properties[PROP_SUBTITLE] =
-    g_param_spec_string ("subtitle", NULL, NULL, "", G_PARAM_READWRITE);
+    g_param_spec_string ("subtitle", NULL, NULL, "",
+                         G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY);
 
   g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -361,9 +365,9 @@ show_context_menu (GnalkConversationRow *self,
 
   /* Update favorite button label based on current state */
   if (self->is_favorite)
-    gtk_button_set_label (GTK_BUTTON (self->favorite_button), "Remove from favorites");
+    gtk_button_set_label (GTK_BUTTON (self->favorite_button), _("Remove from favorites"));
   else
-    gtk_button_set_label (GTK_BUTTON (self->favorite_button), "Add to favorites");
+    gtk_button_set_label (GTK_BUTTON (self->favorite_button), _("Add to favorites"));
 
   /* Enable/disable buttons based on permissions */
   gtk_widget_set_sensitive (self->leave_button, self->can_leave);
@@ -427,21 +431,21 @@ gnalk_conversation_row_init (GnalkConversationRow *self)
   gtk_widget_add_css_class (menu_box, "context-menu");
 
   /* Favorite button */
-  self->favorite_button = gtk_button_new_with_label ("Add to favorites");
+  self->favorite_button = gtk_button_new_with_label (_("Add to favorites"));
   gtk_button_set_has_frame (GTK_BUTTON (self->favorite_button), FALSE);
   gtk_widget_add_css_class (self->favorite_button, "flat");
   g_signal_connect (self->favorite_button, "clicked", G_CALLBACK (on_favorite_clicked), self);
   gtk_box_append (GTK_BOX (menu_box), self->favorite_button);
 
   /* Leave button */
-  self->leave_button = gtk_button_new_with_label ("Leave conversation");
+  self->leave_button = gtk_button_new_with_label (_("Leave conversation"));
   gtk_button_set_has_frame (GTK_BUTTON (self->leave_button), FALSE);
   gtk_widget_add_css_class (self->leave_button, "flat");
   g_signal_connect (self->leave_button, "clicked", G_CALLBACK (on_leave_clicked), self);
   gtk_box_append (GTK_BOX (menu_box), self->leave_button);
 
   /* Delete button */
-  self->delete_button = gtk_button_new_with_label ("Delete conversation");
+  self->delete_button = gtk_button_new_with_label (_("Delete conversation"));
   gtk_button_set_has_frame (GTK_BUTTON (self->delete_button), FALSE);
   gtk_widget_add_css_class (self->delete_button, "flat");
   gtk_widget_add_css_class (self->delete_button, "error");
@@ -529,56 +533,16 @@ gnalk_conversation_row_set_data (GnalkConversationRow *self,
       const char *message_text = json_object_get_string_member_with_default (last_message, "message", "");
       const char *actor_name = json_object_get_string_member_with_default (last_message, "actorDisplayName", "");
 
-      /* Replace {actor} with actor name */
-      g_autofree char *processed = g_strdup (message_text);
-      g_autoptr(GRegex) actor_regex = g_regex_new ("\\{actor\\}", 0, 0, NULL);
-      if (actor_regex && actor_name && *actor_name)
-        {
-          g_autofree char *tmp = processed;
-          processed = g_regex_replace_literal (actor_regex, tmp, -1, 0, actor_name, 0, NULL);
-          if (!processed)
-            processed = g_strdup (tmp);
-        }
-
-      /* Parse messageParameters for user1, user2, etc. */
+      /* Extract message parameters if present */
+      JsonObject *params = NULL;
       if (json_object_has_member (last_message, "messageParameters"))
         {
           JsonNode *params_node = json_object_get_member (last_message, "messageParameters");
           if (params_node && JSON_NODE_HOLDS_OBJECT (params_node))
-            {
-              JsonObject *params = json_node_get_object (params_node);
-              if (params)
-                {
-                  JsonObjectIter iter;
-                  const char *param_key;
-                  JsonNode *param_node;
-
-                  json_object_iter_init (&iter, params);
-                  while (json_object_iter_next (&iter, &param_key, &param_node))
-                    {
-                      if (JSON_NODE_HOLDS_OBJECT (param_node))
-                        {
-                          JsonObject *param_obj = json_node_get_object (param_node);
-                          const char *name = json_object_get_string_member_with_default (param_obj, "name", NULL);
-
-                          if (name)
-                            {
-                              g_autofree char *pattern = g_strdup_printf ("\\{%s\\}", param_key);
-                              g_autoptr(GRegex) param_regex = g_regex_new (pattern, 0, 0, NULL);
-
-                              if (param_regex)
-                                {
-                                  g_autofree char *tmp = processed;
-                                  processed = g_regex_replace_literal (param_regex, tmp, -1, 0, name, 0, NULL);
-                                  if (!processed)
-                                    processed = g_strdup (tmp);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            params = json_node_get_object (params_node);
         }
+
+      g_autofree char *processed = gnalk_message_utils_replace_parameters (message_text, params, actor_name);
 
       /* Extract only the first line */
       const char *newline = strchr (processed, '\n');

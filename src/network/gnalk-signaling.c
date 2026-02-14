@@ -35,6 +35,8 @@ struct _GnalkSignaling
   gboolean        is_federation;     /* TRUE when using federation auth */
   char           *fed_auth_token;    /* JWT token for federation auth */
 
+  GCancellable   *connect_cancellable;  /* Cancels pending WebSocket connect on disconnect/finalize */
+
   GnalkSignalingMessageCallback message_callback;
   gpointer                       message_callback_data;
 };
@@ -67,6 +69,10 @@ static void
 gnalk_signaling_finalize (GObject *object)
 {
   GnalkSignaling *self = GNALK_SIGNALING (object);
+
+  /* Cancel any pending WebSocket connect to prevent use-after-free */
+  g_cancellable_cancel (self->connect_cancellable);
+  g_clear_object (&self->connect_cancellable);
 
   if (self->reconnect_timeout_id > 0)
     g_source_remove (self->reconnect_timeout_id);
@@ -837,20 +843,29 @@ on_ws_connected (GObject      *source,
                  GAsyncResult *result,
                  gpointer      user_data)
 {
-  GnalkSignaling *self = GNALK_SIGNALING (user_data);
   g_autoptr(GError) error = NULL;
 
-  self->ws_connection = soup_session_websocket_connect_finish (self->session, result, &error);
-
-  /* Now safe to release the pending message - handshake is complete */
-  g_clear_object (&self->pending_ws_msg);
+  /* Finish the WebSocket connect using the source (SoupSession) directly,
+   * because if the operation was cancelled, user_data (self) may already be freed. */
+  SoupWebsocketConnection *ws = soup_session_websocket_connect_finish (
+    SOUP_SESSION (source), result, &error);
 
   if (error)
     {
-      g_warning ("Failed to connect WebSocket: %s", error->message);
-      self->connected = FALSE;
+      g_clear_object (&ws);
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        g_warning ("Failed to connect WebSocket: %s", error->message);
       return;
     }
+
+  /* If we got here without error, the cancellable was not cancelled,
+   * so self is still alive. */
+  GnalkSignaling *self = GNALK_SIGNALING (user_data);
+
+  self->ws_connection = ws;
+
+  /* Now safe to release the pending message - handshake is complete */
+  g_clear_object (&self->pending_ws_msg);
 
   self->connected = TRUE;
 
@@ -876,11 +891,17 @@ gnalk_signaling_do_connect (GnalkSignaling *self)
   /* Clear any previous pending message */
   g_clear_object (&self->pending_ws_msg);
 
+  /* Cancel any previous pending connect and create a fresh cancellable */
+  g_cancellable_cancel (self->connect_cancellable);
+  g_clear_object (&self->connect_cancellable);
+  self->connect_cancellable = g_cancellable_new ();
+
   self->pending_ws_msg = soup_message_new ("GET", self->server_url);
 
   soup_session_websocket_connect_async (self->session, self->pending_ws_msg,
                                          NULL, NULL, G_PRIORITY_DEFAULT,
-                                         NULL, on_ws_connected, self);
+                                         self->connect_cancellable,
+                                         on_ws_connected, self);
   /* Don't unref msg here - keep it alive until on_ws_connected finishes */
 }
 
@@ -1001,6 +1022,10 @@ void
 gnalk_signaling_disconnect (GnalkSignaling *self)
 {
   g_return_if_fail (GNALK_IS_SIGNALING (self));
+
+  /* Cancel any pending async WebSocket connect */
+  g_cancellable_cancel (self->connect_cancellable);
+  g_clear_object (&self->connect_cancellable);
 
   if (self->ws_connection)
     {

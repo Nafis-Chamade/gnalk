@@ -413,6 +413,72 @@ gnalk_avatar_cache_get_user_avatar (GnalkAvatarCache   *self,
 }
 
 void
+gnalk_avatar_cache_get_federated_user_avatar (GnalkAvatarCache   *self,
+                                                 const char          *room_token,
+                                                 const char          *cloud_id,
+                                                 int                  size,
+                                                 GnalkAvatarCallback callback,
+                                                 gpointer             user_data)
+{
+  g_return_if_fail (GNALK_IS_AVATAR_CACHE (self));
+  g_return_if_fail (room_token != NULL);
+  g_return_if_fail (cloud_id != NULL);
+
+  g_autofree char *key = g_strdup_printf ("fed:%s:%d", cloud_id, size);
+
+  /* Check memory cache first */
+  GdkTexture *cached = g_hash_table_lookup (self->cache, key);
+  if (cached)
+    {
+      callback (self, cached, user_data);
+      return;
+    }
+
+  /* Check disk cache */
+  GdkTexture *disk_cached = load_avatar_from_disk (key);
+  if (disk_cached)
+    {
+      g_hash_table_insert (self->cache, g_strdup (key), g_object_ref (disk_cached));
+      callback (self, disk_cached, user_data);
+      g_object_unref (disk_cached);
+      return;
+    }
+
+  /* When offline or http_client not ready, nothing more we can do */
+  if (!self->is_online || !gnalk_http_client_is_ready (self->http_client))
+    {
+      g_debug ("AvatarCache: Cannot load federated avatar for %s (offline or http not ready)",
+               cloud_id);
+      callback (self, NULL, user_data);
+      return;
+    }
+
+  if (g_hash_table_contains (self->pending, key))
+    {
+      PendingCallbackData *pending = g_new0 (PendingCallbackData, 1);
+      pending->callback = callback;
+      pending->user_data = user_data;
+
+      GList *list = g_hash_table_lookup (self->pending, key);
+      list = g_list_append (list, pending);
+      g_hash_table_steal (self->pending, key);
+      g_hash_table_insert (self->pending, g_strdup (key), list);
+      return;
+    }
+
+  g_hash_table_insert (self->pending, g_strdup (key), NULL);
+
+  AvatarLoadData *data = g_new0 (AvatarLoadData, 1);
+  data->cache = g_object_ref (self);
+  data->key = g_strdup (key);
+  data->callback = callback;
+  data->user_data = user_data;
+
+  gnalk_http_client_get_federated_user_avatar (self->http_client, room_token, cloud_id, size,
+                                                  on_avatar_bytes_received, data);
+}
+
+void
 gnalk_avatar_cache_get_file_preview (GnalkAvatarCache   *self,
                                        const char          *file_id,
                                        int                  width,

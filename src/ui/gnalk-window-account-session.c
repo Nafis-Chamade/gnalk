@@ -11,7 +11,15 @@
 
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
+#include "gnalk-session.h"
+#include "gnalk-account.h"
 #include "gnalk-database.h"
+#include "gnalk-avatar-cache.h"
+#include "gnalk-network-status-bar.h"
+#include "gnalk-user-status-menu.h"
+#include "gnalk-message-processor.h"
+#include "gnalk-room-controller.h"
+#include "gnalk-room-tab-manager.h"
 #include <glib/gi18n.h>
 
 /* ============ Session Signal Connection Helpers ============ */
@@ -210,6 +218,10 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
         gint64 aid = gnalk_session_get_account_id (session);
         gnalk_message_processor_set_database (self->message_processor, db);
         gnalk_message_processor_set_account_id (self->message_processor, aid);
+
+        /* Cache edit/delete timeouts to avoid per-bind application queries */
+        self->cached_edit_timeout = gnalk_application_get_chat_edit_timeout (app);
+        self->cached_delete_timeout = gnalk_application_get_chat_delete_timeout (app);
       }
   }
 

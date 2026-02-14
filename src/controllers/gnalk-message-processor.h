@@ -25,6 +25,7 @@ G_BEGIN_DECLS
 /* Forward declarations - no GTK/widget headers */
 typedef struct _GnalkDatabase GnalkDatabase;
 typedef struct _GnalkMessageController GnalkMessageController;
+typedef struct _GnalkMessageData GnalkMessageData;
 typedef struct _GnalkRoomState GnalkRoomState;
 
 #define GNALK_TYPE_MESSAGE_PROCESSOR (gnalk_message_processor_get_type ())
@@ -77,6 +78,10 @@ void gnalk_message_processor_load_context  (GnalkMessageProcessor *self,
                                             JsonArray             *messages,
                                             gint64                 target_message_id);
 void gnalk_message_processor_restore_live  (GnalkMessageProcessor *self);
+
+/* Index a message that was added to the store externally (e.g. pending messages) */
+void gnalk_message_processor_index_message (GnalkMessageProcessor *self,
+                                             GnalkMessageData      *data);
 
 /* State queries */
 gboolean gnalk_message_processor_get_loading_older (GnalkMessageProcessor *self);
