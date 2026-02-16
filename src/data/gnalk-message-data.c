@@ -40,6 +40,11 @@ struct _GnalkMessageData
 
   /* File cache state (set when file is downloaded to local cache) */
   gboolean file_cached;
+
+  /* Thread support */
+  gint64   thread_id;       /* 0 = not in a thread */
+  gboolean is_thread;       /* TRUE = thread root message */
+  gint     thread_replies;  /* reply count (meaningful when is_thread) */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageData, gnalk_message_data, G_TYPE_OBJECT)
@@ -54,6 +59,7 @@ enum {
   PROP_IS_UPLOADING,
   PROP_UPLOAD_PROGRESS,
   PROP_FILE_CACHED,
+  PROP_THREAD_REPLIES,
   N_PROPS
 };
 
@@ -92,6 +98,9 @@ gnalk_message_data_get_property (GObject    *object,
       break;
     case PROP_FILE_CACHED:
       g_value_set_boolean (value, self->file_cached);
+      break;
+    case PROP_THREAD_REPLIES:
+      g_value_set_int (value, self->thread_replies);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -186,6 +195,11 @@ gnalk_message_data_class_init (GnalkMessageDataClass *klass)
                           FALSE,
                           G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
 
+  properties[PROP_THREAD_REPLIES] =
+    g_param_spec_int ("thread-replies", NULL, NULL,
+                      0, G_MAXINT, 0,
+                      G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+
   g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -235,7 +249,10 @@ gnalk_message_data_new_from_json (JsonObject *message_data,
         }
     }
 
-  /* Copy parent (quoted message) if present and is an object */
+  /* Copy parent (quoted message) if present and is an object.
+   * Skip when parent.id == threadId — the server sets the thread root as
+   * parent for every thread reply, but quoting it on each message is noise. */
+  gint64 json_thread_id = json_object_get_int_member_with_default (message_data, "threadId", 0);
   if (json_object_has_member (message_data, "parent"))
     {
       JsonNode *node = json_object_get_member (message_data, "parent");
@@ -243,7 +260,11 @@ gnalk_message_data_new_from_json (JsonObject *message_data,
         {
           JsonObject *parent = json_node_get_object (node);
           if (parent)
-            self->parent = json_object_ref (parent);
+            {
+              gint64 parent_id = json_object_get_int_member_with_default (parent, "id", 0);
+              if (json_thread_id == 0 || parent_id != json_thread_id)
+                self->parent = json_object_ref (parent);
+            }
         }
     }
 
@@ -264,6 +285,11 @@ gnalk_message_data_new_from_json (JsonObject *message_data,
         }
     }
 
+  /* Thread support */
+  self->thread_id = json_object_get_int_member_with_default (message_data, "threadId", 0);
+  self->is_thread = json_object_get_boolean_member_with_default (message_data, "isThread", FALSE);
+  self->thread_replies = (gint) json_object_get_int_member_with_default (message_data, "threadReplies", 0);
+
   return self;
 }
 
@@ -272,7 +298,8 @@ gnalk_message_data_new_pending (const char *message_text,
                                   const char *author_name,
                                   const char *author_id,
                                   const char *reference_id,
-                                  gint64      reply_to)
+                                  gint64      reply_to,
+                                  gint64      thread_id)
 {
   GnalkMessageData *self = g_object_new (GNALK_TYPE_MESSAGE_DATA, NULL);
 
@@ -283,6 +310,7 @@ gnalk_message_data_new_pending (const char *message_text,
   self->author_name = g_strdup (author_name ? author_name : "");
   self->reference_id = (reference_id && *reference_id) ? g_strdup (reference_id) : NULL;
   self->reply_to = reply_to;
+  self->thread_id = thread_id;
   self->is_own = TRUE;
   self->status = GNALK_MESSAGE_DATA_STATUS_SENDING;
 
@@ -725,6 +753,38 @@ gnalk_message_data_set_file_cached (GnalkMessageData *self,
   g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FILE_CACHED]);
 }
 
+gint64
+gnalk_message_data_get_thread_id (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), 0);
+  return self->thread_id;
+}
+
+gboolean
+gnalk_message_data_get_is_thread (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
+  return self->is_thread;
+}
+
+gint
+gnalk_message_data_get_thread_replies (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), 0);
+  return self->thread_replies;
+}
+
+void
+gnalk_message_data_set_thread_replies (GnalkMessageData *self,
+                                          gint               replies)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  if (self->thread_replies == replies)
+    return;
+  self->thread_replies = replies;
+  g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_THREAD_REPLIES]);
+}
+
 const char *
 gnalk_message_data_get_upload_file_name (GnalkMessageData *self)
 {
@@ -807,7 +867,10 @@ gnalk_message_data_new_from_db (gint64                   id,
                                   const char              *reactions_json,
                                   const char              *parent_json,
                                   const char              *message_parameters_json,
-                                  const char              *actor_type)
+                                  const char              *actor_type,
+                                  gint64                   thread_id,
+                                  gboolean                 is_thread,
+                                  gint                     thread_replies)
 {
   GnalkMessageData *self = g_object_new (GNALK_TYPE_MESSAGE_DATA, NULL);
 
@@ -831,6 +894,11 @@ gnalk_message_data_new_from_db (gint64                   id,
 
   /* Default render_markdown to TRUE unless system message */
   self->render_markdown = !(self->system_message && *self->system_message);
+
+  /* Thread support */
+  self->thread_id = thread_id;
+  self->is_thread = is_thread;
+  self->thread_replies = thread_replies;
 
   return self;
 }

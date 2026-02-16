@@ -266,6 +266,44 @@ void gnalk_http_client_get_message_context (GnalkHttpClient  *self,
                                             GnalkHttpCallback callback,
                                             gpointer          user_data);
 
+/* Thread messages (uses threadId filter on standard chat endpoint) */
+void gnalk_http_client_get_thread_messages (GnalkHttpClient  *self,
+                                            const char       *room_token,
+                                            gint64            thread_id,
+                                            gint64            last_known_id,
+                                            gint              limit,
+                                            GnalkHttpCallback callback,
+                                            gpointer          user_data);
+
+/* Send message in a thread */
+void gnalk_http_client_send_thread_message (GnalkHttpClient  *self,
+                                            const char       *room_token,
+                                            const char       *message,
+                                            gint64            thread_id,
+                                            gint64            reply_to,
+                                            const char       *reference_id,
+                                            GnalkHttpCallback callback,
+                                            gpointer          user_data);
+
+/* Create a new thread from a message */
+void gnalk_http_client_create_thread (GnalkHttpClient  *self,
+                                      const char       *room_token,
+                                      const char       *message,
+                                      gint64            reply_to,
+                                      const char       *thread_title,
+                                      const char       *reference_id,
+                                      GnalkHttpCallback callback,
+                                      gpointer          user_data);
+
+/* Poll messages in a thread (long-poll with threadId filter) */
+void gnalk_http_client_poll_thread_messages (GnalkHttpClient  *self,
+                                             const char       *room_token,
+                                             gint64            thread_id,
+                                             gint64            last_known_id,
+                                             gint              timeout,
+                                             GnalkHttpCallback callback,
+                                             gpointer          user_data);
+
 /* Unified search for messages in a conversation */
 void gnalk_http_client_search_messages (GnalkHttpClient  *self,
                                         const char       *room_token,

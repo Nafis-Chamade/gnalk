@@ -153,6 +153,8 @@ struct _GnalkWindow
   /* Cached capabilities (set once at session switch, avoid per-bind app query) */
   gint64 cached_edit_timeout;
   gint64 cached_delete_timeout;
+  gboolean cached_has_threads;
+  gboolean cached_room_is_federated;
 
   /* Connection state */
   gboolean was_offline;              /* Was previously offline (for toast) */
@@ -311,6 +313,13 @@ gboolean gnalk_window_apply_highlight_timeout (gpointer user_data);
 void gnalk_window_on_context_loaded  (GnalkMessageController *mc, JsonArray *messages, gint64 target_id, GnalkWindow *self);
 void gnalk_window_on_jump_to_present (GnalkMessageView *view, GnalkWindow *self);
 void gnalk_window_on_search_results  (GnalkMessageController *mc, JsonArray *entries, gboolean has_more, gint cursor, GnalkWindow *self);
+
+/* Thread mode handlers */
+void gnalk_window_on_thread_open_requested   (GnalkMessageRow *row, gint64 message_id, gpointer user_data);
+void gnalk_window_on_thread_create_requested (GnalkMessageRow *row, gint64 message_id, gpointer user_data);
+void gnalk_window_on_thread_messages_loaded  (GnalkMessageController *mc, JsonArray *messages, gint64 thread_id, GnalkWindow *self);
+void gnalk_window_on_thread_older_loaded     (GnalkMessageController *mc, JsonArray *messages, gboolean has_more, GnalkWindow *self);
+void gnalk_window_on_exit_thread             (GnalkMessageView *view, GnalkWindow *self);
 
 /* ============ Conversation list functions (gnalk-window-conversation-list.c) ============ */
 

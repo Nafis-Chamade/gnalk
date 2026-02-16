@@ -804,6 +804,178 @@ gnalk_http_client_get_message_context (GnalkHttpClient  *self,
 }
 
 void
+gnalk_http_client_get_thread_messages (GnalkHttpClient  *self,
+                                       const char       *room_token,
+                                       gint64            thread_id,
+                                       gint64            last_known_id,
+                                       gint              limit,
+                                       GnalkHttpCallback callback,
+                                       gpointer          user_data)
+{
+  g_return_if_fail (GNALK_IS_HTTP_CLIENT (self));
+  g_return_if_fail (room_token != NULL);
+  g_return_if_fail (thread_id > 0);
+
+  g_message ("HTTP: get_thread_messages room=%s threadId=%" G_GINT64_FORMAT
+             " lastKnownId=%" G_GINT64_FORMAT " limit=%d",
+             room_token, thread_id, last_known_id, limit);
+
+  g_autofree char *endpoint = NULL;
+  if (last_known_id > 0)
+    endpoint = g_strdup_printf (
+      "/ocs/v2.php/apps/spreed/api/v1/chat/%s"
+      "?format=json&lookIntoFuture=0&lastKnownMessageId=%" G_GINT64_FORMAT
+      "&threadId=%" G_GINT64_FORMAT "&limit=%d",
+      room_token, last_known_id, thread_id, limit);
+  else
+    endpoint = g_strdup_printf (
+      "/ocs/v2.php/apps/spreed/api/v1/chat/%s"
+      "?format=json&lookIntoFuture=0&threadId=%" G_GINT64_FORMAT "&limit=%d",
+      room_token, thread_id, limit);
+
+  SoupMessage *msg = create_message (self, "GET", endpoint);
+
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
+  g_weak_ref_init (&data->client_ref, self);
+  data->message = g_object_ref (msg);
+  data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
+  data->callback = (GCallback) callback;
+  data->user_data = user_data;
+
+  soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
+                                     self->room_cancellable, on_json_response, data);
+  g_object_unref (msg);
+}
+
+void
+gnalk_http_client_send_thread_message (GnalkHttpClient  *self,
+                                       const char       *room_token,
+                                       const char       *message,
+                                       gint64            thread_id,
+                                       gint64            reply_to,
+                                       const char       *reference_id,
+                                       GnalkHttpCallback callback,
+                                       gpointer          user_data)
+{
+  g_return_if_fail (GNALK_IS_HTTP_CLIENT (self));
+  g_return_if_fail (room_token != NULL);
+  g_return_if_fail (message != NULL);
+  g_return_if_fail (thread_id > 0);
+
+  g_autofree char *endpoint = g_strdup_printf ("/ocs/v2.php/apps/spreed/api/v1/chat/%s?format=json",
+                                                room_token);
+  SoupMessage *msg = create_message (self, "POST", endpoint);
+
+  g_autofree char *encoded_message = g_uri_escape_string (message, NULL, TRUE);
+  g_autofree char *body = NULL;
+
+  if (reply_to > 0 && reference_id && *reference_id)
+    body = g_strdup_printf ("message=%s&threadId=%" G_GINT64_FORMAT "&replyTo=%" G_GINT64_FORMAT "&referenceId=%s",
+                            encoded_message, thread_id, reply_to, reference_id);
+  else if (reference_id && *reference_id)
+    body = g_strdup_printf ("message=%s&threadId=%" G_GINT64_FORMAT "&referenceId=%s",
+                            encoded_message, thread_id, reference_id);
+  else
+    body = g_strdup_printf ("message=%s&threadId=%" G_GINT64_FORMAT,
+                            encoded_message, thread_id);
+
+  GBytes *body_bytes = g_bytes_new (body, strlen (body));
+  soup_message_set_request_body_from_bytes (msg, "application/x-www-form-urlencoded", body_bytes);
+  g_bytes_unref (body_bytes);
+
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
+  g_weak_ref_init (&data->client_ref, self);
+  data->message = g_object_ref (msg);
+  data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
+  data->callback = (GCallback) callback;
+  data->user_data = user_data;
+
+  soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
+                                     self->cancellable, on_json_response, data);
+  g_object_unref (msg);
+}
+
+void
+gnalk_http_client_create_thread (GnalkHttpClient  *self,
+                                 const char       *room_token,
+                                 const char       *message,
+                                 gint64            reply_to,
+                                 const char       *thread_title,
+                                 const char       *reference_id,
+                                 GnalkHttpCallback callback,
+                                 gpointer          user_data)
+{
+  g_return_if_fail (GNALK_IS_HTTP_CLIENT (self));
+  g_return_if_fail (room_token != NULL);
+
+  g_autofree char *endpoint = g_strdup_printf ("/ocs/v2.php/apps/spreed/api/v1/chat/%s?format=json",
+                                                room_token);
+  SoupMessage *msg = create_message (self, "POST", endpoint);
+
+  g_autofree char *encoded_message = g_uri_escape_string (message ? message : "", NULL, TRUE);
+  g_autofree char *encoded_title = thread_title ? g_uri_escape_string (thread_title, NULL, TRUE) : NULL;
+
+  GString *body_str = g_string_new (NULL);
+  g_string_append_printf (body_str, "message=%s", encoded_message);
+  if (reply_to > 0)
+    g_string_append_printf (body_str, "&replyTo=%" G_GINT64_FORMAT, reply_to);
+  if (encoded_title && *encoded_title)
+    g_string_append_printf (body_str, "&threadTitle=%s", encoded_title);
+  if (reference_id && *reference_id)
+    g_string_append_printf (body_str, "&referenceId=%s", reference_id);
+
+  g_autofree char *body = g_string_free (body_str, FALSE);
+
+  GBytes *body_bytes = g_bytes_new (body, strlen (body));
+  soup_message_set_request_body_from_bytes (msg, "application/x-www-form-urlencoded", body_bytes);
+  g_bytes_unref (body_bytes);
+
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
+  g_weak_ref_init (&data->client_ref, self);
+  data->message = g_object_ref (msg);
+  data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
+  data->callback = (GCallback) callback;
+  data->user_data = user_data;
+
+  soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
+                                     self->cancellable, on_json_response, data);
+  g_object_unref (msg);
+}
+
+void
+gnalk_http_client_poll_thread_messages (GnalkHttpClient  *self,
+                                        const char       *room_token,
+                                        gint64            thread_id,
+                                        gint64            last_known_id,
+                                        gint              timeout,
+                                        GnalkHttpCallback callback,
+                                        gpointer          user_data)
+{
+  g_return_if_fail (GNALK_IS_HTTP_CLIENT (self));
+  g_return_if_fail (room_token != NULL);
+  g_return_if_fail (thread_id > 0);
+
+  g_autofree char *endpoint = g_strdup_printf (
+    "/ocs/v2.php/apps/spreed/api/v1/chat/%s"
+    "?format=json&lookIntoFuture=1&lastKnownMessageId=%" G_GINT64_FORMAT
+    "&threadId=%" G_GINT64_FORMAT "&timeout=%d&setReadMarker=0",
+    room_token, last_known_id, thread_id, timeout);
+
+  SoupMessage *msg = create_message (self, "GET", endpoint);
+
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
+  g_weak_ref_init (&data->client_ref, self);
+  data->message = g_object_ref (msg);
+  data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
+  data->callback = (GCallback) callback;
+  data->user_data = user_data;
+
+  soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
+                                     self->room_cancellable, on_json_response, data);
+  g_object_unref (msg);
+}
+
+void
 gnalk_http_client_search_messages (GnalkHttpClient  *self,
                                    const char       *room_token,
                                    const char       *search_term,

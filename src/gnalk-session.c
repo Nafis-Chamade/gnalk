@@ -71,6 +71,7 @@ struct _GnalkSession
   /* Capabilities */
   gboolean has_federation_v1;
   gboolean has_federation_v2;
+  gboolean has_threads;
 
   /* Signal handler IDs */
   gulong network_changed_handler_id;
@@ -1151,10 +1152,13 @@ on_capabilities_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                     self->has_federation_v1 = TRUE;
                                   else if (g_strcmp0 (feature, "federation-v2") == 0)
                                     self->has_federation_v2 = TRUE;
+                                  else if (g_strcmp0 (feature, "threads") == 0)
+                                    self->has_threads = TRUE;
                                 }
-                              g_debug ("Session %s: Federation capabilities: v1=%d v2=%d",
+                              g_debug ("Session %s: capabilities: federation v1=%d v2=%d threads=%d",
                                        gnalk_account_get_user_id (self->account),
-                                       self->has_federation_v1, self->has_federation_v2);
+                                       self->has_federation_v1, self->has_federation_v2,
+                                       self->has_threads);
                             }
                         }
                     }
@@ -1510,6 +1514,13 @@ gnalk_session_can_call (GnalkSession *self)
   g_debug ("session_can_call: online=%d room_confirmed=%d sig_connected=%d => %d",
              online, self->signaling_room_confirmed, sig_connected, result);
   return result;
+}
+
+gboolean
+gnalk_session_has_threads (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), FALSE);
+  return self->has_threads;
 }
 
 gboolean

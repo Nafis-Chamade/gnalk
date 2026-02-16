@@ -131,4 +131,8 @@ void gnalk_message_row_set_unread (GnalkMessageRow *self,
 void gnalk_message_row_set_show_timestamp (GnalkMessageRow *self,
                                              gboolean          show);
 
+/* Thread support: set whether threads capability is available */
+void gnalk_message_row_set_threads_supported (GnalkMessageRow *self,
+                                               gboolean          supported);
+
 G_END_DECLS

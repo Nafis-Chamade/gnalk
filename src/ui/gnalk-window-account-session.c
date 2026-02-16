@@ -125,6 +125,10 @@ connect_controller_signals (GnalkWindow  *self,
                         G_CALLBACK (gnalk_window_on_context_loaded), self);
       g_signal_connect (mc, "search-results",
                         G_CALLBACK (gnalk_window_on_search_results), self);
+      g_signal_connect (mc, "thread-messages-loaded",
+                        G_CALLBACK (gnalk_window_on_thread_messages_loaded), self);
+      g_signal_connect (mc, "thread-older-loaded",
+                        G_CALLBACK (gnalk_window_on_thread_older_loaded), self);
     }
 
   /* Conversation controller */
@@ -223,6 +227,9 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
         self->cached_edit_timeout = gnalk_application_get_chat_edit_timeout (app);
         self->cached_delete_timeout = gnalk_application_get_chat_delete_timeout (app);
       }
+
+    /* Cache thread capability */
+    self->cached_has_threads = gnalk_session_has_threads (session);
   }
 
   /* Close the current room via the controller before clearing tabs.

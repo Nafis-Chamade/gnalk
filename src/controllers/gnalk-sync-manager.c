@@ -157,7 +157,7 @@ gnalk_sync_manager_queue_message (GnalkSyncManager *self,
 
   gnalk_database_queue_pending_message (self->database, self->account_id,
                                           conversation_token, message,
-                                          reply_to, reference_id);
+                                          reply_to, reference_id, 0);
 
   g_debug ("SyncManager: Queued pending message %s for %s",
            reference_id, conversation_token);

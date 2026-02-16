@@ -56,6 +56,14 @@ struct _GnalkRoomState
   gboolean    in_context_mode;
   gint64      context_target_message_id;
   gint64      context_newest_id;
+
+  /* Thread mode */
+  gboolean    in_thread_mode;
+  gint64      thread_root_id;
+  /* Saved main timeline state during thread mode */
+  gint64      saved_last_known_message_id;
+  gint64      saved_oldest_loaded_id;
+  gboolean    saved_has_more_history;
 };
 
 G_END_DECLS

@@ -78,4 +78,8 @@ void gnalk_message_view_set_mosaic_avatars (GnalkMessageView *self,
 void gnalk_message_view_set_context_mode (GnalkMessageView *self,
                                           gboolean          context_mode);
 
+/* Thread mode: shows a banner with back button and "Thread" title */
+void gnalk_message_view_set_thread_mode (GnalkMessageView *self,
+                                         gboolean          thread_mode);
+
 G_END_DECLS

@@ -267,6 +267,18 @@ gnalk_window_on_room_controller_room_closed (GnalkRoomController *ctrl,
   (void) ctrl;
   (void) old_token;
 
+  /* Restore from thread/context mode if active before saving */
+  if (self->current_room && self->current_room->in_thread_mode)
+    {
+      gnalk_message_processor_restore_from_thread (self->message_processor);
+      gnalk_message_view_set_thread_mode (self->message_view, FALSE);
+    }
+  if (self->current_room && self->current_room->in_context_mode)
+    {
+      gnalk_message_processor_restore_live (self->message_processor);
+      gnalk_message_view_set_context_mode (self->message_view, FALSE);
+    }
+
   /* Save messages for the old room before switching */
   gnalk_window_save_messages_to_db (self);
 
@@ -323,6 +335,7 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
   /* Sync Window's state from controller */
   self->current_room = gnalk_room_controller_get_current_room (ctrl);
   self->has_active_room = TRUE;
+  self->cached_room_is_federated = FALSE;
 
   /* Update processor's room state pointer */
   gnalk_message_processor_set_room_state (self->message_processor, self->current_room);
@@ -373,9 +386,12 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
       gnalk_window_update_call_button_state (self);
       gnalk_window_update_room_status_icon (self, room_type, user_status);
 
+      /* Cache federation status for the current room (disables threads, etc.) */
+      self->cached_room_is_federated = gnalk_conversation_data_is_federated (conv_data);
+
       /* For federated rooms with federation-v2, fetch federation signaling settings.
        * This prepares the federation signaling connection needed for calls. */
-      if (gnalk_conversation_data_is_federated (conv_data) &&
+      if (self->cached_room_is_federated &&
           self->active_session &&
           gnalk_session_has_federation_v2 (self->active_session))
         {

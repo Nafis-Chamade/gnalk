@@ -188,6 +188,15 @@ gnalk_message_processor_set_conversations_store (GnalkMessageProcessor *self,
 
 /* ============ State queries ============ */
 
+GnalkMessageData *
+gnalk_message_processor_find_message (GnalkMessageProcessor *self,
+                                       gint64                 message_id)
+{
+  if (!self->msg_index || message_id <= 0)
+    return NULL;
+  return g_hash_table_lookup (self->msg_index, &message_id);
+}
+
 gboolean
 gnalk_message_processor_get_loading_older (GnalkMessageProcessor *self)
 {
@@ -557,6 +566,15 @@ load_messages_from_db_finish (GObject      *source_object,
 
           if (!already_exists)
             {
+              /* Filter thread replies + thread_created from main timeline */
+              gint64 tid = gnalk_message_data_get_thread_id (data);
+              if (tid > 0 && msg_id != tid)
+                {
+                  skipped_count++;
+                  g_clear_object (&data);
+                  continue;
+                }
+
               /* Recalculate is_own based on current session's user_id */
               const char *author_id = gnalk_message_data_get_author_id (data);
               gboolean is_own = current_user && g_strcmp0 (author_id, current_user) == 0;
@@ -930,9 +948,10 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
   if (!self->current_room)
     return;
 
-  /* In context mode, skip non-initial messages (poll responses).
-   * They are already saved to DB by the MC and will appear on restore_live. */
-  if (self->current_room->in_context_mode && !is_initial_load)
+  /* In context/thread mode, skip non-initial messages (poll responses).
+   * They are already saved to DB by the MC and will appear on restore. */
+  if ((self->current_room->in_context_mode || self->current_room->in_thread_mode)
+      && !is_initial_load)
     return;
 
   const char *current_user = self->current_user_id;
@@ -1169,6 +1188,21 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
 
           if (!existing)
             {
+              /* Filter thread replies from main timeline.
+               * Keep: thread root (id == threadId) and all messages when in
+               * thread mode. Hide: thread replies + thread_created system msgs. */
+              gint64 json_thread_id = json_object_get_int_member_with_default (msg, "threadId", 0);
+              if (json_thread_id > 0 && msg_id != json_thread_id
+                  && !self->current_room->in_thread_mode)
+                {
+                  /* Update reply count on thread root if it's in the store */
+                  GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &json_thread_id);
+                  if (root)
+                    gnalk_message_data_set_thread_replies (root,
+                        gnalk_message_data_get_thread_replies (root) + 1);
+                  continue;
+                }
+
               GnalkMessageData *msg_data = gnalk_message_data_new_from_json (msg, current_user);
 
               if (self->current_room->last_read_message_id > 0 &&
@@ -1372,6 +1406,106 @@ gnalk_message_processor_restore_live (GnalkMessageProcessor *self)
   self->current_room->in_context_mode = FALSE;
   self->current_room->context_target_message_id = 0;
   self->current_room->context_newest_id = 0;
+
+  /* Clear store and indexes */
+  g_signal_emit (self, signals[SIGNAL_BATCH_INSERT_BEGIN], 0);
+  g_list_store_remove_all (self->current_room->messages_store);
+  msg_index_clear (self);
+  g_signal_emit (self, signals[SIGNAL_BATCH_INSERT_END], 0);
+
+  /* Reload from DB (same as opening a room fresh) */
+  gnalk_message_processor_load_from_db (self, self->current_room->room_token);
+}
+
+void
+gnalk_message_processor_load_thread (GnalkMessageProcessor *self,
+                                     JsonArray             *messages,
+                                     gint64                 thread_root_id)
+{
+  if (!self->current_room || !messages)
+    return;
+
+  guint len = json_array_get_length (messages);
+  if (len == 0)
+    return;
+
+  const char *current_user = self->current_user_id;
+  GListStore *store = self->current_room->messages_store;
+
+  /* Save main timeline state */
+  self->current_room->saved_last_known_message_id = self->current_room->last_known_message_id;
+  self->current_room->saved_oldest_loaded_id = self->current_room->oldest_loaded_id;
+  self->current_room->saved_has_more_history = self->current_room->has_more_history;
+
+  /* Enter thread mode */
+  self->current_room->in_thread_mode = TRUE;
+  self->current_room->thread_root_id = thread_root_id;
+
+  /* Disconnect model, clear store and indexes */
+  g_signal_emit (self, signals[SIGNAL_BATCH_INSERT_BEGIN], 0);
+  g_list_store_remove_all (store);
+  msg_index_clear (self);
+
+  /* Parse and insert messages */
+  gint64 oldest_id = G_MAXINT64;
+  gint64 newest_id = 0;
+
+  for (guint i = 0; i < len; i++)
+    {
+      JsonObject *msg_obj = json_array_get_object_element (messages, i);
+      if (!msg_obj)
+        continue;
+
+      /* Skip transient system messages */
+      const char *sys_msg = json_object_get_string_member_with_default (msg_obj, "systemMessage", "");
+      if (g_strcmp0 (sys_msg, "reaction") == 0 ||
+          g_strcmp0 (sys_msg, "message_edited") == 0 ||
+          g_strcmp0 (sys_msg, "message_deleted") == 0)
+        continue;
+
+      GnalkMessageData *msg_data = gnalk_message_data_new_from_json (msg_obj, current_user);
+      if (!msg_data)
+        continue;
+
+      gint64 msg_id = gnalk_message_data_get_id (msg_data);
+      if (msg_id < oldest_id)
+        oldest_id = msg_id;
+      if (msg_id > newest_id)
+        newest_id = msg_id;
+
+      g_list_store_insert_sorted (store, msg_data,
+                                   gnalk_message_processor_compare_by_id, NULL);
+      msg_index_add (self, msg_data);
+      g_object_unref (msg_data);
+    }
+
+  /* Update loading state */
+  self->current_room->oldest_loaded_id = (oldest_id < G_MAXINT64) ? oldest_id : 0;
+  self->current_room->has_more_history = (len >= 100);  /* Assume more if full page */
+  self->current_room->last_known_message_id = newest_id;
+
+  /* Update separators */
+  gnalk_message_processor_update_separators (self);
+
+  /* Reconnect model and scroll to bottom */
+  g_signal_emit (self, signals[SIGNAL_BATCH_INSERT_END], 0);
+  g_signal_emit (self, signals[SIGNAL_SCROLL_TO_BOTTOM], 0);
+}
+
+void
+gnalk_message_processor_restore_from_thread (GnalkMessageProcessor *self)
+{
+  if (!self->current_room)
+    return;
+
+  /* Restore main timeline state */
+  self->current_room->last_known_message_id = self->current_room->saved_last_known_message_id;
+  self->current_room->oldest_loaded_id = self->current_room->saved_oldest_loaded_id;
+  self->current_room->has_more_history = self->current_room->saved_has_more_history;
+
+  /* Exit thread mode */
+  self->current_room->in_thread_mode = FALSE;
+  self->current_room->thread_root_id = 0;
 
   /* Clear store and indexes */
   g_signal_emit (self, signals[SIGNAL_BATCH_INSERT_BEGIN], 0);

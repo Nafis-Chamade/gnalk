@@ -220,6 +220,17 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         gtk_widget_set_visible (self->connecting_spinner, FALSE);
         gnalk_network_status_bar_hide (self->network_status_bar);
 
+        /* Update cached capabilities (now available after capabilities fetch) */
+        self->cached_has_threads = gnalk_session_has_threads (session);
+
+        /* Force rebind of visible message rows to pick up thread capability */
+        if (self->cached_has_threads && self->messages_store &&
+            g_list_model_get_n_items (G_LIST_MODEL (self->messages_store)) > 0)
+          {
+            gtk_no_selection_set_model (self->messages_selection, NULL);
+            gtk_no_selection_set_model (self->messages_selection, G_LIST_MODEL (self->messages_store));
+          }
+
         /* Switch to main view */
         gtk_stack_set_visible_child_name (GTK_STACK (self->main_stack), "main");
 
@@ -1060,6 +1071,8 @@ on_msg_list_item_setup (GtkListItemFactory *factory,
   g_signal_connect_object (row, "delete-requested", G_CALLBACK (gnalk_window_on_delete_requested), self, 0);
   g_signal_connect_object (row, "scroll-to-message-requested", G_CALLBACK (gnalk_window_on_scroll_to_message_requested), self, 0);
   g_signal_connect_object (row, "file-clicked", G_CALLBACK (gnalk_window_on_file_clicked), self, 0);
+  g_signal_connect_object (row, "thread-open-requested", G_CALLBACK (gnalk_window_on_thread_open_requested), self, 0);
+  g_signal_connect_object (row, "thread-create-requested", G_CALLBACK (gnalk_window_on_thread_create_requested), self, 0);
 
   gtk_list_item_set_child (item, GTK_WIDGET (row));
 }
@@ -1073,9 +1086,10 @@ on_msg_list_item_bind (GtkListItemFactory *factory,
   GnalkMessageData *data = GNALK_MESSAGE_DATA (gtk_list_item_get_item (item));
   GnalkMessageRow *row = GNALK_MESSAGE_ROW (gtk_list_item_get_child (item));
 
-  /* Set edit/delete timeouts from cached capabilities (set once at session switch) */
+  /* Set edit/delete timeouts and thread support from cached capabilities */
   gnalk_message_row_set_edit_timeout (row, self->cached_edit_timeout);
   gnalk_message_row_set_delete_timeout (row, self->cached_delete_timeout);
+  gnalk_message_row_set_threads_supported (row, self->cached_has_threads && !self->cached_room_is_federated);
 
   /* Populate the row from the data object first (sets is_self, is_system, etc.) */
   /* Note: gtk_list_item_get_item returns transfer-none, don't unref */
@@ -1176,8 +1190,18 @@ on_message_view_load_older_requested (GnalkMessageView *view,
       self->current_room->has_more_history && !gnalk_message_view_get_loading_older (self->message_view) &&
       self->current_room->oldest_loaded_id > 0)
     {
-      g_debug ("Message view requested older messages");
-      gnalk_window_load_older_messages (self);
+      if (self->current_room->in_thread_mode && self->message_controller)
+        {
+          g_debug ("Message view requested older thread messages");
+          gnalk_message_controller_load_older_thread (self->message_controller,
+              self->current_room->thread_root_id,
+              self->current_room->oldest_loaded_id);
+        }
+      else
+        {
+          g_debug ("Message view requested older messages");
+          gnalk_window_load_older_messages (self);
+        }
     }
 }
 
@@ -2308,6 +2332,7 @@ gnalk_window_init (GnalkWindow *self)
   /* Connect scroll-changed to re-check visibility of unread messages on scroll */
   g_signal_connect (self->message_view, "scroll-changed", G_CALLBACK (gnalk_window_on_message_scroll_changed), self);
   g_signal_connect (self->message_view, "jump-to-present-clicked", G_CALLBACK (gnalk_window_on_jump_to_present), self);
+  g_signal_connect (self->message_view, "exit-thread-clicked", G_CALLBACK (gnalk_window_on_exit_thread), self);
 
   /* Message search panel: bind toggle button to revealer */
   g_object_bind_property (self->message_search_button, "active",

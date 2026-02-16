@@ -21,8 +21,11 @@
 #include "gnalk-message-view.h"
 #include "gnalk-participant-controller.h"
 #include "gnalk-incoming-call-banner.h"
+#include "gnalk-message-row.h"
 #include "gnalk-log.h"
+#include <adwaita.h>
 #include <json-glib/json-glib.h>
+#include <glib/gi18n.h>
 #include <glib/gi18n.h>
 
 /* ============ Clear/refresh messages ============ */
@@ -312,4 +315,124 @@ gnalk_window_on_jump_to_present (GnalkMessageView *view G_GNUC_UNUSED,
 {
   gnalk_message_processor_restore_live (self->message_processor);
   gnalk_message_view_set_context_mode (self->message_view, FALSE);
+}
+
+/* ============ Thread mode handlers ============ */
+
+void
+gnalk_window_on_thread_open_requested (GnalkMessageRow *row G_GNUC_UNUSED,
+                                       gint64           message_id,
+                                       gpointer         user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  if (!self->current_room || !self->message_controller)
+    return;
+
+  /* If already in context mode, restore first */
+  if (self->current_room->in_context_mode)
+    {
+      gnalk_message_processor_restore_live (self->message_processor);
+      gnalk_message_view_set_context_mode (self->message_view, FALSE);
+    }
+
+  /* If already in thread mode, restore first */
+  if (self->current_room->in_thread_mode)
+    {
+      gnalk_message_processor_restore_from_thread (self->message_processor);
+      gnalk_message_view_set_thread_mode (self->message_view, FALSE);
+    }
+
+  /* Load thread messages from server */
+  gnalk_message_controller_load_thread (self->message_controller, message_id);
+}
+
+static void
+on_create_thread_dialog_response (AdwAlertDialog *dialog,
+                                  const char     *response,
+                                  gpointer        user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  if (g_strcmp0 (response, "create") != 0)
+    return;
+
+  GtkEntry *title_entry = GTK_ENTRY (g_object_get_data (G_OBJECT (dialog), "title-entry"));
+  GtkEntry *msg_entry = GTK_ENTRY (g_object_get_data (G_OBJECT (dialog), "msg-entry"));
+
+  const char *title = gtk_editable_get_text (GTK_EDITABLE (title_entry));
+  const char *message = gtk_editable_get_text (GTK_EDITABLE (msg_entry));
+
+  if (!title || !*title)
+    title = _("Thread");
+  if (!message || !*message)
+    return;
+
+  g_autofree char *ref_id = gnalk_window_generate_reference_id (message,
+      self->current_room ? self->current_room->room_token : "");
+  gnalk_message_controller_create_thread (self->message_controller,
+      message, title, ref_id);
+}
+
+void
+gnalk_window_on_thread_create_requested (GnalkMessageRow *row G_GNUC_UNUSED,
+                                         gint64           message_id G_GNUC_UNUSED,
+                                         gpointer         user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  if (!self->current_room || !self->message_controller)
+    return;
+
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (_("Start a thread"), NULL));
+  adw_alert_dialog_add_responses (dialog, "cancel", _("Cancel"), "create", _("Create"), NULL);
+  adw_alert_dialog_set_response_appearance (dialog, "create", ADW_RESPONSE_SUGGESTED);
+  adw_alert_dialog_set_default_response (dialog, "create");
+  adw_alert_dialog_set_close_response (dialog, "cancel");
+
+  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
+
+  GtkWidget *title_entry = gtk_entry_new ();
+  gtk_entry_set_placeholder_text (GTK_ENTRY (title_entry), _("Thread title"));
+  gtk_box_append (GTK_BOX (box), title_entry);
+
+  GtkWidget *msg_entry = gtk_entry_new ();
+  gtk_entry_set_placeholder_text (GTK_ENTRY (msg_entry), _("First message"));
+  gtk_box_append (GTK_BOX (box), msg_entry);
+
+  adw_alert_dialog_set_extra_child (dialog, box);
+
+  g_object_set_data (G_OBJECT (dialog), "title-entry", title_entry);
+  g_object_set_data (G_OBJECT (dialog), "msg-entry", msg_entry);
+
+  g_signal_connect (dialog, "response",
+      G_CALLBACK (on_create_thread_dialog_response), self);
+  adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (self));
+}
+
+void
+gnalk_window_on_thread_messages_loaded (GnalkMessageController *mc G_GNUC_UNUSED,
+                                        JsonArray              *messages,
+                                        gint64                  thread_id,
+                                        GnalkWindow            *self)
+{
+  gnalk_message_processor_load_thread (self->message_processor, messages, thread_id);
+  gnalk_message_view_set_thread_mode (self->message_view, TRUE);
+}
+
+void
+gnalk_window_on_thread_older_loaded (GnalkMessageController *mc G_GNUC_UNUSED,
+                                     JsonArray              *messages,
+                                     gboolean                has_more,
+                                     GnalkWindow            *self)
+{
+  gnalk_message_processor_process_older_from_server (self->message_processor, messages, has_more);
+}
+
+void
+gnalk_window_on_exit_thread (GnalkMessageView *view G_GNUC_UNUSED,
+                             GnalkWindow      *self)
+{
+  gnalk_message_processor_restore_from_thread (self->message_processor);
+  gnalk_message_view_set_thread_mode (self->message_view, FALSE);
 }

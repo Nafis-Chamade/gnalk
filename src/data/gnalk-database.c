@@ -78,6 +78,9 @@ static const char *SCHEMA_SQL =
   "  parent_json TEXT,"
   "  message_parameters_json TEXT,"
   "  actor_type TEXT DEFAULT 'users',"
+  "  thread_id INTEGER DEFAULT 0,"
+  "  is_thread INTEGER DEFAULT 0,"
+  "  thread_replies INTEGER DEFAULT 0,"
   "  PRIMARY KEY (id, account_id)"
   ");"
 
@@ -94,6 +97,7 @@ static const char *SCHEMA_SQL =
   "  file_path TEXT,"
   "  file_name TEXT,"
   "  content_type TEXT,"
+  "  thread_id INTEGER DEFAULT 0,"
   "  created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),"
   "  retry_count INTEGER DEFAULT 0,"
   "  last_error TEXT"
@@ -348,6 +352,50 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
                     g_warning ("Failed to add actor_type column: %s", err_msg ? err_msg : "unknown");
                     sqlite3_free (err_msg);
                   }
+              }
+          }
+        sqlite3_finalize (check_stmt);
+      }
+  }
+
+  /* Migration: add thread columns to messages and pending_messages tables */
+  {
+    sqlite3_stmt *check_stmt;
+    const char *check_sql = "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'";
+    if (sqlite3_prepare_v2 (self->db, check_sql, -1, &check_stmt, NULL) == SQLITE_OK)
+      {
+        if (sqlite3_step (check_stmt) == SQLITE_ROW)
+          {
+            const char *schema = (const char *)sqlite3_column_text (check_stmt, 0);
+            if (schema && !strstr (schema, "thread_id"))
+              {
+                sqlite3_exec (self->db,
+                              "ALTER TABLE messages ADD COLUMN thread_id INTEGER DEFAULT 0",
+                              NULL, NULL, NULL);
+                sqlite3_exec (self->db,
+                              "ALTER TABLE messages ADD COLUMN is_thread INTEGER DEFAULT 0",
+                              NULL, NULL, NULL);
+                sqlite3_exec (self->db,
+                              "ALTER TABLE messages ADD COLUMN thread_replies INTEGER DEFAULT 0",
+                              NULL, NULL, NULL);
+                g_message ("Database migration: added thread columns to messages");
+              }
+          }
+        sqlite3_finalize (check_stmt);
+      }
+    /* pending_messages */
+    check_sql = "SELECT sql FROM sqlite_master WHERE type='table' AND name='pending_messages'";
+    if (sqlite3_prepare_v2 (self->db, check_sql, -1, &check_stmt, NULL) == SQLITE_OK)
+      {
+        if (sqlite3_step (check_stmt) == SQLITE_ROW)
+          {
+            const char *schema = (const char *)sqlite3_column_text (check_stmt, 0);
+            if (schema && !strstr (schema, "thread_id"))
+              {
+                sqlite3_exec (self->db,
+                              "ALTER TABLE pending_messages ADD COLUMN thread_id INTEGER DEFAULT 0",
+                              NULL, NULL, NULL);
+                g_message ("Database migration: added thread_id to pending_messages");
               }
           }
         sqlite3_finalize (check_stmt);
@@ -832,8 +880,9 @@ gnalk_database_save_message (GnalkDatabase    *self,
     "INSERT OR REPLACE INTO messages "
     "(id, account_id, conversation_token, timestamp, reply_to, last_edit_timestamp, "
     "message, author_id, author_name, reference_id, system_message, is_own, status, "
-    "reactions_json, parent_json, message_parameters_json, actor_type) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    "reactions_json, parent_json, message_parameters_json, actor_type, "
+    "thread_id, is_thread, thread_replies) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -858,6 +907,9 @@ gnalk_database_save_message (GnalkDatabase    *self,
       sqlite3_bind_text (stmt, 15, parent_json, -1, SQLITE_TRANSIENT);
       sqlite3_bind_text (stmt, 16, params_json, -1, SQLITE_TRANSIENT);
       sqlite3_bind_text (stmt, 17, gnalk_message_data_get_actor_type (message), -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 18, gnalk_message_data_get_thread_id (message));
+      sqlite3_bind_int (stmt, 19, gnalk_message_data_get_is_thread (message) ? 1 : 0);
+      sqlite3_bind_int (stmt, 20, gnalk_message_data_get_thread_replies (message));
 
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
@@ -950,7 +1002,8 @@ gnalk_database_load_messages (GnalkDatabase *self,
       sql =
         "SELECT id, timestamp, reply_to, last_edit_timestamp, message, author_id, "
         "author_name, reference_id, system_message, is_own, status, reactions_json, "
-        "parent_json, message_parameters_json, actor_type "
+        "parent_json, message_parameters_json, actor_type, "
+        "thread_id, is_thread, thread_replies "
         "FROM messages WHERE account_id = ? AND conversation_token = ? AND id < ? "
         "ORDER BY timestamp DESC LIMIT ?";
     }
@@ -959,7 +1012,8 @@ gnalk_database_load_messages (GnalkDatabase *self,
       sql =
         "SELECT id, timestamp, reply_to, last_edit_timestamp, message, author_id, "
         "author_name, reference_id, system_message, is_own, status, reactions_json, "
-        "parent_json, message_parameters_json, actor_type "
+        "parent_json, message_parameters_json, actor_type, "
+        "thread_id, is_thread, thread_replies "
         "FROM messages WHERE account_id = ? AND conversation_token = ? "
         "ORDER BY timestamp DESC LIMIT ?";
     }
@@ -999,7 +1053,10 @@ gnalk_database_load_messages (GnalkDatabase *self,
             (const char *) sqlite3_column_text (stmt, 11),   /* reactions_json */
             (const char *) sqlite3_column_text (stmt, 12),   /* parent_json */
             (const char *) sqlite3_column_text (stmt, 13),   /* message_parameters_json */
-            (const char *) sqlite3_column_text (stmt, 14));  /* actor_type */
+            (const char *) sqlite3_column_text (stmt, 14),   /* actor_type */
+            sqlite3_column_int64 (stmt, 15),                 /* thread_id */
+            sqlite3_column_int (stmt, 16) != 0,              /* is_thread */
+            sqlite3_column_int (stmt, 17));                   /* thread_replies */
 
           g_ptr_array_add (messages, data);
         }
@@ -1230,7 +1287,8 @@ gnalk_database_queue_pending_message (GnalkDatabase *self,
                                         const char     *conversation_token,
                                         const char     *message,
                                         gint64          reply_to,
-                                        const char     *reference_id)
+                                        const char     *reference_id,
+                                        gint64          thread_id)
 {
   g_return_if_fail (GNALK_IS_DATABASE (self));
   g_return_if_fail (self->db != NULL);
@@ -1240,8 +1298,8 @@ gnalk_database_queue_pending_message (GnalkDatabase *self,
   sqlite3_stmt *stmt;
   const char *sql =
     "INSERT OR REPLACE INTO pending_messages "
-    "(account_id, conversation_token, message, reply_to, reference_id) "
-    "VALUES (?, ?, ?, ?, ?)";
+    "(account_id, conversation_token, message, reply_to, reference_id, thread_id) "
+    "VALUES (?, ?, ?, ?, ?, ?)";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -1250,6 +1308,7 @@ gnalk_database_queue_pending_message (GnalkDatabase *self,
       sqlite3_bind_text (stmt, 3, message, -1, SQLITE_STATIC);
       sqlite3_bind_int64 (stmt, 4, reply_to);
       sqlite3_bind_text (stmt, 5, reference_id, -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 6, thread_id);
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
     }
@@ -1321,7 +1380,7 @@ gnalk_database_get_pending_messages (GnalkDatabase *self,
 
   const char *sql =
     "SELECT id, conversation_token, message, reply_to, reference_id, "
-    "file_path, file_name, content_type, retry_count, last_error "
+    "file_path, file_name, content_type, retry_count, last_error, thread_id "
     "FROM pending_messages WHERE account_id = ? ORDER BY created_at ASC";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
@@ -1341,6 +1400,7 @@ gnalk_database_get_pending_messages (GnalkDatabase *self,
           pm->content_type = g_strdup ((const char *) sqlite3_column_text (stmt, 7));
           pm->retry_count = sqlite3_column_int (stmt, 8);
           pm->last_error = g_strdup ((const char *) sqlite3_column_text (stmt, 9));
+          pm->thread_id = sqlite3_column_int64 (stmt, 10);
           g_ptr_array_add (array, pm);
         }
 

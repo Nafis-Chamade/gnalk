@@ -123,6 +123,22 @@ void gnalk_message_controller_search_messages (GnalkMessageController *self,
 void gnalk_message_controller_set_session_ready (GnalkMessageController *self,
                                                  gboolean                ready);
 
+/* Thread support */
+void gnalk_message_controller_load_thread         (GnalkMessageController *self,
+                                                    gint64                  thread_id);
+void gnalk_message_controller_load_older_thread   (GnalkMessageController *self,
+                                                    gint64                  thread_id,
+                                                    gint64                  before_id);
+void gnalk_message_controller_send_thread_message (GnalkMessageController *self,
+                                                    const char             *message,
+                                                    gint64                  thread_id,
+                                                    gint64                  reply_to,
+                                                    const char             *reference_id);
+void gnalk_message_controller_create_thread       (GnalkMessageController *self,
+                                                    const char             *message,
+                                                    const char             *thread_title,
+                                                    const char             *reference_id);
+
 /* Handle a chat message relayed via HPB WebSocket.
  * If full comment is present, saves to DB and emits poll-response.
  * If only refresh=true, triggers a REST fetch for new messages. */

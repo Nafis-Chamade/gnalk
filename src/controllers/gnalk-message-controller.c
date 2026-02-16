@@ -55,6 +55,8 @@ enum {
   SIGNAL_READ_STATUS_UPDATED,
   SIGNAL_CONTEXT_LOADED,
   SIGNAL_SEARCH_RESULTS,
+  SIGNAL_THREAD_MESSAGES_LOADED,
+  SIGNAL_THREAD_OLDER_LOADED,
   N_SIGNALS
 };
 
@@ -67,6 +69,12 @@ static void on_older_messages_response (GnalkHttpClient *client, JsonNode *respo
 static void on_send_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_edit_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_delete_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_thread_messages_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_thread_older_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_thread_send_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+static void on_create_thread_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
+/* Thread support — forward declaration needed for on_create_thread_response */
+void gnalk_message_controller_load_thread (GnalkMessageController *self, gint64 thread_id);
 static void on_reaction_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_context_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
 static void on_search_messages_response (GnalkHttpClient *client, JsonNode *response, GError *error, gpointer user_data);
@@ -274,6 +282,24 @@ gnalk_message_controller_class_init (GnalkMessageControllerClass *klass)
                   JSON_TYPE_ARRAY,   /* entries */
                   G_TYPE_BOOLEAN,    /* has_more */
                   G_TYPE_INT);       /* cursor */
+
+  signals[SIGNAL_THREAD_MESSAGES_LOADED] =
+    g_signal_new ("thread-messages-loaded",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 2,
+                  JSON_TYPE_ARRAY,   /* messages */
+                  G_TYPE_INT64);     /* thread_id */
+
+  signals[SIGNAL_THREAD_OLDER_LOADED] =
+    g_signal_new ("thread-older-loaded",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 2,
+                  JSON_TYPE_ARRAY,   /* messages */
+                  G_TYPE_BOOLEAN);   /* has_more */
 }
 
 static void
@@ -1702,4 +1728,279 @@ gnalk_message_controller_handle_relayed_chat (GnalkMessageController *self,
       if (self->last_known_message_id > 0)
         gnalk_message_controller_load_new_messages (self, self->last_known_message_id);
     }
+}
+
+/* ============ Thread support ============ */
+
+static void
+on_thread_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                             JsonNode         *response,
+                             GError           *error,
+                             gpointer          user_data)
+{
+  GnalkAsyncOp *op = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gint64 thread_id = op->context_id;
+  gnalk_async_op_free (op);
+
+  if (error)
+    {
+      g_warning ("Failed to load thread messages: %s", error->message);
+      return;
+    }
+
+  JsonArray *messages = extract_messages_array (response);
+  if (messages)
+    {
+      save_messages_to_db (self, messages, self->room_token);
+      g_signal_emit (self, signals[SIGNAL_THREAD_MESSAGES_LOADED], 0, messages, thread_id);
+    }
+}
+
+static void
+on_thread_older_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                          JsonNode         *response,
+                          GError           *error,
+                          gpointer          user_data)
+{
+  GnalkAsyncOp *op = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
+
+  if (error)
+    {
+      g_warning ("Failed to load older thread messages: %s", error->message);
+      return;
+    }
+
+  JsonArray *messages = extract_messages_array (response);
+  if (messages)
+    {
+      save_messages_to_db (self, messages, self->room_token);
+      guint len = json_array_get_length (messages);
+      g_signal_emit (self, signals[SIGNAL_THREAD_OLDER_LOADED], 0,
+                     messages, (gboolean) (len >= 50));
+    }
+}
+
+static void
+on_thread_send_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                         JsonNode         *response,
+                         GError           *error,
+                         gpointer          user_data)
+{
+  GnalkAsyncOp *op = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
+
+  if (error)
+    {
+      g_warning ("Thread message send failed: %s", error->message);
+      g_signal_emit (self, signals[SIGNAL_MESSAGE_SEND_FAILED], 0, "", error->message);
+      return;
+    }
+
+  /* POST response: ocs.data is a single message object, not an array */
+  if (response && JSON_NODE_HOLDS_OBJECT (response))
+    {
+      JsonObject *root = json_node_get_object (response);
+      JsonObject *ocs = json_object_get_object_member (root, "ocs");
+      if (ocs)
+        {
+          JsonObject *msg_data = json_object_get_object_member (ocs, "data");
+          if (msg_data)
+            {
+              const char *ref = json_object_get_string_member_with_default (msg_data, "referenceId", "");
+              gint64 msg_id = json_object_get_int_member_with_default (msg_data, "id", 0);
+              gint64 ts = json_object_get_int_member_with_default (msg_data, "timestamp", 0);
+              if (ref && *ref && msg_id > 0)
+                g_signal_emit (self, signals[SIGNAL_MESSAGE_SENT], 0, ref, msg_id, ts);
+            }
+        }
+    }
+}
+
+static void
+on_create_thread_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                           JsonNode         *response,
+                           GError           *error,
+                           gpointer          user_data)
+{
+  GnalkAsyncOp *op = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+  if (!gnalk_async_op_is_valid (op))
+    {
+      gnalk_async_op_free (op);
+      return;
+    }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  GnalkMessageController *self = GNALK_MESSAGE_CONTROLLER (owner);
+  gnalk_async_op_free (op);
+
+  if (error)
+    {
+      g_warning ("Thread creation failed: %s", error->message);
+      return;
+    }
+
+  /* POST response: ocs.data is a single message object (the thread root) */
+  if (response && JSON_NODE_HOLDS_OBJECT (response))
+    {
+      JsonObject *root = json_node_get_object (response);
+      JsonObject *ocs = json_object_get_object_member (root, "ocs");
+      if (ocs)
+        {
+          JsonObject *msg_data = json_object_get_object_member (ocs, "data");
+          if (msg_data)
+            {
+              /* The response is the root message; its threadId field
+               * holds the actual thread ID (which may differ from the
+               * message id for system messages like "thread_created"). */
+              gint64 thread_id = json_object_get_int_member_with_default (msg_data, "threadId", 0);
+              if (thread_id <= 0)
+                thread_id = json_object_get_int_member_with_default (msg_data, "id", 0);
+              if (thread_id > 0)
+                gnalk_message_controller_load_thread (self, thread_id);
+            }
+        }
+    }
+}
+
+void
+gnalk_message_controller_load_thread (GnalkMessageController *self,
+                                      gint64                  thread_id)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (self->room_token != NULL);
+  g_return_if_fail (thread_id > 0);
+
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation,
+                                          NULL, thread_id);
+
+  gnalk_http_client_get_thread_messages (self->http_client,
+                                          self->room_token,
+                                          thread_id,
+                                          0,   /* latest messages */
+                                          100, /* limit */
+                                          on_thread_messages_response,
+                                          op);
+}
+
+void
+gnalk_message_controller_load_older_thread (GnalkMessageController *self,
+                                            gint64                  thread_id,
+                                            gint64                  before_id)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (self->room_token != NULL);
+  g_return_if_fail (thread_id > 0);
+  g_return_if_fail (before_id > 0);
+
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation,
+                                          NULL, 0);
+
+  gnalk_http_client_get_thread_messages (self->http_client,
+                                          self->room_token,
+                                          thread_id,
+                                          before_id,
+                                          50,
+                                          on_thread_older_response,
+                                          op);
+}
+
+void
+gnalk_message_controller_send_thread_message (GnalkMessageController *self,
+                                              const char             *message,
+                                              gint64                  thread_id,
+                                              gint64                  reply_to,
+                                              const char             *reference_id)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (self->room_token != NULL);
+  g_return_if_fail (message != NULL);
+  g_return_if_fail (thread_id > 0);
+
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation,
+                                          NULL, 0);
+
+  gnalk_http_client_send_thread_message (self->http_client,
+                                          self->room_token,
+                                          message,
+                                          thread_id,
+                                          reply_to,
+                                          reference_id,
+                                          on_thread_send_response,
+                                          op);
+}
+
+void
+gnalk_message_controller_create_thread (GnalkMessageController *self,
+                                        const char             *message,
+                                        const char             *thread_title,
+                                        const char             *reference_id)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (self->room_token != NULL);
+  g_return_if_fail (message != NULL && *message);
+
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation,
+                                          NULL, 0);
+
+  gnalk_http_client_create_thread (self->http_client,
+                                    self->room_token,
+                                    message,
+                                    0,  /* replyTo must be 0 for thread creation */
+                                    thread_title,
+                                    reference_id,
+                                    on_create_thread_response,
+                                    op);
 }

@@ -299,7 +299,8 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
       user_display_name ? user_display_name : user_id,
       user_id,
       reference_id,
-      self->current_room->reply_to_message_id);
+      self->current_room->reply_to_message_id,
+      self->current_room->in_thread_mode ? self->current_room->thread_root_id : 0);
 
   /* If replying to a message, copy the parent data for quote display */
   if (self->current_room->reply_to_message_id > 0 && self->messages_store)
@@ -351,10 +352,18 @@ gnalk_window_on_message_input_send_requested (GnalkMessageInput *input,
     {
       /* Send message via controller */
       gnalk_message_controller_set_room (self->message_controller, self->current_room->room_token);
-      gnalk_message_controller_send_message (self->message_controller,
-                                               text,
-                                               self->current_room->reply_to_message_id,
-                                               reference_id);
+
+      if (self->current_room->in_thread_mode)
+        gnalk_message_controller_send_thread_message (self->message_controller,
+                                                       text,
+                                                       self->current_room->thread_root_id,
+                                                       self->current_room->reply_to_message_id,
+                                                       reference_id);
+      else
+        gnalk_message_controller_send_message (self->message_controller,
+                                                 text,
+                                                 self->current_room->reply_to_message_id,
+                                                 reference_id);
     }
   else
     {

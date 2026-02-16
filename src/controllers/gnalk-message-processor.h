@@ -79,9 +79,19 @@ void gnalk_message_processor_load_context  (GnalkMessageProcessor *self,
                                             gint64                 target_message_id);
 void gnalk_message_processor_restore_live  (GnalkMessageProcessor *self);
 
+/* Thread mode */
+void gnalk_message_processor_load_thread          (GnalkMessageProcessor *self,
+                                                    JsonArray             *messages,
+                                                    gint64                 thread_root_id);
+void gnalk_message_processor_restore_from_thread  (GnalkMessageProcessor *self);
+
 /* Index a message that was added to the store externally (e.g. pending messages) */
 void gnalk_message_processor_index_message (GnalkMessageProcessor *self,
                                              GnalkMessageData      *data);
+
+/* Lookup a message by ID (O(1) via msg_index). Returns NULL if not found. */
+GnalkMessageData *gnalk_message_processor_find_message (GnalkMessageProcessor *self,
+                                                         gint64                 message_id);
 
 /* State queries */
 gboolean gnalk_message_processor_get_loading_older (GnalkMessageProcessor *self);

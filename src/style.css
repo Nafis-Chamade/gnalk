@@ -889,3 +889,22 @@ waveform-seekbar {
 .video-player .video-controls button {
   color: white;
 }
+
+/* ============ Thread support ============ */
+
+.thread-button {
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid alpha(@borders, 0.5);
+  opacity: 0.7;
+}
+
+.thread-button:hover {
+  opacity: 1.0;
+}
+
+.thread-banner {
+  padding: 6px 12px;
+  border-bottom: 1px solid alpha(@borders, 0.5);
+  background-color: alpha(@accent_bg_color, 0.08);
+}

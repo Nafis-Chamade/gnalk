@@ -15,6 +15,10 @@ struct _GnalkMessageView
 
   gboolean loading_older;
   gboolean in_context_mode;
+  gboolean in_thread_mode;
+
+  /* Thread mode banner (created once in init) */
+  GtkWidget *thread_banner;
 
   GSettings *settings;
   gulong bg_style_handler_id;
@@ -31,6 +35,7 @@ enum
   SIGNAL_SCROLL_CHANGED,
   SIGNAL_SCROLL_TO_BOTTOM_CLICKED,
   SIGNAL_JUMP_TO_PRESENT_CLICKED,
+  SIGNAL_EXIT_THREAD_CLICKED,
   N_SIGNALS
 };
 
@@ -98,6 +103,13 @@ on_scroll_adjustment_changed (GtkAdjustment     *adj,
     gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
 
   g_signal_emit (self, signals[SIGNAL_SCROLL_CHANGED], 0);
+}
+
+static void
+on_exit_thread_clicked (GtkButton         *button G_GNUC_UNUSED,
+                        GnalkMessageView *self)
+{
+  g_signal_emit (self, signals[SIGNAL_EXIT_THREAD_CLICKED], 0);
 }
 
 static void
@@ -245,6 +257,15 @@ gnalk_message_view_class_init (GnalkMessageViewClass *klass)
                   NULL, NULL,
                   NULL,
                   G_TYPE_NONE, 0);
+
+  signals[SIGNAL_EXIT_THREAD_CLICKED] =
+    g_signal_new ("exit-thread-clicked",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 0);
 }
 
 static void
@@ -270,6 +291,29 @@ gnalk_message_view_init (GnalkMessageView *self)
   self->bg_style_handler_id = g_signal_connect (self->settings, "changed::conversation-background",
                                                  G_CALLBACK (on_background_style_setting_changed), self);
   update_background_style (self);
+
+  /* Create thread banner (hidden by default) */
+  {
+    self->thread_banner = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class (self->thread_banner, "thread-banner");
+    gtk_widget_set_visible (self->thread_banner, FALSE);
+
+    GtkWidget *back_btn = gtk_button_new_from_icon_name ("go-previous-symbolic");
+    gtk_button_set_has_frame (GTK_BUTTON (back_btn), FALSE);
+    gtk_widget_set_valign (back_btn, GTK_ALIGN_CENTER);
+    g_signal_connect (back_btn, "clicked", G_CALLBACK (on_exit_thread_clicked), self);
+
+    GtkWidget *label = gtk_label_new ("Thread");
+    gtk_widget_add_css_class (label, "heading");
+    gtk_widget_set_hexpand (label, TRUE);
+    gtk_widget_set_halign (label, GTK_ALIGN_START);
+
+    gtk_box_append (GTK_BOX (self->thread_banner), back_btn);
+    gtk_box_append (GTK_BOX (self->thread_banner), label);
+
+    /* Insert banner before the stack */
+    gtk_box_prepend (GTK_BOX (self), self->thread_banner);
+  }
 }
 
 GnalkMessageView *
@@ -595,4 +639,14 @@ gnalk_message_view_set_context_mode (GnalkMessageView *self,
       gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
       gtk_widget_set_visible (self->scroll_to_bottom_button, !at_bottom);
     }
+}
+
+void
+gnalk_message_view_set_thread_mode (GnalkMessageView *self,
+                                    gboolean          thread_mode)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
+
+  self->in_thread_mode = thread_mode;
+  gtk_widget_set_visible (self->thread_banner, thread_mode);
 }

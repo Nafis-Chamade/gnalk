@@ -83,6 +83,12 @@ struct _GnalkMessageRow
   /* Bound data for signal handling */
   GnalkMessageData *bound_data;
   gulong             unread_handler_id;
+
+  /* Thread support */
+  GtkWidget *thread_button;
+  GtkWidget *thread_label;
+  GtkWidget *start_thread_button;  /* In context menu */
+  gboolean   threads_supported;    /* Set from session capability */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageRow, gnalk_message_row, GTK_TYPE_BOX)
@@ -102,6 +108,8 @@ enum {
   SIGNAL_FILE_CLICKED,
   SIGNAL_EDIT_REQUESTED,
   SIGNAL_DELETE_REQUESTED,
+  SIGNAL_THREAD_OPEN_REQUESTED,
+  SIGNAL_THREAD_CREATE_REQUESTED,
   N_SIGNALS
 };
 
@@ -201,6 +209,19 @@ on_bound_data_notify (GObject    *data_obj,
     {
       gboolean cached = gnalk_message_data_get_file_cached (data);
       gnalk_file_preview_set_cached (self->file_preview, cached);
+    }
+  else if (g_strcmp0 (name, "thread-replies") == 0)
+    {
+      gint replies = gnalk_message_data_get_thread_replies (data);
+      if (gnalk_message_data_get_is_thread (data))
+        {
+          g_autofree char *label = NULL;
+          if (replies > 0)
+            label = g_strdup_printf (ngettext ("%d reply", "%d replies", replies), replies);
+          else
+            label = g_strdup (_("Reply in thread"));
+          gtk_label_set_text (GTK_LABEL (self->thread_label), label);
+        }
     }
 }
 
@@ -437,6 +458,8 @@ gnalk_message_row_class_init (GnalkMessageRowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, date_separator);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, footer_box);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, status_icon);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, thread_button);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, thread_label);
 
   /* Signal emitted when user requests to add a reaction */
   signals[SIGNAL_REACTION_REQUESTED] =
@@ -494,6 +517,22 @@ gnalk_message_row_class_init (GnalkMessageRowClass *klass)
   /* Signal emitted when user wants to delete a message */
   signals[SIGNAL_DELETE_REQUESTED] =
     g_signal_new ("delete-requested",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_INT64);   /* message_id */
+
+  signals[SIGNAL_THREAD_OPEN_REQUESTED] =
+    g_signal_new ("thread-open-requested",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_INT64);   /* thread_id (= message_id of root) */
+
+  signals[SIGNAL_THREAD_CREATE_REQUESTED] =
+    g_signal_new ("thread-create-requested",
                   G_TYPE_FROM_CLASS (klass),
                   G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL,
@@ -558,6 +597,33 @@ on_delete_button_clicked (GtkButton *button,
 }
 
 static void
+on_thread_button_clicked (GtkButton *button G_GNUC_UNUSED,
+                          gpointer   user_data)
+{
+  GnalkMessageRow *self = GNALK_MESSAGE_ROW (user_data);
+  if (!self->bound_data)
+    return;
+
+  /* Use thread_id (not message_id) — the system message "thread_created"
+   * has is_thread=TRUE but its id != the actual thread root id. */
+  gint64 tid = gnalk_message_data_get_thread_id (self->bound_data);
+  if (tid > 0)
+    g_signal_emit (self, signals[SIGNAL_THREAD_OPEN_REQUESTED], 0, tid);
+}
+
+static void
+on_start_thread_clicked (GtkButton *button G_GNUC_UNUSED,
+                         gpointer   user_data)
+{
+  GnalkMessageRow *self = GNALK_MESSAGE_ROW (user_data);
+  if (self->message_id > 0)
+    {
+      g_signal_emit (self, signals[SIGNAL_THREAD_CREATE_REQUESTED], 0, self->message_id);
+      gtk_popover_popdown (GTK_POPOVER (self->reaction_popover));
+    }
+}
+
+static void
 show_context_menu (GnalkMessageRow *self,
                    GtkGesture       *gesture,
                    double            x,
@@ -584,6 +650,14 @@ show_context_menu (GnalkMessageRow *self,
   if (can_delete && self->delete_timeout > 0 && self->message_timestamp > 0)
     can_delete = (message_age < self->delete_timeout);
   gtk_widget_set_visible (self->delete_button, can_delete);
+
+  /* Show "Start a thread" only when threads are supported, message is not already
+   * a thread root, and message is not inside a thread */
+  gboolean can_start_thread = self->threads_supported
+      && self->bound_data
+      && !gnalk_message_data_get_is_thread (self->bound_data)
+      && gnalk_message_data_get_thread_id (self->bound_data) == 0;
+  gtk_widget_set_visible (self->start_thread_button, can_start_thread);
 
   /* Position and show the popover */
   GdkRectangle rect = { (int) x, (int) y, 1, 1 };
@@ -775,7 +849,18 @@ gnalk_message_row_init (GnalkMessageRow *self)
   g_signal_connect (self->delete_button, "clicked", G_CALLBACK (on_delete_button_clicked), self);
   gtk_box_append (GTK_BOX (main_box), self->delete_button);
 
+  /* Start a thread button (visible when threads supported and message is threadable) */
+  self->start_thread_button = gtk_button_new_with_label ("Start a thread");
+  gtk_button_set_has_frame (GTK_BUTTON (self->start_thread_button), FALSE);
+  gtk_widget_add_css_class (self->start_thread_button, "context-menu-item");
+  gtk_widget_set_visible (self->start_thread_button, FALSE);
+  g_signal_connect (self->start_thread_button, "clicked", G_CALLBACK (on_start_thread_clicked), self);
+  gtk_box_append (GTK_BOX (main_box), self->start_thread_button);
+
   gtk_popover_set_child (GTK_POPOVER (self->reaction_popover), main_box);
+
+  /* Connect thread button (in-template) */
+  g_signal_connect (self->thread_button, "clicked", G_CALLBACK (on_thread_button_clicked), self);
 
   /* Add right-click gesture with CAPTURE phase to intercept before label context menu */
   GtkGesture *gesture = gtk_gesture_click_new ();
@@ -1986,6 +2071,28 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       gtk_widget_set_visible (self->message_bubble, TRUE);
     }
 
+  /* Thread button: show on actual thread root (id == thread_id) or on
+   * thread_created system messages (they serve as the visible entry point). */
+  gint64 msg_thread_id = gnalk_message_data_get_thread_id (data);
+  gboolean is_thread_entry = gnalk_message_data_get_is_thread (data)
+                              && msg_thread_id > 0
+                              && gnalk_message_data_get_id (data) == msg_thread_id;
+  if (is_thread_entry)
+    {
+      gint replies = gnalk_message_data_get_thread_replies (data);
+      g_autofree char *label = NULL;
+      if (replies > 0)
+        label = g_strdup_printf (ngettext ("%d reply", "%d replies", replies), replies);
+      else
+        label = g_strdup (_("Reply in thread"));
+      gtk_label_set_text (GTK_LABEL (self->thread_label), label);
+      gtk_widget_set_visible (self->thread_button, TRUE);
+    }
+  else
+    {
+      gtk_widget_set_visible (self->thread_button, FALSE);
+    }
+
   /* Connect to data's property changes for live updates */
   if (self->bound_data)
     {
@@ -2048,6 +2155,9 @@ gnalk_message_row_reset (GnalkMessageRow *self)
   gnalk_quote_widget_reset (self->quote_widget);
   gtk_widget_set_visible (GTK_WIDGET (self->date_separator), FALSE);
   gtk_widget_set_visible (self->status_icon, FALSE);
+
+  /* Reset thread button */
+  gtk_widget_set_visible (self->thread_button, FALSE);
 
   /* Reset file preview widget */
   gnalk_file_preview_reset (self->file_preview);
@@ -2224,4 +2334,12 @@ gnalk_message_row_set_show_timestamp (GnalkMessageRow *self,
     gtk_widget_remove_css_class (GTK_WIDGET (self), "message-grouped");
   else
     gtk_widget_add_css_class (GTK_WIDGET (self), "message-grouped");
+}
+
+void
+gnalk_message_row_set_threads_supported (GnalkMessageRow *self,
+                                         gboolean          supported)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_ROW (self));
+  self->threads_supported = supported;
 }

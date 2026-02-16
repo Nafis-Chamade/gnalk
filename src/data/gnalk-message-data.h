@@ -23,7 +23,8 @@ GnalkMessageData *gnalk_message_data_new_pending (const char *message_text,
                                                      const char *author_name,
                                                      const char *author_id,
                                                      const char *reference_id,
-                                                     gint64      reply_to);
+                                                     gint64      reply_to,
+                                                     gint64      thread_id);
 
 /* Create pending message for file upload */
 GnalkMessageData *gnalk_message_data_new_pending_file (const char *caption,
@@ -50,7 +51,10 @@ GnalkMessageData *gnalk_message_data_new_from_db (gint64                   id,
                                                      const char              *reactions_json,
                                                      const char              *parent_json,
                                                      const char              *message_parameters_json,
-                                                     const char              *actor_type);
+                                                     const char              *actor_type,
+                                                     gint64                   thread_id,
+                                                     gboolean                 is_thread,
+                                                     gint                     thread_replies);
 
 /* Serialization for database storage */
 char *gnalk_message_data_serialize_reactions   (GnalkMessageData *self);
@@ -136,5 +140,12 @@ const char  *gnalk_message_data_get_upload_mime_type (GnalkMessageData *self);
 gboolean     gnalk_message_data_get_file_cached     (GnalkMessageData *self);
 void         gnalk_message_data_set_file_cached     (GnalkMessageData *self,
                                                         gboolean           cached);
+
+/* Thread support */
+gint64       gnalk_message_data_get_thread_id       (GnalkMessageData *self);
+gboolean     gnalk_message_data_get_is_thread       (GnalkMessageData *self);
+gint         gnalk_message_data_get_thread_replies   (GnalkMessageData *self);
+void         gnalk_message_data_set_thread_replies   (GnalkMessageData *self,
+                                                        gint               replies);
 
 G_END_DECLS

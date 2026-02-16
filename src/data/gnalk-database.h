@@ -126,6 +126,7 @@ typedef struct {
   char   *file_path;
   char   *file_name;
   char   *content_type;
+  gint64  thread_id;
   gint    retry_count;
   char   *last_error;
 } GnalkPendingMessage;
@@ -137,7 +138,8 @@ void gnalk_database_queue_pending_message (GnalkDatabase *self,
                                              const char *conversation_token,
                                              const char *message,
                                              gint64 reply_to,
-                                             const char *reference_id);
+                                             const char *reference_id,
+                                             gint64 thread_id);
 void gnalk_database_queue_pending_file (GnalkDatabase *self,
                                           gint64 account_id,
                                           const char *conversation_token,
