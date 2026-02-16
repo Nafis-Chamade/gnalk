@@ -2,6 +2,8 @@
 
 GTK4/libadwaita Nextcloud Talk client in C (Meson build).
 
+See also: [`docs/call-connection-sequence.md`](docs/call-connection-sequence.md) — full HTTP/WebSocket sequence from login to active WebRTC call.
+
 ## Build & Run
 
 ```bash

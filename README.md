@@ -282,6 +282,7 @@ Key patterns:
 - **Session-per-account**: Each account has independent HttpClient, Signaling, and state machine
 
 See `CLAUDE.md` for detailed architecture documentation.
+See [`docs/call-connection-sequence.md`](docs/call-connection-sequence.md) for the full HTTP/WebSocket connection sequence (login → signaling → WebRTC call).
 
 ## License
 
