@@ -47,6 +47,10 @@ void gnalk_database_delete_conversation (GnalkDatabase *self,
 int gnalk_database_delete_stale_conversations (GnalkDatabase *self,
                                                   gint64 account_id,
                                                   GPtrArray *valid_tokens);
+char *gnalk_database_find_conversation_token (GnalkDatabase *self,
+                                               gint64 account_id,
+                                               const char *name,
+                                               gint room_type);
 GListStore *gnalk_database_load_conversations (GnalkDatabase *self,
                                                  gint64 account_id);
 void gnalk_database_update_conversation_last_message (GnalkDatabase *self,

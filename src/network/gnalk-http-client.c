@@ -1630,6 +1630,7 @@ gnalk_http_client_send_heartbeat (GnalkHttpClient   *self,
 void
 gnalk_http_client_search_contacts (GnalkHttpClient   *self,
                                      const char         *search_term,
+                                     gboolean            include_federated,
                                      GnalkHttpCallback  callback,
                                      gpointer            user_data)
 {
@@ -1637,11 +1638,13 @@ gnalk_http_client_search_contacts (GnalkHttpClient   *self,
 
   /* Search for users AND conversations using core autocomplete API
    * shareTypes[]=0 means regular users, shareTypes[]=10 means Talk conversations
+   * shareTypes[]=6 means remote/federated users
    * itemId=new for new conversation context */
   g_autofree char *escaped_term = g_uri_escape_string (search_term ? search_term : "", NULL, FALSE);
   g_autofree char *endpoint = g_strdup_printf (
-    "/ocs/v2.php/core/autocomplete/get?format=json&search=%s&itemType=call&itemId=new&shareTypes[]=0&shareTypes[]=10&limit=20",
-    escaped_term);
+    "/ocs/v2.php/core/autocomplete/get?format=json&search=%s&itemType=call&itemId=new&shareTypes[]=0&shareTypes[]=10%s&limit=20",
+    escaped_term,
+    include_federated ? "&shareTypes[]=6" : "");
 
   SoupMessage *msg = create_message (self, "GET", endpoint);
 
@@ -1684,6 +1687,65 @@ gnalk_http_client_create_conversation (GnalkHttpClient   *self,
       json_builder_set_member_name (builder, "roomName");
       json_builder_add_string_value (builder, room_name);
     }
+  json_builder_end_object (builder);
+
+  g_autoptr(JsonNode) root = json_builder_get_root (builder);
+  g_autoptr(JsonGenerator) gen = json_generator_new ();
+  json_generator_set_root (gen, root);
+  g_autofree char *body = json_generator_to_data (gen, NULL);
+
+  gnalk_log_http_request (self->user_id, "POST", endpoint, body);
+
+  GBytes *body_bytes = g_bytes_new (body, strlen (body));
+  soup_message_set_request_body_from_bytes (msg, "application/json", body_bytes);
+  g_bytes_unref (body_bytes);
+
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
+  g_weak_ref_init (&data->client_ref, self);
+  data->message = g_object_ref (msg);
+  data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
+  data->callback = (GCallback) callback;
+  data->user_data = user_data;
+
+  soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
+                                     self->cancellable, on_json_response, data);
+  g_object_unref (msg);
+}
+
+void
+gnalk_http_client_create_conversation_with_participants (GnalkHttpClient   *self,
+                                                          int                 room_type,
+                                                          const char         *room_name,
+                                                          const char         *participants_source,
+                                                          const char         *participant_id,
+                                                          GnalkHttpCallback  callback,
+                                                          gpointer            user_data)
+{
+  g_return_if_fail (GNALK_IS_HTTP_CLIENT (self));
+  g_return_if_fail (participants_source != NULL);
+  g_return_if_fail (participant_id != NULL);
+
+  const char *endpoint = "/ocs/v2.php/apps/spreed/api/v4/room?format=json";
+
+  SoupMessage *msg = create_message (self, "POST", endpoint);
+
+  /* Build JSON payload: { roomType, roomName, participants: { source: [id] } } */
+  g_autoptr(JsonBuilder) builder = json_builder_new ();
+  json_builder_begin_object (builder);
+  json_builder_set_member_name (builder, "roomType");
+  json_builder_add_int_value (builder, room_type);
+  if (room_name && *room_name)
+    {
+      json_builder_set_member_name (builder, "roomName");
+      json_builder_add_string_value (builder, room_name);
+    }
+  json_builder_set_member_name (builder, "participants");
+  json_builder_begin_object (builder);
+  json_builder_set_member_name (builder, participants_source);
+  json_builder_begin_array (builder);
+  json_builder_add_string_value (builder, participant_id);
+  json_builder_end_array (builder);
+  json_builder_end_object (builder);
   json_builder_end_object (builder);
 
   g_autoptr(JsonNode) root = json_builder_get_root (builder);
@@ -1798,16 +1860,19 @@ gnalk_http_client_set_conversation_favorite (GnalkHttpClient   *self,
 void
 gnalk_http_client_search_users (GnalkHttpClient   *self,
                                   const char         *search_term,
+                                  gboolean            include_federated,
                                   GnalkHttpCallback  callback,
                                   gpointer            user_data)
 {
   g_return_if_fail (GNALK_IS_HTTP_CLIENT (self));
 
-  /* Users only: shareTypes[]=0 (no rooms/conversations) */
+  /* Users only: shareTypes[]=0 (no rooms/conversations)
+   * shareTypes[]=6 means remote/federated users */
   g_autofree char *escaped_term = g_uri_escape_string (search_term ? search_term : "", NULL, FALSE);
   g_autofree char *endpoint = g_strdup_printf (
-    "/ocs/v2.php/core/autocomplete/get?format=json&search=%s&itemType=call&itemId=new&shareTypes[]=0&limit=20",
-    escaped_term);
+    "/ocs/v2.php/core/autocomplete/get?format=json&search=%s&itemType=call&itemId=new&shareTypes[]=0%s&limit=20",
+    escaped_term,
+    include_federated ? "&shareTypes[]=6" : "");
 
   SoupMessage *msg = create_message (self, "GET", endpoint);
 
@@ -1874,6 +1939,7 @@ void
 gnalk_http_client_add_participant (GnalkHttpClient   *self,
                                      const char         *room_token,
                                      const char         *user_id,
+                                     const char         *source,
                                      GnalkHttpCallback  callback,
                                      gpointer            user_data)
 {
@@ -1892,7 +1958,7 @@ gnalk_http_client_add_participant (GnalkHttpClient   *self,
   json_builder_set_member_name (builder, "newParticipant");
   json_builder_add_string_value (builder, user_id);
   json_builder_set_member_name (builder, "source");
-  json_builder_add_string_value (builder, "users");
+  json_builder_add_string_value (builder, source ? source : "users");
   json_builder_end_object (builder);
 
   g_autoptr(JsonNode) root = json_builder_get_root (builder);

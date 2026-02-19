@@ -215,6 +215,7 @@ void gnalk_http_client_send_heartbeat (GnalkHttpClient   *self,
 
 void gnalk_http_client_search_contacts (GnalkHttpClient   *self,
                                           const char         *search_term,
+                                          gboolean            include_federated,
                                           GnalkHttpCallback  callback,
                                           gpointer            user_data);
 
@@ -243,6 +244,7 @@ void gnalk_http_client_set_conversation_favorite (GnalkHttpClient   *self,
 
 void gnalk_http_client_search_users (GnalkHttpClient   *self,
                                        const char         *search_term,
+                                       gboolean            include_federated,
                                        GnalkHttpCallback  callback,
                                        gpointer            user_data);
 
@@ -255,8 +257,17 @@ void gnalk_http_client_set_room_description (GnalkHttpClient   *self,
 void gnalk_http_client_add_participant (GnalkHttpClient   *self,
                                           const char         *room_token,
                                           const char         *user_id,
+                                          const char         *source,
                                           GnalkHttpCallback  callback,
                                           gpointer            user_data);
+
+void gnalk_http_client_create_conversation_with_participants (GnalkHttpClient   *self,
+                                                                int                 room_type,
+                                                                const char         *room_name,
+                                                                const char         *participants_source,
+                                                                const char         *participant_id,
+                                                                GnalkHttpCallback  callback,
+                                                                gpointer            user_data);
 
 /* Context around a specific message (for jump-to-message) */
 void gnalk_http_client_get_message_context (GnalkHttpClient  *self,

@@ -498,6 +498,30 @@ find_existing_conversation_for_user (GnalkWindow *self, const char *user_id)
   return NULL;
 }
 
+/* Helper to find existing group conversation for a federated user (by cloud_id in name) */
+static const char *
+find_existing_conversation_for_federated (GnalkWindow *self, const char *cloud_id)
+{
+  guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+  for (guint i = 0; i < n_items; i++)
+    {
+      GnalkConversationData *data = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
+      /* For federated "fake 1:1" conversations (type 2), the name field contains the cloud_id */
+      if (gnalk_conversation_data_get_room_type (data) == 2)
+        {
+          const char *name = gnalk_conversation_data_get_name (data);
+          if (name && g_strcmp0 (name, cloud_id) == 0)
+            {
+              const char *token = gnalk_conversation_data_get_token (data);
+              g_object_unref (data);
+              return token;
+            }
+        }
+      g_object_unref (data);
+    }
+  return NULL;
+}
+
 void
 gnalk_window_on_sidebar_search_changed (GnalkConversationSidebar *sidebar,
                                          const char                *text,
@@ -514,6 +538,9 @@ gnalk_window_on_sidebar_search_changed (GnalkConversationSidebar *sidebar,
     {
       gnalk_conversation_controller_search_contacts (self->conversation_controller,
                                                      text,
+                                                     self->active_session
+                                                       ? gnalk_session_has_federation_outgoing (self->active_session)
+                                                       : FALSE,
                                                      gnalk_window_on_search_contacts_response,
                                                      self);
     }
@@ -563,8 +590,11 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
   guint len = json_array_get_length (data);
   g_print ("Search: found %u results\n", len);
 
-  /* First pass: collect all "users" labels to filter duplicate "rooms" entries */
+  /* First pass: collect labels and tokens to filter duplicate "rooms" entries.
+   * For "users"/"remotes" we collect labels; for "remotes" with existing conversations
+   * we also collect the room token so we can filter the duplicate "rooms" entry. */
   g_autoptr(GHashTable) user_labels = g_hash_table_new (g_str_hash, g_str_equal);
+  g_autoptr(GHashTable) federated_room_tokens = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   for (guint i = 0; i < len; i++)
     {
       JsonObject *item = json_array_get_object_element (data, i);
@@ -572,8 +602,21 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
         continue;
       const char *source = json_object_get_string_member_with_default (item, "source", "");
       const char *label = json_object_get_string_member_with_default (item, "label", NULL);
-      if (g_strcmp0 (source, "users") == 0 && label)
+      if ((g_strcmp0 (source, "users") == 0 || g_strcmp0 (source, "remotes") == 0) && label)
         g_hash_table_add (user_labels, (gpointer) label);
+
+      /* For "remotes" with an existing conversation, record the room token
+       * so we can suppress the duplicate "rooms" entry for the same conversation */
+      if (g_strcmp0 (source, "remotes") == 0)
+        {
+          const char *rid = json_object_get_string_member_with_default (item, "id", NULL);
+          if (rid)
+            {
+              const char *existing = find_existing_conversation_for_federated (self, rid);
+              if (existing)
+                g_hash_table_add (federated_room_tokens, g_strdup (existing));
+            }
+        }
     }
 
   /* Second pass: add results, filtering duplicate rooms */
@@ -590,10 +633,12 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
       if (!item_id || !label)
         continue;
 
-      /* Skip "rooms" entries if there's a "users" entry with the same label.
-       * This filters out existing 1:1 conversations that duplicate user entries,
-       * but keeps group conversations that only appear in "rooms". */
-      if (g_strcmp0 (source, "rooms") == 0 && g_hash_table_contains (user_labels, label))
+      /* Skip "rooms"/"calls" entries that duplicate user or federated entries.
+       * - Label match: filters existing 1:1 rooms that duplicate "users" entries.
+       * - Token match: filters existing group rooms that duplicate "remotes" entries. */
+      if ((g_strcmp0 (source, "rooms") == 0 || g_strcmp0 (source, "calls") == 0) &&
+          (g_hash_table_contains (user_labels, label) ||
+           g_hash_table_contains (federated_room_tokens, item_id)))
         continue;
 
       g_autofree char *token_str = NULL;
@@ -608,9 +653,26 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
           subtitle = _("Open conversation");
           room_type = 2;  /* Group conversation */
         }
+      else if (g_strcmp0 (source, "remotes") == 0)
+        {
+          /* Federated user - check if we already have a group conversation
+           * whose name matches the cloud ID (created as a federated "fake 1:1") */
+          const char *existing_token = find_existing_conversation_for_federated (self, item_id);
+          if (existing_token)
+            {
+              token_str = g_strdup (existing_token);
+              subtitle = _("Open conversation");
+            }
+          else
+            {
+              token_str = g_strdup_printf ("user:federated_users:%s", item_id);
+              subtitle = item_id;  /* Show cloud ID (user@server) as subtitle */
+            }
+          room_type = 2;  /* Group conversation for federated users */
+        }
       else
         {
-          /* This is a user - check if we already have a conversation */
+          /* This is a local user - check if we already have a conversation */
           const char *existing_token = find_existing_conversation_for_user (self, item_id);
           if (existing_token)
             {
@@ -635,11 +697,22 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
       json_builder_set_member_name (builder, "type");
       json_builder_add_int_value (builder, room_type);
 
-      /* For users, add actorId and status for avatar/status loading */
-      if (room_type == 1)
+      /* For users (local and federated), add actorId and status for avatar/status loading */
+      if (g_strcmp0 (source, "users") == 0 || g_strcmp0 (source, "remotes") == 0)
         {
           json_builder_set_member_name (builder, "actorId");
           json_builder_add_string_value (builder, item_id);
+
+          /* For federated users, set remoteServer so federation badge shows */
+          if (g_strcmp0 (source, "remotes") == 0)
+            {
+              const char *at = strchr (item_id, '@');
+              if (at)
+                {
+                  json_builder_set_member_name (builder, "remoteServer");
+                  json_builder_add_string_value (builder, at + 1);
+                }
+            }
 
           /* Get user status if available - it's an object like {"status":"online",...} */
           if (json_object_has_member (item, "status"))
@@ -703,14 +776,25 @@ gnalk_window_on_sidebar_search_result_selected (GnalkConversationSidebar *sideba
       g_auto(GStrv) parts = g_strsplit (token, ":", 3);
       if (parts && parts[0] && parts[1] && parts[2])
         {
+          const char *source = parts[1];
           const char *user_id = parts[2];
 
-          /* Create a 1:1 conversation with this user via controller */
-          if (self->conversation_controller)
-            gnalk_conversation_controller_create (self->conversation_controller,
-                                                   1,  /* roomType 1 = one-to-one */
-                                                   user_id,
-                                                   NULL);  /* no room name for 1:1 */
+          if (g_strcmp0 (source, "federated_users") == 0)
+            {
+              /* Federated user: create group conversation with participant */
+              if (self->conversation_controller)
+                gnalk_conversation_controller_create_federated (self->conversation_controller,
+                                                                user_id);
+            }
+          else
+            {
+              /* Local user: create a 1:1 conversation */
+              if (self->conversation_controller)
+                gnalk_conversation_controller_create (self->conversation_controller,
+                                                       1,  /* roomType 1 = one-to-one */
+                                                       user_id,
+                                                       NULL);  /* no room name for 1:1 */
+            }
 
           /* Clear search */
           gnalk_conversation_sidebar_clear_search (self->conversation_sidebar);

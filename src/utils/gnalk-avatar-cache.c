@@ -1,5 +1,6 @@
 #include "gnalk-avatar-cache.h"
 #include <glib/gstdio.h>
+#include <libsoup/soup.h>
 
 static char *
 get_avatar_cache_dir (void)
@@ -68,6 +69,7 @@ struct _GnalkAvatarCache
   GObject parent_instance;
 
   GnalkHttpClient *http_client;
+  SoupSession      *remote_session;  /* Lazy-init for unauthenticated remote avatar fetches */
   GHashTable       *cache;
   GHashTable       *pending;
   GHashTable       *color_cache;  /* user_id -> GdkRGBA* */
@@ -119,6 +121,7 @@ gnalk_avatar_cache_finalize (GObject *object)
   g_hash_table_destroy (self->pending);
   g_hash_table_destroy (self->color_cache);
   g_clear_object (&self->http_client);
+  g_clear_object (&self->remote_session);
 
   G_OBJECT_CLASS (gnalk_avatar_cache_parent_class)->finalize (object);
 }
@@ -476,6 +479,147 @@ gnalk_avatar_cache_get_federated_user_avatar (GnalkAvatarCache   *self,
 
   gnalk_http_client_get_federated_user_avatar (self->http_client, room_token, cloud_id, size,
                                                   on_avatar_bytes_received, data);
+}
+
+/* Callback for remote (unauthenticated) avatar fetch via SoupSession */
+static void
+on_remote_avatar_response (GObject      *source,
+                           GAsyncResult *result,
+                           gpointer      user_data)
+{
+  AvatarLoadData *data = user_data;
+  g_autoptr(GError) error = NULL;
+  GdkTexture *texture = NULL;
+
+  GBytes *bytes = soup_session_send_and_read_finish (SOUP_SESSION (source), result, &error);
+
+  if (error)
+    {
+      g_message ("AvatarCache: Remote avatar fetch failed for %s: %s", data->key, error->message);
+    }
+
+  if (!error && bytes)
+    {
+      g_autoptr(GError) tex_error = NULL;
+      texture = gdk_texture_new_from_bytes (bytes, &tex_error);
+
+      if (texture)
+        {
+          g_hash_table_insert (data->cache->cache,
+                               g_strdup (data->key),
+                               g_object_ref (texture));
+          save_avatar_to_disk (data->key, bytes);
+          g_message ("AvatarCache: Remote avatar loaded for %s", data->key);
+        }
+      else
+        {
+          g_message ("AvatarCache: Remote avatar bytes not a valid image for %s: %s",
+                     data->key, tex_error->message);
+        }
+    }
+
+  if (bytes)
+    g_bytes_unref (bytes);
+
+  data->callback (data->cache, texture, data->user_data);
+
+  GList *pending_list = g_hash_table_lookup (data->cache->pending, data->key);
+  for (GList *l = pending_list; l; l = l->next)
+    {
+      PendingCallbackData *pending = l->data;
+      pending->callback (data->cache, texture, pending->user_data);
+    }
+
+  g_hash_table_remove (data->cache->pending, data->key);
+
+  if (texture)
+    g_object_unref (texture);
+
+  avatar_load_data_free (data);
+}
+
+void
+gnalk_avatar_cache_get_remote_user_avatar (GnalkAvatarCache   *self,
+                                           const char          *cloud_id,
+                                           int                  size,
+                                           GnalkAvatarCallback callback,
+                                           gpointer             user_data)
+{
+  g_return_if_fail (GNALK_IS_AVATAR_CACHE (self));
+  g_return_if_fail (cloud_id != NULL);
+
+  g_autofree char *key = g_strdup_printf ("remote:%s:%d", cloud_id, size);
+
+  /* Check memory cache first */
+  GdkTexture *cached = g_hash_table_lookup (self->cache, key);
+  if (cached)
+    {
+      callback (self, cached, user_data);
+      return;
+    }
+
+  /* Check disk cache */
+  GdkTexture *disk_cached = load_avatar_from_disk (key);
+  if (disk_cached)
+    {
+      g_hash_table_insert (self->cache, g_strdup (key), g_object_ref (disk_cached));
+      callback (self, disk_cached, user_data);
+      g_object_unref (disk_cached);
+      return;
+    }
+
+  /* Parse cloud_id: "user@server" */
+  const char *at = strchr (cloud_id, '@');
+  if (!at || at == cloud_id || *(at + 1) == '\0')
+    {
+      g_debug ("AvatarCache: Invalid cloud_id for remote avatar: %s", cloud_id);
+      callback (self, NULL, user_data);
+      return;
+    }
+
+  if (g_hash_table_contains (self->pending, key))
+    {
+      PendingCallbackData *pending = g_new0 (PendingCallbackData, 1);
+      pending->callback = callback;
+      pending->user_data = user_data;
+
+      GList *list = g_hash_table_lookup (self->pending, key);
+      list = g_list_append (list, pending);
+      g_hash_table_steal (self->pending, key);
+      g_hash_table_insert (self->pending, g_strdup (key), list);
+      return;
+    }
+
+  g_hash_table_insert (self->pending, g_strdup (key), NULL);
+
+  /* Lazy-init unauthenticated session */
+  if (!self->remote_session)
+    self->remote_session = soup_session_new ();
+
+  g_autofree char *user_part = g_strndup (cloud_id, at - cloud_id);
+  const char *server = at + 1;
+  g_autofree char *url = g_strdup_printf ("https://%s/index.php/avatar/%s/%d",
+                                          server, user_part, size);
+  g_message ("AvatarCache: Fetching remote avatar from %s", url);
+
+  SoupMessage *msg = soup_message_new ("GET", url);
+  if (!msg)
+    {
+      g_debug ("AvatarCache: Failed to create message for %s", url);
+      g_hash_table_remove (self->pending, key);
+      callback (self, NULL, user_data);
+      return;
+    }
+
+  AvatarLoadData *data = g_new0 (AvatarLoadData, 1);
+  data->cache = g_object_ref (self);
+  data->key = g_strdup (key);
+  data->callback = callback;
+  data->user_data = user_data;
+
+  soup_session_send_and_read_async (self->remote_session, msg, G_PRIORITY_DEFAULT,
+                                    NULL, on_remote_avatar_response, data);
+  g_object_unref (msg);
 }
 
 void

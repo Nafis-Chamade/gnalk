@@ -791,8 +791,16 @@ gnalk_conversation_row_set_from_data (GnalkConversationRow  *self,
       AvatarCallbackData *cb_data = g_new0 (AvatarCallbackData, 1);
       g_weak_ref_init (&cb_data->weak_ref, self);
 
-      /* For search results (fake token starting with "user:"), use user avatar */
-      if (self->token && g_str_has_prefix (self->token, "user:") && self->actor_id && *self->actor_id)
+      /* For federated search results, fetch avatar from remote server.
+       * Detect by: actor_id contains '@' (cloud_id format) + data is federated. */
+      if (self->actor_id && strchr (self->actor_id, '@') &&
+          gnalk_conversation_data_is_federated (data))
+        {
+          g_message ("ConversationRow: loading remote avatar for %s (token=%s)", self->actor_id, self->token);
+          gnalk_avatar_cache_get_remote_user_avatar (avatar_cache, self->actor_id, 64, on_avatar_loaded, cb_data);
+        }
+      /* For local user search results (fake token starting with "user:"), use user avatar */
+      else if (self->token && g_str_has_prefix (self->token, "user:") && self->actor_id && *self->actor_id)
         gnalk_avatar_cache_get_user_avatar (avatar_cache, self->actor_id, 64, on_avatar_loaded, cb_data);
       else
         gnalk_avatar_cache_get_room_avatar (avatar_cache, self->token, on_avatar_loaded, cb_data);

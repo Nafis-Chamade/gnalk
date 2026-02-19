@@ -124,8 +124,12 @@ typedef void (*GnalkSearchContactsCallback) (GnalkConversationController *contro
  */
 void gnalk_conversation_controller_search_contacts (GnalkConversationController  *self,
                                                     const char                   *search_term,
+                                                    gboolean                      include_federated,
                                                     GnalkSearchContactsCallback   callback,
                                                     gpointer                      user_data);
+
+void gnalk_conversation_controller_create_federated (GnalkConversationController *self,
+                                                      const char                  *cloud_id);
 
 /**
  * gnalk_conversation_controller_fetch_invitations:

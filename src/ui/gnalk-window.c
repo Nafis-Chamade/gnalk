@@ -1745,6 +1745,10 @@ on_new_conversation_clicked (GnalkConversationSidebar *sidebar G_GNUC_UNUSED,
 
   gnalk_new_conversation_dialog_set_http_client (dialog, self->http_client);
   gnalk_new_conversation_dialog_set_avatar_cache (dialog, self->avatar_cache);
+  gnalk_new_conversation_dialog_set_federation_outgoing (dialog,
+    self->active_session
+      ? gnalk_session_has_federation_outgoing (self->active_session)
+      : FALSE);
 
   g_signal_connect (dialog, "conversation-created",
                     G_CALLBACK (on_new_conversation_created), self);

@@ -48,6 +48,7 @@ struct _GnalkNewConversationDialog
   char  *created_room_token;
   int    pending_participants;
   gboolean avatar_upload_pending;
+  gboolean has_federation_outgoing;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkNewConversationDialog, gnalk_new_conversation_dialog, ADW_TYPE_DIALOG)
@@ -215,17 +216,34 @@ on_search_users_response (GnalkHttpClient *client,
       if (already_added)
         continue;
 
+      /* Map "remotes" source to "federated_users" for the token encoding */
+      const char *token_source = g_strcmp0 (source, "remotes") == 0 ? "federated_users" : source;
+      g_autofree char *display_label = NULL;
+      if (g_strcmp0 (source, "remotes") == 0)
+        display_label = g_strdup_printf ("%s (%s)", label, user_id);
+
       /* Create search result data */
       g_autoptr(JsonBuilder) builder = json_builder_new ();
       json_builder_begin_object (builder);
+      g_autofree char *token_val = g_strdup_printf ("user:%s:%s", token_source, user_id);
       json_builder_set_member_name (builder, "token");
-      json_builder_add_string_value (builder, g_strdup_printf ("user:%s:%s", source, user_id));
+      json_builder_add_string_value (builder, token_val);
       json_builder_set_member_name (builder, "displayName");
-      json_builder_add_string_value (builder, label);
+      json_builder_add_string_value (builder, display_label ? display_label : label);
       json_builder_set_member_name (builder, "type");
       json_builder_add_int_value (builder, 1);
       json_builder_set_member_name (builder, "actorId");
       json_builder_add_string_value (builder, user_id);
+      /* For federated users, set remoteServer so federation badge shows */
+      if (g_strcmp0 (source, "remotes") == 0)
+        {
+          const char *at = strchr (user_id, '@');
+          if (at)
+            {
+              json_builder_set_member_name (builder, "remoteServer");
+              json_builder_add_string_value (builder, at + 1);
+            }
+        }
       if (status)
         {
           json_builder_set_member_name (builder, "status");
@@ -260,6 +278,7 @@ on_search_debounce_timeout (gpointer user_data)
 
   gnalk_http_client_search_users (self->http_client,
                                     self->pending_search_term,
+                                    self->has_federation_outgoing,
                                     on_search_users_response,
                                     self);
 
@@ -339,15 +358,22 @@ on_search_result_activated (GtkListView                 *list_view,
   /* Parse user:source:userId token */
   if (g_str_has_prefix (token, "user:"))
     {
+      /* Extract source from token (user:source:userId) */
+      g_auto(GStrv) parts = g_strsplit (token, ":", 3);
+      const char *source = (parts && parts[0] && parts[1]) ? parts[1] : "users";
+
       const char *user_id = gnalk_conversation_data_get_actor_id (data);
       const char *display_name = gnalk_conversation_data_get_title (data);
       const char *user_status = gnalk_conversation_data_get_user_status (data);
+
+      /* Encode source:userId in token so add_participant knows the source */
+      g_autofree char *member_token = g_strdup_printf ("%s:%s", source, user_id);
 
       /* Create member data with status */
       g_autoptr(JsonBuilder) builder = json_builder_new ();
       json_builder_begin_object (builder);
       json_builder_set_member_name (builder, "token");
-      json_builder_add_string_value (builder, user_id);
+      json_builder_add_string_value (builder, member_token);
       json_builder_set_member_name (builder, "displayName");
       json_builder_add_string_value (builder, display_name);
       json_builder_set_member_name (builder, "type");
@@ -499,9 +525,31 @@ start_adding_participants (GnalkNewConversationDialog *self)
       GnalkConversationData *member = g_list_model_get_item (G_LIST_MODEL (self->members_store), i);
       const char *user_id = gnalk_conversation_data_get_actor_id (member);
 
+      /* Token is encoded as source:userId — parse to get source for add_participant */
+      const char *member_token = gnalk_conversation_data_get_token (member);
+      const char *source = "users";
+      if (member_token)
+        {
+          const char *colon = strchr (member_token, ':');
+          if (colon)
+            {
+              g_autofree char *parsed_source = g_strndup (member_token, colon - member_token);
+              /* Pass the parsed source; for federated_users the API expects that value */
+              gnalk_http_client_add_participant (self->http_client,
+                                                   self->created_room_token,
+                                                   user_id,
+                                                   parsed_source,
+                                                   on_add_participant_response,
+                                                   self);
+              g_object_unref (member);
+              continue;
+            }
+        }
+
       gnalk_http_client_add_participant (self->http_client,
                                            self->created_room_token,
                                            user_id,
+                                           source,
                                            on_add_participant_response,
                                            self);
       g_object_unref (member);
@@ -856,4 +904,13 @@ gnalk_new_conversation_dialog_set_avatar_cache (GnalkNewConversationDialog *self
   g_return_if_fail (GNALK_IS_NEW_CONVERSATION_DIALOG (self));
 
   g_set_object (&self->avatar_cache, cache);
+}
+
+void
+gnalk_new_conversation_dialog_set_federation_outgoing (GnalkNewConversationDialog *self,
+                                                         gboolean                     enabled)
+{
+  g_return_if_fail (GNALK_IS_NEW_CONVERSATION_DIALOG (self));
+
+  self->has_federation_outgoing = enabled;
 }

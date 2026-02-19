@@ -18,4 +18,7 @@ void gnalk_new_conversation_dialog_set_http_client (GnalkNewConversationDialog *
 void gnalk_new_conversation_dialog_set_avatar_cache (GnalkNewConversationDialog *self,
                                                        GnalkAvatarCache           *cache);
 
+void gnalk_new_conversation_dialog_set_federation_outgoing (GnalkNewConversationDialog *self,
+                                                              gboolean                     enabled);
+
 G_END_DECLS

@@ -408,6 +408,7 @@ on_search_contacts_response (GnalkHttpClient *client G_GNUC_UNUSED,
 void
 gnalk_conversation_controller_search_contacts (GnalkConversationController  *self,
                                                const char                   *search_term,
+                                               gboolean                      include_federated,
                                                GnalkSearchContactsCallback   callback,
                                                gpointer                      user_data)
 {
@@ -422,8 +423,107 @@ gnalk_conversation_controller_search_contacts (GnalkConversationController  *sel
 
   gnalk_http_client_search_contacts (self->http_client,
                                      search_term,
+                                     include_federated,
                                      on_search_contacts_response,
                                      cb_data);
+}
+
+/* ============ Federated Conversation Creation ============ */
+
+static void
+on_create_federated_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                               JsonNode         *response,
+                               GError           *error,
+                               gpointer          user_data)
+{
+  OperationCallbackData *cb_data = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      operation_callback_data_free (cb_data);
+      return;
+    }
+
+  GnalkConversationController *self = cb_data->controller;
+  operation_callback_data_free (cb_data);
+
+  if (error)
+    {
+      g_warning ("ConversationController: Create federated failed: %s", error->message);
+      g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
+      return;
+    }
+
+  if (!response || !JSON_NODE_HOLDS_OBJECT (response))
+    return;
+
+  JsonObject *root = json_node_get_object (response);
+  JsonObject *ocs = json_object_get_object_member (root, "ocs");
+  if (!ocs)
+    return;
+
+  JsonObject *data = json_object_get_object_member (ocs, "data");
+  if (!data)
+    return;
+
+  const char *token = json_object_get_string_member_with_default (data, "token", NULL);
+  if (!token)
+    return;
+
+  /* Save the new conversation to database */
+  if (self->repository && self->account_id > 0)
+    {
+      GnalkConversationData *conv_data = gnalk_conversation_data_new_from_json (data, NULL);
+      if (conv_data)
+        {
+          gnalk_data_repository_save_conversation (self->repository, self->account_id, conv_data);
+          g_object_unref (conv_data);
+        }
+    }
+
+  g_debug ("ConversationController: Created federated conversation %s", token);
+  g_signal_emit (self, signals[SIGNAL_CONVERSATION_CREATED], 0, token);
+}
+
+void
+gnalk_conversation_controller_create_federated (GnalkConversationController *self,
+                                                 const char                  *cloud_id)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_CONTROLLER (self));
+  g_return_if_fail (self->http_client != NULL);
+  g_return_if_fail (cloud_id != NULL);
+
+  /* Check if a group conversation for this federated user already exists */
+  if (self->repository && self->account_id > 0)
+    {
+      GnalkDatabase *db = gnalk_data_repository_get_database (self->repository);
+      if (db)
+        {
+          g_autofree char *existing_token =
+            gnalk_database_find_conversation_token (db, self->account_id, cloud_id, 2);
+          if (existing_token)
+            {
+              g_debug ("ConversationController: Found existing federated conversation %s for %s",
+                       existing_token, cloud_id);
+              g_signal_emit (self, signals[SIGNAL_CONVERSATION_CREATED], 0, existing_token);
+              return;
+            }
+        }
+    }
+
+  OperationCallbackData *cb_data = g_slice_new0 (OperationCallbackData);
+  cb_data->controller = self;
+  cb_data->room_token = NULL;
+
+  /* Use cloud_id as roomName so we can find the conversation later
+   * by matching name == cloud_id (acts as unique identifier) */
+  gnalk_http_client_create_conversation_with_participants (self->http_client,
+                                                            2,  /* roomType = group */
+                                                            cloud_id,
+                                                            "federated_users",
+                                                            cloud_id,
+                                                            on_create_federated_response,
+                                                            cb_data);
 }
 
 /* ============ Federation Invitations ============ */

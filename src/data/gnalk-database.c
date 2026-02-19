@@ -800,6 +800,39 @@ gnalk_database_delete_stale_conversations (GnalkDatabase *self,
   return deleted;
 }
 
+char *
+gnalk_database_find_conversation_token (GnalkDatabase *self,
+                                        gint64          account_id,
+                                        const char     *name,
+                                        gint            room_type)
+{
+  g_return_val_if_fail (GNALK_IS_DATABASE (self), NULL);
+  g_return_val_if_fail (self->db != NULL, NULL);
+  g_return_val_if_fail (name != NULL, NULL);
+
+  sqlite3_stmt *stmt;
+  const char *sql =
+    "SELECT token FROM conversations "
+    "WHERE account_id = ? AND name = ? AND room_type = ? "
+    "LIMIT 1";
+
+  char *token = NULL;
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_int64 (stmt, 1, account_id);
+      sqlite3_bind_text (stmt, 2, name, -1, SQLITE_STATIC);
+      sqlite3_bind_int (stmt, 3, room_type);
+
+      if (sqlite3_step (stmt) == SQLITE_ROW)
+        token = g_strdup ((const char *) sqlite3_column_text (stmt, 0));
+
+      sqlite3_finalize (stmt);
+    }
+
+  return token;
+}
+
 GListStore *
 gnalk_database_load_conversations (GnalkDatabase *self,
                                      gint64          account_id)

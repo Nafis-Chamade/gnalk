@@ -71,6 +71,7 @@ struct _GnalkSession
   /* Capabilities */
   gboolean has_federation_v1;
   gboolean has_federation_v2;
+  gboolean has_federation_outgoing;
   gboolean has_threads;
 
   /* Signal handler IDs */
@@ -1183,6 +1184,28 @@ on_capabilities_response (GnalkHttpClient *client G_GNUC_UNUSED,
                         }
                     }
 
+                  /* Extract federation outgoing config from spreed.config.federation */
+                  if (json_object_has_member (capabilities, "spreed"))
+                    {
+                      JsonObject *spreed = json_object_get_object_member (capabilities, "spreed");
+                      if (spreed && json_object_has_member (spreed, "config"))
+                        {
+                          JsonObject *config = json_object_get_object_member (spreed, "config");
+                          if (config && json_object_has_member (config, "federation"))
+                            {
+                              JsonObject *federation = json_object_get_object_member (config, "federation");
+                              if (federation)
+                                {
+                                  self->has_federation_outgoing =
+                                    json_object_get_boolean_member_with_default (federation, "outgoing-enabled", FALSE);
+                                  g_debug ("Session %s: federation outgoing=%d",
+                                           gnalk_account_get_user_id (self->account),
+                                           self->has_federation_outgoing);
+                                }
+                            }
+                        }
+                    }
+
                   /* Extract notify_push WebSocket URL */
                   if (json_object_has_member (capabilities, "notify_push"))
                     {
@@ -1555,6 +1578,13 @@ gnalk_session_has_federation_v2 (GnalkSession *self)
 {
   g_return_val_if_fail (GNALK_IS_SESSION (self), FALSE);
   return self->has_federation_v2;
+}
+
+gboolean
+gnalk_session_has_federation_outgoing (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), FALSE);
+  return self->has_federation_outgoing;
 }
 
 void

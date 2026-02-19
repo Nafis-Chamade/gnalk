@@ -177,7 +177,8 @@ const char *gnalk_session_get_turn_credential (GnalkSession *self);
 /* Capabilities */
 gboolean gnalk_session_has_threads        (GnalkSession *self);
 gboolean gnalk_session_has_federation_v1  (GnalkSession *self);
-gboolean gnalk_session_has_federation_v2  (GnalkSession *self);
+gboolean gnalk_session_has_federation_v2       (GnalkSession *self);
+gboolean gnalk_session_has_federation_outgoing (GnalkSession *self);
 
 /* Federation signaling (for federated calls) */
 void            gnalk_session_fetch_federation_signaling (GnalkSession *self,
