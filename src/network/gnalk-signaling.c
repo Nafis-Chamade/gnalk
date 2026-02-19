@@ -727,7 +727,7 @@ send_hello (GnalkSignaling *self)
   json_builder_begin_object (builder);
 
   json_builder_set_member_name (builder, "version");
-  json_builder_add_string_value (builder, "1.0");
+  json_builder_add_string_value (builder, self->is_federation ? "2.0" : "1.0");
 
   json_builder_set_member_name (builder, "features");
   json_builder_begin_array (builder);

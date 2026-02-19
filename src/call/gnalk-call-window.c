@@ -1414,10 +1414,9 @@ gnalk_call_window_start_call (GnalkCallWindow  *self,
    * that doesn't match the signaling session, causing "not allowed" errors.
    * Always use flags=7 (audio+video+screenshare) for full capabilities.
    * Video on/off is communicated via mute/unmute peer messages. */
-  if (self->is_federated)
-    gnalk_http_client_start_call_federation (http_client, room_token, 7, on_http_join_call_response, g_object_ref (self));
-  else
-    gnalk_http_client_start_call (http_client, room_token, 7, on_http_join_call_response, g_object_ref (self));
+  /* Always use the regular call endpoint — for federated rooms, the local
+   * Nextcloud server proxies the request to the remote server automatically. */
+  gnalk_http_client_start_call (http_client, room_token, 7, on_http_join_call_response, g_object_ref (self));
 }
 
 void
@@ -1543,10 +1542,9 @@ gnalk_call_window_end_call (GnalkCallWindow *self)
 
   if (self->http_client && self->room_token)
     {
-      if (self->is_federated)
-        gnalk_http_client_leave_call_federation (self->http_client, self->room_token, NULL, NULL);
-      else
-        gnalk_http_client_leave_call (self->http_client, self->room_token, NULL, NULL);
+      /* Always use the regular call endpoint — for federated rooms, the local
+       * Nextcloud server proxies the leave request to the remote server. */
+      gnalk_http_client_leave_call (self->http_client, self->room_token, NULL, NULL);
     }
 
   /* Reset call state so we can start a new call */

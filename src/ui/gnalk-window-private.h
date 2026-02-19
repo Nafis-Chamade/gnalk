@@ -207,7 +207,7 @@ struct _GnalkWindow
   gboolean conv_load_pending;         /* Reload requested while load was in progress */
 
   /* Current room's ConversationData tracking (for live user status updates) */
-  GnalkConversationData *current_room_conv_data;  /* unowned, for signal tracking */
+  GnalkConversationData *current_room_conv_data;  /* owned ref, for signal tracking + call state */
   gulong conv_data_updated_handler_id;
 
   /* Unread message tracking (IDs are in current_room state) */

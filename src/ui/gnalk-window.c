@@ -317,6 +317,12 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         /* Refresh participants now that we're online (may have been empty from offline start) */
         if (self->current_room && self->participant_controller)
           gnalk_participant_controller_refresh (self->participant_controller);
+
+        /* Fetch federation signaling if a federated room is already open
+         * (room may have been restored from cache before session went online) */
+        if (self->cached_room_is_federated && self->current_room &&
+            gnalk_session_has_federation_v2 (session))
+          gnalk_session_fetch_federation_signaling (session, self->current_room->room_token);
       }
       break;
 
@@ -641,8 +647,7 @@ gnalk_window_update_call_button_state (GnalkWindow *self)
       can_call = gnalk_session_can_call (self->active_session);
 
       /* For federated rooms, calls require federation-v2 capability */
-      if (can_call && self->current_room_conv_data &&
-          gnalk_conversation_data_is_federated (self->current_room_conv_data) &&
+      if (can_call && self->cached_room_is_federated &&
           !gnalk_session_has_federation_v2 (self->active_session))
         {
           can_call = FALSE;
@@ -760,14 +765,13 @@ gnalk_window_track_conv_data_for_status (GnalkWindow           *self,
       g_signal_handler_disconnect (self->current_room_conv_data,
                                    self->conv_data_updated_handler_id);
     }
-  self->current_room_conv_data = NULL;
   self->conv_data_updated_handler_id = 0;
+  g_set_object (&self->current_room_conv_data, conv_data);
 
   if (!conv_data)
     return;
 
   /* Connect to the new ConversationData's "updated" signal */
-  self->current_room_conv_data = conv_data;
   self->conv_data_updated_handler_id =
     g_signal_connect (conv_data, "updated",
                       G_CALLBACK (on_current_room_conv_data_updated), self);
@@ -780,9 +784,9 @@ gnalk_window_start_call (GnalkWindow *self,
   if (!self->current_room || !self->active_session)
     return;
 
-  /* Check if this is a federated conversation */
-  gboolean is_federated = self->current_room_conv_data &&
-    gnalk_conversation_data_is_federated (self->current_room_conv_data);
+  /* Check if this is a federated conversation (use cached value from room open,
+   * since current_room_conv_data may be stale after conversation list reloads) */
+  gboolean is_federated = self->cached_room_is_federated;
 
   /* For federated calls, use the federation signaling connection */
   GnalkSignaling *signaling;
@@ -815,6 +819,19 @@ gnalk_window_start_call (GnalkWindow *self,
              is_federated ? "federated " : "",
              with_video ? "video" : "audio",
              self->current_room->room_token, self->current_room->session_id);
+
+  /* For federated calls, join the remote room on the federation signaling.
+   * The local signaling already joined pe7mwprn (local token), but the
+   * federation signaling needs to join tm7no3fh (remote room ID) so the
+   * remote MCU/SFU knows about us and routes peer events to us. */
+  if (is_federated)
+    {
+      const char *fed_room_id = gnalk_session_get_fed_room_id (self->active_session);
+      if (fed_room_id)
+        gnalk_signaling_join_room (signaling, fed_room_id, self->current_room->session_id);
+      else
+        g_warning ("start_call: federated call but no remote room ID");
+    }
 
   GtkApplication *app = gtk_window_get_application (GTK_WINDOW (self));
   GnalkCallWindow *call_window = gnalk_call_window_new (app);
