@@ -220,16 +220,11 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         gtk_widget_set_visible (self->connecting_spinner, FALSE);
         gnalk_network_status_bar_hide (self->network_status_bar);
 
-        /* Update cached capabilities (now available after capabilities fetch) */
+        /* Update cached capabilities (now available after capabilities fetch).
+         * No force rebind — the set_model(NULL)/set_model(store) cycle causes
+         * items_changed(0,n,n) which resets scroll to 0 and triggers edge-reached.
+         * Thread buttons will appear on next room switch or message load. */
         self->cached_has_threads = gnalk_session_has_threads (session);
-
-        /* Force rebind of visible message rows to pick up thread capability */
-        if (self->cached_has_threads && self->messages_store &&
-            g_list_model_get_n_items (G_LIST_MODEL (self->messages_store)) > 0)
-          {
-            gtk_no_selection_set_model (self->messages_selection, NULL);
-            gtk_no_selection_set_model (self->messages_selection, G_LIST_MODEL (self->messages_store));
-          }
 
         /* Switch to main view */
         gtk_stack_set_visible_child_name (GTK_STACK (self->main_stack), "main");

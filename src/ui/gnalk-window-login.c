@@ -12,10 +12,7 @@
 #include "gnalk-keyring.h"
 #include "gnalk-database.h"
 #include "gnalk-data-repository.h"
-#include "gnalk-room-tab-manager.h"
 #include "gnalk-login-view.h"
-#include "gnalk-message-controller.h"
-#include "gnalk-message-view.h"
 #include "gnalk-account-switcher.h"
 #include "gnalk-avatar-cache.h"
 #include "gnalk-user-status-menu.h"
@@ -493,39 +490,10 @@ gnalk_window_show_offline_main_view (GnalkWindow *self)
       self->was_offline = TRUE;
     }
 
-  /* Immediately restore last room from settings (before async conversation load).
-   * Only in non-collapsed/desktop mode. Messages load from DB cache. */
-  gboolean is_collapsed = adw_navigation_split_view_get_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view));
-  if (!is_collapsed)
-    {
-      g_autofree char *last_room = g_settings_get_string (settings, "last-room-token");
-      if (last_room && *last_room)
-        {
-          g_message ("Immediate restore: opening room %s from cache", last_room);
-
-          /* Set up room state immediately - conversation details will update when list loads */
-          {
-            GnalkRoomTab *tab = gnalk_room_tab_manager_get_tab (self->tab_manager, last_room);
-            self->current_room = &tab->state;
-          }
-          self->has_active_room = TRUE;
-          if (self->message_controller)
-            gnalk_message_controller_set_room (self->message_controller, last_room);
-
-          g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
-
-          /* Initialize state for lazy loading older messages */
-          self->current_room->oldest_loaded_id = 0;
-          self->current_room->has_more_history = TRUE;
-          self->current_room->initial_load_done = FALSE;
-          gnalk_message_view_set_loading_older (self->message_view, FALSE);
-
-          /* Load messages from DB cache and scroll to bottom */
-          self->current_room->scroll_to_bottom = TRUE;
-          gnalk_message_view_show_messages (self->message_view);
-          gnalk_window_load_messages_from_db (self, last_room);
-        }
-    }
+  /* Room restore is handled by gnalk_room_controller_restore_last_room,
+   * triggered from maybe_restore_last_room when the first conversation
+   * DB load completes. This ensures a single canonical load path with
+   * no race against switch_to_session clearing tabs. */
 }
 
 void
