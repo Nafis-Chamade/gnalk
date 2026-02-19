@@ -127,7 +127,7 @@ gnalk_message_processor_class_init (GnalkMessageProcessorClass *klass)
 static void
 gnalk_message_processor_init (GnalkMessageProcessor *self)
 {
-  self->msg_index = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, NULL);
+  self->msg_index = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, g_object_unref);
   self->ref_index = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 }
 
@@ -168,7 +168,20 @@ gnalk_message_processor_set_room_state (GnalkMessageProcessor *self,
                                           GnalkRoomState         *state)
 {
   if (self->current_room != state)
-    msg_index_clear (self);
+    {
+      msg_index_clear (self);
+
+      /* Rebuild indexes from existing store items (cached tab returning) */
+      if (state && state->messages_store)
+        {
+          guint n = g_list_model_get_n_items (G_LIST_MODEL (state->messages_store));
+          for (guint i = 0; i < n; i++)
+            {
+              g_autoptr(GnalkMessageData) msg = g_list_model_get_item (G_LIST_MODEL (state->messages_store), i);
+              msg_index_add (self, msg);
+            }
+        }
+    }
   self->current_room = state;
 }
 
@@ -242,7 +255,7 @@ msg_index_add (GnalkMessageProcessor *self, GnalkMessageData *data)
     {
       gint64 *key = g_new (gint64, 1);
       *key = id;
-      g_hash_table_insert (self->msg_index, key, data);
+      g_hash_table_insert (self->msg_index, key, g_object_ref (data));
     }
 
   const char *ref_id = gnalk_message_data_get_reference_id (data);
@@ -566,13 +579,56 @@ load_messages_from_db_finish (GObject      *source_object,
 
           if (!already_exists)
             {
-              /* Filter thread replies + thread_created from main timeline */
+              /* Filter thread replies and thread roots from main timeline.
+               * Keep only thread_created system messages as the visible entry
+               * point at the correct chronological position.  Thread roots
+               * (id == threadId) are added to the index for data lookup but
+               * NOT to the store (the thread_created widget replaces them). */
               gint64 tid = gnalk_message_data_get_thread_id (data);
-              if (tid > 0 && msg_id != tid)
+              const char *sys_msg = gnalk_message_data_get_system_message (data);
+              gboolean is_thread_created = sys_msg && g_strcmp0 (sys_msg, "thread_created") == 0;
+              if (tid > 0 && !is_thread_created)
                 {
+                  if (msg_id == tid)
+                    {
+                      /* Thread root: add to index only (for thread_created lookup) */
+                      msg_index_add (self, data);
+                    }
+                  else
+                    {
+                      /* Thread reply: update root metadata */
+                      GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &tid);
+                      if (root && !gnalk_message_data_get_is_thread (root))
+                        {
+                          gnalk_message_data_mark_as_thread (root, tid);
+                          const char *tt = gnalk_message_data_get_thread_title (data);
+                          if (tt && *tt)
+                            gnalk_message_data_set_thread_title (root, tt);
+                          gnalk_message_data_set_thread_replies (root,
+                              gnalk_message_data_get_thread_replies (root) + 1);
+                        }
+                    }
                   skipped_count++;
                   g_clear_object (&data);
                   continue;
+                }
+
+              /* For thread_created messages, copy thread metadata + first message from root */
+              if (is_thread_created && tid > 0)
+                {
+                  GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &tid);
+                  if (root)
+                    {
+                      gnalk_message_data_mark_as_thread (data, tid);
+                      const char *tt = gnalk_message_data_get_thread_title (root);
+                      if (tt && *tt)
+                        gnalk_message_data_set_thread_title (data, tt);
+                      gnalk_message_data_set_thread_replies (data,
+                          gnalk_message_data_get_thread_replies (root));
+                      const char *first_msg = gnalk_message_data_get_message (root);
+                      if (first_msg && *first_msg)
+                        gnalk_message_data_set_thread_first_message (data, first_msg);
+                    }
                 }
 
               /* Recalculate is_own based on current session's user_id */
@@ -777,14 +833,42 @@ load_older_messages_from_db_finish (GObject      *source_object,
 
   GListStore *store = self->current_room->messages_store;
 
-  /* Collect messages into an array for efficient bulk insert */
+  /* Collect messages into an array for efficient bulk insert, filtering
+   * thread roots (they are represented by thread_created system messages). */
   g_autoptr(GPtrArray) messages_to_insert = g_ptr_array_new_with_free_func (g_object_unref);
 
   for (guint i = 0; i < n_older; i++)
     {
       GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (older), i);
-      if (msg)
-        g_ptr_array_add (messages_to_insert, msg);
+      if (!msg)
+        continue;
+      gint64 mid = gnalk_message_data_get_id (msg);
+      gint64 tid = gnalk_message_data_get_thread_id (msg);
+      if (tid > 0 && mid == tid)
+        {
+          /* Thread root: add to index only */
+          msg_index_add (self, msg);
+          g_object_unref (msg);
+          continue;
+        }
+      const char *sm = gnalk_message_data_get_system_message (msg);
+      if (sm && g_strcmp0 (sm, "thread_created") == 0 && tid > 0)
+        {
+          GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &tid);
+          if (root)
+            {
+              gnalk_message_data_mark_as_thread (msg, tid);
+              const char *tt = gnalk_message_data_get_thread_title (root);
+              if (tt && *tt)
+                gnalk_message_data_set_thread_title (msg, tt);
+              gnalk_message_data_set_thread_replies (msg,
+                  gnalk_message_data_get_thread_replies (root));
+              const char *first_msg = gnalk_message_data_get_message (root);
+              if (first_msg && *first_msg)
+                gnalk_message_data_set_thread_first_message (msg, first_msg);
+            }
+        }
+      g_ptr_array_add (messages_to_insert, msg);
     }
 
   /* Prepend all older messages at once using splice - O(n) instead of O(n^2) */
@@ -887,7 +971,8 @@ gnalk_message_processor_process_older_from_server (GnalkMessageProcessor *self,
   const char *current_user = self->current_user_id;
   GListStore *store = self->current_room->messages_store;
 
-  /* Build list of messages (server returns newest first for lookIntoFuture=0) */
+  /* Build list of messages (server returns newest first for lookIntoFuture=0),
+   * filtering thread roots (represented by thread_created system messages). */
   GPtrArray *new_messages = g_ptr_array_new_with_free_func (g_object_unref);
 
   for (guint i = 0; i < len; i++)
@@ -897,8 +982,36 @@ gnalk_message_processor_process_older_from_server (GnalkMessageProcessor *self,
         continue;
 
       GnalkMessageData *msg_data = gnalk_message_data_new_from_json (msg_obj, current_user);
-      if (msg_data)
-        g_ptr_array_add (new_messages, msg_data);
+      if (!msg_data)
+        continue;
+
+      gint64 mid = gnalk_message_data_get_id (msg_data);
+      gint64 tid = gnalk_message_data_get_thread_id (msg_data);
+      if (tid > 0 && mid == tid)
+        {
+          /* Thread root: add to index only */
+          msg_index_add (self, msg_data);
+          g_object_unref (msg_data);
+          continue;
+        }
+      const char *sm = gnalk_message_data_get_system_message (msg_data);
+      if (sm && g_strcmp0 (sm, "thread_created") == 0 && tid > 0)
+        {
+          GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &tid);
+          if (root)
+            {
+              gnalk_message_data_mark_as_thread (msg_data, tid);
+              const char *tt = gnalk_message_data_get_thread_title (root);
+              if (tt && *tt)
+                gnalk_message_data_set_thread_title (msg_data, tt);
+              gnalk_message_data_set_thread_replies (msg_data,
+                  gnalk_message_data_get_thread_replies (root));
+              const char *first_msg = gnalk_message_data_get_message (root);
+              if (first_msg && *first_msg)
+                gnalk_message_data_set_thread_first_message (msg_data, first_msg);
+            }
+        }
+      g_ptr_array_add (new_messages, msg_data);
     }
 
   if (new_messages->len == 0)
@@ -1141,7 +1254,7 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
                 {
                   gint64 *key = g_new (gint64, 1);
                   *key = msg_id;
-                  g_hash_table_insert (self->msg_index, key, existing);
+                  g_hash_table_insert (self->msg_index, key, g_object_ref (existing));
                 }
 
               /* Check if any pending messages remain - if not, re-sort the list */
@@ -1188,22 +1301,62 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
 
           if (!existing)
             {
-              /* Filter thread replies from main timeline.
-               * Keep: thread root (id == threadId) and all messages when in
-               * thread mode. Hide: thread replies + thread_created system msgs. */
+              /* Filter thread replies and roots from main timeline.
+               * Keep only thread_created system msgs as visible entry point.
+               * In thread mode, keep all messages. */
               gint64 json_thread_id = json_object_get_int_member_with_default (msg, "threadId", 0);
-              if (json_thread_id > 0 && msg_id != json_thread_id
-                  && !self->current_room->in_thread_mode)
+              const char *json_sys_msg = json_object_get_string_member_with_default (msg, "systemMessage", "");
+              gboolean json_is_thread_created = g_strcmp0 (json_sys_msg, "thread_created") == 0;
+              if (json_thread_id > 0
+                  && !self->current_room->in_thread_mode
+                  && !json_is_thread_created)
                 {
-                  /* Update reply count on thread root if it's in the store */
-                  GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &json_thread_id);
-                  if (root)
-                    gnalk_message_data_set_thread_replies (root,
-                        gnalk_message_data_get_thread_replies (root) + 1);
+                  if (msg_id == json_thread_id)
+                    {
+                      /* Thread root: add to index only (for thread_created lookup) */
+                      GnalkMessageData *root_data = gnalk_message_data_new_from_json (msg, current_user);
+                      msg_index_add (self, root_data);
+                      g_object_unref (root_data);
+                    }
+                  else
+                    {
+                      /* Thread reply: update root metadata */
+                      GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &json_thread_id);
+                      if (root)
+                        {
+                          if (!gnalk_message_data_get_is_thread (root))
+                            {
+                              gnalk_message_data_mark_as_thread (root, json_thread_id);
+                              const char *tt = json_object_get_string_member_with_default (msg, "threadTitle", "");
+                              if (tt && *tt)
+                                gnalk_message_data_set_thread_title (root, tt);
+                            }
+                          gnalk_message_data_set_thread_replies (root,
+                              gnalk_message_data_get_thread_replies (root) + 1);
+                        }
+                    }
                   continue;
                 }
 
               GnalkMessageData *msg_data = gnalk_message_data_new_from_json (msg, current_user);
+
+              /* For thread_created messages, copy thread metadata + first message from root */
+              if (json_is_thread_created && json_thread_id > 0)
+                {
+                  GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &json_thread_id);
+                  if (root)
+                    {
+                      gnalk_message_data_mark_as_thread (msg_data, json_thread_id);
+                      const char *tt = gnalk_message_data_get_thread_title (root);
+                      if (tt && *tt)
+                        gnalk_message_data_set_thread_title (msg_data, tt);
+                      gnalk_message_data_set_thread_replies (msg_data,
+                          gnalk_message_data_get_thread_replies (root));
+                      const char *first_msg = gnalk_message_data_get_message (root);
+                      if (first_msg && *first_msg)
+                        gnalk_message_data_set_thread_first_message (msg_data, first_msg);
+                    }
+                }
 
               if (self->current_room->last_read_message_id > 0 &&
                   msg_id > self->current_room->last_read_message_id &&
