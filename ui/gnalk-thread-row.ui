@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <template class="GnalkThreadRow" parent="GtkBox">
+    <property name="orientation">horizontal</property>
+    <property name="spacing">8</property>
+    <property name="margin-start">24</property>
+    <style>
+      <class name="thread-row"/>
+    </style>
+    <child>
+      <object class="GtkImage" id="thread_icon">
+        <property name="icon-name">mail-reply-all-symbolic</property>
+        <property name="pixel-size">16</property>
+        <property name="valign">center</property>
+        <style>
+          <class name="dim-label"/>
+        </style>
+      </object>
+    </child>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="valign">center</property>
+        <property name="hexpand">true</property>
+        <property name="spacing">2</property>
+        <child>
+          <object class="GtkLabel" id="title_label">
+            <property name="halign">start</property>
+            <property name="ellipsize">end</property>
+            <style>
+              <class name="thread-title"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="subtitle_label">
+            <property name="halign">start</property>
+            <property name="hexpand">true</property>
+            <property name="ellipsize">end</property>
+            <property name="lines">1</property>
+            <style>
+              <class name="thread-subtitle"/>
+              <class name="dim-label"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkLabel" id="unread_dot">
+        <property name="halign">end</property>
+        <property name="valign">center</property>
+        <property name="visible">false</property>
+        <property name="label">&#x25CF;</property>
+        <style>
+          <class name="thread-unread-dot"/>
+        </style>
+      </object>
+    </child>
+  </template>
+</interface>

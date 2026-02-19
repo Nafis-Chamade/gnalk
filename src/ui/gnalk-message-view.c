@@ -19,6 +19,8 @@ struct _GnalkMessageView
 
   /* Thread mode banner (created once in init) */
   GtkWidget *thread_banner;
+  GtkWidget *thread_banner_title;
+  GtkWidget *thread_banner_description;
 
   GSettings *settings;
   gulong bg_style_handler_id;
@@ -303,13 +305,28 @@ gnalk_message_view_init (GnalkMessageView *self)
     gtk_widget_set_valign (back_btn, GTK_ALIGN_CENTER);
     g_signal_connect (back_btn, "clicked", G_CALLBACK (on_exit_thread_clicked), self);
 
-    GtkWidget *label = gtk_label_new ("Thread");
-    gtk_widget_add_css_class (label, "heading");
-    gtk_widget_set_hexpand (label, TRUE);
-    gtk_widget_set_halign (label, GTK_ALIGN_START);
+    /* Vertical box for title + description */
+    GtkWidget *info_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_hexpand (info_box, TRUE);
+
+    self->thread_banner_title = gtk_label_new (_("Thread"));
+    gtk_widget_add_css_class (self->thread_banner_title, "heading");
+    gtk_widget_set_halign (self->thread_banner_title, GTK_ALIGN_START);
+    gtk_label_set_ellipsize (GTK_LABEL (self->thread_banner_title), PANGO_ELLIPSIZE_END);
+
+    self->thread_banner_description = gtk_label_new (NULL);
+    gtk_widget_add_css_class (self->thread_banner_description, "dim-label");
+    gtk_widget_add_css_class (self->thread_banner_description, "thread-banner-description");
+    gtk_widget_set_halign (self->thread_banner_description, GTK_ALIGN_START);
+    gtk_label_set_ellipsize (GTK_LABEL (self->thread_banner_description), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars (GTK_LABEL (self->thread_banner_description), 60);
+    gtk_widget_set_visible (self->thread_banner_description, FALSE);
+
+    gtk_box_append (GTK_BOX (info_box), self->thread_banner_title);
+    gtk_box_append (GTK_BOX (info_box), self->thread_banner_description);
 
     gtk_box_append (GTK_BOX (self->thread_banner), back_btn);
-    gtk_box_append (GTK_BOX (self->thread_banner), label);
+    gtk_box_append (GTK_BOX (self->thread_banner), info_box);
 
     /* Insert banner before the stack */
     gtk_box_prepend (GTK_BOX (self), self->thread_banner);
@@ -643,10 +660,32 @@ gnalk_message_view_set_context_mode (GnalkMessageView *self,
 
 void
 gnalk_message_view_set_thread_mode (GnalkMessageView *self,
-                                    gboolean          thread_mode)
+                                    gboolean          thread_mode,
+                                    const char       *title,
+                                    const char       *description)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_VIEW (self));
 
   self->in_thread_mode = thread_mode;
   gtk_widget_set_visible (self->thread_banner, thread_mode);
+
+  if (thread_mode)
+    {
+      /* Set title: use provided title or fallback to "Thread" */
+      if (title && *title)
+        gtk_label_set_text (GTK_LABEL (self->thread_banner_title), title);
+      else
+        gtk_label_set_text (GTK_LABEL (self->thread_banner_title), _("Thread"));
+
+      /* Set description if available */
+      if (description && *description)
+        {
+          gtk_label_set_text (GTK_LABEL (self->thread_banner_description), description);
+          gtk_widget_set_visible (self->thread_banner_description, TRUE);
+        }
+      else
+        {
+          gtk_widget_set_visible (self->thread_banner_description, FALSE);
+        }
+    }
 }

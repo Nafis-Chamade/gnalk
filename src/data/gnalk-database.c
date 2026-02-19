@@ -81,6 +81,7 @@ static const char *SCHEMA_SQL =
   "  thread_id INTEGER DEFAULT 0,"
   "  is_thread INTEGER DEFAULT 0,"
   "  thread_replies INTEGER DEFAULT 0,"
+  "  thread_title TEXT,"
   "  PRIMARY KEY (id, account_id)"
   ");"
 
@@ -379,6 +380,13 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
                               "ALTER TABLE messages ADD COLUMN thread_replies INTEGER DEFAULT 0",
                               NULL, NULL, NULL);
                 g_message ("Database migration: added thread columns to messages");
+              }
+            if (schema && !strstr (schema, "thread_title"))
+              {
+                sqlite3_exec (self->db,
+                              "ALTER TABLE messages ADD COLUMN thread_title TEXT",
+                              NULL, NULL, NULL);
+                g_message ("Database migration: added thread_title to messages");
               }
           }
         sqlite3_finalize (check_stmt);
@@ -881,8 +889,8 @@ gnalk_database_save_message (GnalkDatabase    *self,
     "(id, account_id, conversation_token, timestamp, reply_to, last_edit_timestamp, "
     "message, author_id, author_name, reference_id, system_message, is_own, status, "
     "reactions_json, parent_json, message_parameters_json, actor_type, "
-    "thread_id, is_thread, thread_replies) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    "thread_id, is_thread, thread_replies, thread_title) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -910,6 +918,7 @@ gnalk_database_save_message (GnalkDatabase    *self,
       sqlite3_bind_int64 (stmt, 18, gnalk_message_data_get_thread_id (message));
       sqlite3_bind_int (stmt, 19, gnalk_message_data_get_is_thread (message) ? 1 : 0);
       sqlite3_bind_int (stmt, 20, gnalk_message_data_get_thread_replies (message));
+      sqlite3_bind_text (stmt, 21, gnalk_message_data_get_thread_title (message), -1, SQLITE_STATIC);
 
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
@@ -997,14 +1006,20 @@ gnalk_database_load_messages (GnalkDatabase *self,
   sqlite3_stmt *stmt;
 
   const char *sql;
+  /* Exclude thread replies from main timeline queries.  Thread replies have
+   * thread_id > 0 and are NOT thread roots (id != thread_id) and NOT the
+   * thread_created system message placeholder.  Thread roots are kept (they
+   * feed metadata to thread_created widgets via the msg_index). */
   if (before_id > 0)
     {
       sql =
         "SELECT id, timestamp, reply_to, last_edit_timestamp, message, author_id, "
         "author_name, reference_id, system_message, is_own, status, reactions_json, "
         "parent_json, message_parameters_json, actor_type, "
-        "thread_id, is_thread, thread_replies "
+        "thread_id, is_thread, thread_replies, thread_title "
         "FROM messages WHERE account_id = ? AND conversation_token = ? AND id < ? "
+        "AND (thread_id IS NULL OR thread_id = 0 OR id = thread_id "
+        "     OR system_message = 'thread_created') "
         "ORDER BY timestamp DESC LIMIT ?";
     }
   else
@@ -1013,8 +1028,10 @@ gnalk_database_load_messages (GnalkDatabase *self,
         "SELECT id, timestamp, reply_to, last_edit_timestamp, message, author_id, "
         "author_name, reference_id, system_message, is_own, status, reactions_json, "
         "parent_json, message_parameters_json, actor_type, "
-        "thread_id, is_thread, thread_replies "
+        "thread_id, is_thread, thread_replies, thread_title "
         "FROM messages WHERE account_id = ? AND conversation_token = ? "
+        "AND (thread_id IS NULL OR thread_id = 0 OR id = thread_id "
+        "     OR system_message = 'thread_created') "
         "ORDER BY timestamp DESC LIMIT ?";
     }
 
@@ -1056,7 +1073,8 @@ gnalk_database_load_messages (GnalkDatabase *self,
             (const char *) sqlite3_column_text (stmt, 14),   /* actor_type */
             sqlite3_column_int64 (stmt, 15),                 /* thread_id */
             sqlite3_column_int (stmt, 16) != 0,              /* is_thread */
-            sqlite3_column_int (stmt, 17));                   /* thread_replies */
+            sqlite3_column_int (stmt, 17),                   /* thread_replies */
+            (const char *) sqlite3_column_text (stmt, 18));  /* thread_title */
 
           g_ptr_array_add (messages, data);
         }

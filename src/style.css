@@ -890,21 +890,84 @@ waveform-seekbar {
   color: white;
 }
 
+/* ============ Thread sidebar list ============ */
+
+/* Thread sub-row in conversation list (expanded tree) */
+.thread-sidebar-row {
+  padding: 4px 8px 4px 0;
+}
+
+.thread-sidebar-title {
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.thread-sidebar-subtitle {
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+.thread-sidebar-unread-dot {
+  color: @accent_color;
+  font-size: 0.7em;
+}
+
+.thread-has-unread .thread-sidebar-title {
+  font-weight: bold;
+}
+
+.thread-has-unread .thread-sidebar-subtitle {
+  opacity: 0.8;
+}
+
+/* Expand button on conversation rows */
+.expand-button {
+  padding: 0;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+/* Unread threads indicator on collapsed conversation */
+.thread-unread-indicator .expand-button {
+  color: @accent_color;
+}
+
 /* ============ Thread support ============ */
 
-.thread-button {
-  padding: 2px 8px;
-  border-radius: 12px;
-  border: 1px solid alpha(@borders, 0.5);
+.thread-created-row {
+  opacity: 1;
+}
+
+.thread-entry {
+  padding: 6px 10px;
+  margin-top: 4px;
+  background-color: alpha(@accent_bg_color, 0.08);
+  border-radius: 8px;
+  border: 1px solid alpha(@accent_bg_color, 0.2);
+}
+
+.thread-entry-title {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: @accent_color;
+}
+
+.thread-entry-description {
+  font-size: 0.85em;
   opacity: 0.7;
 }
 
-.thread-button:hover {
-  opacity: 1.0;
+.thread-entry-button {
+  padding: 4px 12px;
+  border-radius: 16px;
 }
 
 .thread-banner {
   padding: 6px 12px;
   border-bottom: 1px solid alpha(@borders, 0.5);
   background-color: alpha(@accent_bg_color, 0.08);
+}
+
+.thread-banner-description {
+  font-size: 0.85em;
 }

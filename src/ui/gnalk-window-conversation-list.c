@@ -14,11 +14,37 @@
 #include "gnalk-sync-coordinator.h"
 #include "gnalk-conversation-row.h"
 #include "gnalk-conversation-sidebar.h"
+#include "gnalk-thread-row.h"
+#include "gnalk-thread-data.h"
 #include "gnalk-conversation-header.h"
 #include "gnalk-participants-list.h"
 #include "gnalk-message-view.h"
 #include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
+
+/* ============ Tree Model Children Callback ============ */
+
+GListModel *
+gnalk_window_create_conversation_children (gpointer item,
+                                           gpointer user_data G_GNUC_UNUSED)
+{
+  if (!GNALK_IS_CONVERSATION_DATA (item))
+    return NULL;
+
+  GnalkConversationData *data = GNALK_CONVERSATION_DATA (item);
+
+  /* Section headers and invitations have no children */
+  if (gnalk_conversation_data_is_section_header (data))
+    return NULL;
+  if (gnalk_conversation_data_is_invitation (data))
+    return NULL;
+
+  /* Always return the threads store so GtkTreeListModel observes items_changed.
+   * When threads arrive via sync, the tree model picks them up automatically.
+   * The expand button visibility is controlled in bind based on item count. */
+  GListStore *threads = gnalk_conversation_data_get_threads_store (data);
+  return G_LIST_MODEL (g_object_ref (threads));
+}
 
 /* ============ Sorting Helper ============ */
 
@@ -418,6 +444,22 @@ gnalk_window_load_conversations_from_db (GnalkWindow *self)
   g_object_unref (task);
 }
 
+/* ============ Expand Toggle Handler ============ */
+
+void
+gnalk_window_on_conv_expand_toggled (GnalkConversationRow *row,
+                                     GnalkWindow          *self)
+{
+  (void) self;
+  GtkTreeListRow *tree_row = g_object_get_data (G_OBJECT (row), "tree-row");
+  if (!tree_row)
+    return;
+
+  gboolean expanded = gtk_tree_list_row_get_expanded (tree_row);
+  gtk_tree_list_row_set_expanded (tree_row, !expanded);
+  gnalk_conversation_row_set_expanded (row, !expanded);
+}
+
 /* ============ Search Results ============ */
 
 /* Clear search results store - safe with data model pattern */
@@ -734,7 +776,7 @@ gnalk_window_on_conv_list_item_setup (GtkListItemFactory *factory G_GNUC_UNUSED,
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  /* Create a GtkStack with both widget types - reused across bind/unbind cycles */
+  /* Create a GtkStack with all widget types - reused across bind/unbind cycles */
   GtkStack *stack = GTK_STACK (gtk_stack_new ());
   gtk_stack_set_hhomogeneous (stack, TRUE);
   gtk_stack_set_vhomogeneous (stack, FALSE);
@@ -750,7 +792,12 @@ gnalk_window_on_conv_list_item_setup (GtkListItemFactory *factory G_GNUC_UNUSED,
   g_signal_connect (row, "leave-requested", G_CALLBACK (gnalk_window_on_conv_leave_requested), self);
   g_signal_connect (row, "delete-requested", G_CALLBACK (gnalk_window_on_conv_delete_requested), self);
   g_signal_connect (row, "favorite-toggled", G_CALLBACK (gnalk_window_on_conv_favorite_toggled), self);
+  g_signal_connect (row, "expand-toggled", G_CALLBACK (gnalk_window_on_conv_expand_toggled), self);
   gtk_stack_add_named (stack, GTK_WIDGET (row), "row");
+
+  /* Thread row */
+  GnalkThreadRow *thread_row = gnalk_thread_row_new ();
+  gtk_stack_add_named (stack, GTK_WIDGET (thread_row), "thread");
 
   gtk_list_item_set_child (item, GTK_WIDGET (stack));
 }
@@ -761,36 +808,68 @@ gnalk_window_on_conv_list_item_bind (GtkListItemFactory *factory G_GNUC_UNUSED,
                                       gpointer            user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
-  GnalkConversationData *data = GNALK_CONVERSATION_DATA (gtk_list_item_get_item (item));
+  GtkTreeListRow *tree_row = GTK_TREE_LIST_ROW (gtk_list_item_get_item (item));
   GtkStack *stack = GTK_STACK (gtk_list_item_get_child (item));
+  gpointer real_item = gtk_tree_list_row_get_item (tree_row);
+  guint depth = gtk_tree_list_row_get_depth (tree_row);
 
-  if (gnalk_conversation_data_is_section_header (data))
+  if (depth == 1 && GNALK_IS_THREAD_DATA (real_item))
     {
-      GtkWidget *label = gtk_stack_get_child_by_name (stack, "header");
-      gtk_label_set_text (GTK_LABEL (label), gnalk_conversation_data_get_title (data));
-      gtk_stack_set_visible_child_name (stack, "header");
-      gtk_list_item_set_activatable (item, FALSE);
-      gtk_list_item_set_selectable (item, FALSE);
-    }
-  else
-    {
-      GnalkConversationRow *row = GNALK_CONVERSATION_ROW (
-          gtk_stack_get_child_by_name (stack, "row"));
-      gnalk_conversation_row_set_from_data (row, data, self->avatar_cache);
-
-      /* Set active state based on current room */
-      const char *token = gnalk_conversation_data_get_token (data);
-      gboolean is_active = self->current_room && g_strcmp0 (token, self->current_room->room_token) == 0;
-      gnalk_conversation_row_set_active (row, is_active);
-
-      /* Track this row for direct active state updates */
-      if (token)
-        g_hash_table_insert (self->bound_conversation_rows, g_strdup (token), row);
-
-      gtk_stack_set_visible_child_name (stack, "row");
+      /* Thread row (child of a conversation) */
+      GnalkThreadRow *thread_row = GNALK_THREAD_ROW (
+          gtk_stack_get_child_by_name (stack, "thread"));
+      gnalk_thread_row_set_from_data (thread_row, GNALK_THREAD_DATA (real_item));
+      gtk_stack_set_visible_child_name (stack, "thread");
       gtk_list_item_set_activatable (item, TRUE);
       gtk_list_item_set_selectable (item, TRUE);
     }
+  else if (GNALK_IS_CONVERSATION_DATA (real_item))
+    {
+      GnalkConversationData *data = GNALK_CONVERSATION_DATA (real_item);
+
+      if (gnalk_conversation_data_is_section_header (data))
+        {
+          GtkWidget *label = gtk_stack_get_child_by_name (stack, "header");
+          gtk_label_set_text (GTK_LABEL (label), gnalk_conversation_data_get_title (data));
+          gtk_stack_set_visible_child_name (stack, "header");
+          gtk_list_item_set_activatable (item, FALSE);
+          gtk_list_item_set_selectable (item, FALSE);
+        }
+      else
+        {
+          GnalkConversationRow *row = GNALK_CONVERSATION_ROW (
+              gtk_stack_get_child_by_name (stack, "row"));
+          gnalk_conversation_row_set_from_data (row, data, self->avatar_cache);
+
+          /* Set active state based on current room */
+          const char *token = gnalk_conversation_data_get_token (data);
+          gboolean is_active = self->current_room && g_strcmp0 (token, self->current_room->room_token) == 0;
+          gnalk_conversation_row_set_active (row, is_active);
+
+          /* Set expandable based on actual thread count (not tree model's is_expandable,
+           * which is TRUE for any non-NULL child model including empty stores) */
+          GListStore *threads = gnalk_conversation_data_get_threads_store (data);
+          gboolean expandable = g_list_model_get_n_items (G_LIST_MODEL (threads)) > 0;
+          gnalk_conversation_row_set_expandable (row, expandable);
+          gnalk_conversation_row_set_expanded (row, gtk_tree_list_row_get_expanded (tree_row));
+          gnalk_conversation_row_set_has_unread_threads (row,
+              gnalk_conversation_data_get_has_unread_threads (data));
+
+          /* Store tree row reference on the conversation row for expand toggle */
+          g_object_set_data_full (G_OBJECT (row), "tree-row",
+                                  g_object_ref (tree_row), g_object_unref);
+
+          /* Track this row for direct active state updates */
+          if (token)
+            g_hash_table_insert (self->bound_conversation_rows, g_strdup (token), row);
+
+          gtk_stack_set_visible_child_name (stack, "row");
+          gtk_list_item_set_activatable (item, TRUE);
+          gtk_list_item_set_selectable (item, TRUE);
+        }
+    }
+
+  g_object_unref (real_item);
 }
 
 void
@@ -800,18 +879,33 @@ gnalk_window_on_conv_list_item_unbind (GtkListItemFactory *factory G_GNUC_UNUSED
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
   GtkStack *stack = GTK_STACK (gtk_list_item_get_child (item));
-  GtkWidget *row_widget = gtk_stack_get_child_by_name (stack, "row");
 
-  if (GNALK_IS_CONVERSATION_ROW (row_widget))
+  /* Determine which child is currently visible and reset it */
+  const char *visible_name = gtk_stack_get_visible_child_name (stack);
+
+  if (g_strcmp0 (visible_name, "row") == 0)
     {
-      GnalkConversationRow *row = GNALK_CONVERSATION_ROW (row_widget);
-      const char *token = gnalk_conversation_row_get_token (row);
+      GtkWidget *row_widget = gtk_stack_get_child_by_name (stack, "row");
+      if (GNALK_IS_CONVERSATION_ROW (row_widget))
+        {
+          GnalkConversationRow *row = GNALK_CONVERSATION_ROW (row_widget);
+          const char *token = gnalk_conversation_row_get_token (row);
 
-      /* Remove from tracking hash table */
-      if (token)
-        g_hash_table_remove (self->bound_conversation_rows, token);
+          /* Remove from tracking hash table */
+          if (token)
+            g_hash_table_remove (self->bound_conversation_rows, token);
 
-      gnalk_conversation_row_reset (row);
+          /* Clear tree row reference */
+          g_object_set_data (G_OBJECT (row), "tree-row", NULL);
+
+          gnalk_conversation_row_reset (row);
+        }
+    }
+  else if (g_strcmp0 (visible_name, "thread") == 0)
+    {
+      GtkWidget *thread_widget = gtk_stack_get_child_by_name (stack, "thread");
+      if (GNALK_IS_THREAD_ROW (thread_widget))
+        gnalk_thread_row_reset (GNALK_THREAD_ROW (thread_widget));
     }
   /* Do NOT call gtk_list_item_set_child(NULL) — the stack persists for reuse */
 }
@@ -848,6 +942,69 @@ gnalk_window_on_search_list_item_unbind (GtkListItemFactory *factory,
   GnalkConversationRow *row = GNALK_CONVERSATION_ROW (gtk_list_item_get_child (item));
   if (row)
     gnalk_conversation_row_reset (row);
+}
+
+/* ============ Thread Sync Handler ============ */
+
+void
+gnalk_window_on_threads_synced (GnalkSession *session G_GNUC_UNUSED,
+                                JsonArray    *thread_infos,
+                                GnalkWindow  *self)
+{
+  if (!thread_infos)
+    return;
+
+  guint n_threads = json_array_get_length (thread_infos);
+  g_message ("Window: threads-synced received %u thread infos", n_threads);
+
+  /* Group threads by roomToken */
+  g_autoptr(GHashTable) by_room = g_hash_table_new_full (
+      g_str_hash, g_str_equal, NULL, (GDestroyNotify) g_ptr_array_unref);
+
+  for (guint i = 0; i < n_threads; i++)
+    {
+      JsonObject *info = json_array_get_object_element (thread_infos, i);
+      if (!info)
+        continue;
+
+      GnalkThreadData *td = gnalk_thread_data_new_from_json (info);
+      if (!td)
+        continue;
+
+      const char *room_token = gnalk_thread_data_get_room_token (td);
+      if (!room_token || !*room_token)
+        {
+          g_object_unref (td);
+          continue;
+        }
+
+      GPtrArray *arr = g_hash_table_lookup (by_room, room_token);
+      if (!arr)
+        {
+          arr = g_ptr_array_new_with_free_func (g_object_unref);
+          g_hash_table_insert (by_room, (gpointer) room_token, arr);
+        }
+      g_ptr_array_add (arr, td);  /* takes ownership */
+    }
+
+  /* For each conversation in our store, set its threads */
+  guint n_convs = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+  for (guint i = 0; i < n_convs; i++)
+    {
+      GnalkConversationData *data = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
+      if (!data || gnalk_conversation_data_is_section_header (data))
+        {
+          g_clear_object (&data);
+          continue;
+        }
+
+      const char *token = gnalk_conversation_data_get_token (data);
+      GPtrArray *threads = token ? g_hash_table_lookup (by_room, token) : NULL;
+
+      /* set_threads handles NULL/empty to clear threads */
+      gnalk_conversation_data_set_threads (data, threads);
+      g_object_unref (data);
+    }
 }
 
 /* ============ Controller Signal Handlers ============ */

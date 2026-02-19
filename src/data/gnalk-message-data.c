@@ -45,6 +45,8 @@ struct _GnalkMessageData
   gint64   thread_id;       /* 0 = not in a thread */
   gboolean is_thread;       /* TRUE = thread root message */
   gint     thread_replies;  /* reply count (meaningful when is_thread) */
+  char    *thread_title;    /* Server-provided thread title (when is_thread) */
+  char    *thread_first_message; /* First message text (on thread_created system msgs) */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageData, gnalk_message_data, G_TYPE_OBJECT)
@@ -138,6 +140,8 @@ gnalk_message_data_finalize (GObject *object)
   g_free (self->upload_file_name);
   g_free (self->upload_file_path);
   g_free (self->upload_mime_type);
+  g_free (self->thread_title);
+  g_free (self->thread_first_message);
 
   if (self->reactions)
     json_object_unref (self->reactions);
@@ -289,6 +293,8 @@ gnalk_message_data_new_from_json (JsonObject *message_data,
   self->thread_id = json_object_get_int_member_with_default (message_data, "threadId", 0);
   self->is_thread = json_object_get_boolean_member_with_default (message_data, "isThread", FALSE);
   self->thread_replies = (gint) json_object_get_int_member_with_default (message_data, "threadReplies", 0);
+  const char *title = json_object_get_string_member_with_default (message_data, "threadTitle", "");
+  self->thread_title = (title && *title) ? g_strdup (title) : NULL;
 
   return self;
 }
@@ -786,6 +792,47 @@ gnalk_message_data_set_thread_replies (GnalkMessageData *self,
 }
 
 const char *
+gnalk_message_data_get_thread_title (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), NULL);
+  return self->thread_title;
+}
+
+void
+gnalk_message_data_set_thread_title (GnalkMessageData *self,
+                                     const char        *title)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  g_free (self->thread_title);
+  self->thread_title = (title && *title) ? g_strdup (title) : NULL;
+}
+
+const char *
+gnalk_message_data_get_thread_first_message (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), NULL);
+  return self->thread_first_message;
+}
+
+void
+gnalk_message_data_set_thread_first_message (GnalkMessageData *self,
+                                             const char        *message)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  g_free (self->thread_first_message);
+  self->thread_first_message = (message && *message) ? g_strdup (message) : NULL;
+}
+
+void
+gnalk_message_data_mark_as_thread (GnalkMessageData *self,
+                                   gint64             thread_id)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  self->is_thread = TRUE;
+  self->thread_id = thread_id;
+}
+
+const char *
 gnalk_message_data_get_upload_file_name (GnalkMessageData *self)
 {
   g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), NULL);
@@ -870,7 +917,8 @@ gnalk_message_data_new_from_db (gint64                   id,
                                   const char              *actor_type,
                                   gint64                   thread_id,
                                   gboolean                 is_thread,
-                                  gint                     thread_replies)
+                                  gint                     thread_replies,
+                                  const char              *thread_title)
 {
   GnalkMessageData *self = g_object_new (GNALK_TYPE_MESSAGE_DATA, NULL);
 
@@ -899,6 +947,7 @@ gnalk_message_data_new_from_db (gint64                   id,
   self->thread_id = thread_id;
   self->is_thread = is_thread;
   self->thread_replies = thread_replies;
+  self->thread_title = (thread_title && *thread_title) ? g_strdup (thread_title) : NULL;
 
   return self;
 }

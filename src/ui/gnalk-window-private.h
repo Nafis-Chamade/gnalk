@@ -138,6 +138,7 @@ struct _GnalkWindow
   GListStore        *conversations_store;
   GtkSortListModel  *conversations_sort_model;  /* Sorted view of conversations_store */
   GtkCustomSorter   *conversations_sorter;      /* Sorter for conversations_sort_model */
+  GtkTreeListModel  *conversations_tree_model;  /* Tree model wrapping sort model */
   GListStore        *messages_store;
   GtkNoSelection    *messages_selection;  /* Keep reference to update model */
 
@@ -145,6 +146,7 @@ struct _GnalkWindow
   GnalkRoomTabManager *tab_manager;  /* Manages per-room message stores */
   GnalkRoomState *current_room;     /* Points to active tab's state (NULL if no room open) */
 
+  gint64 pending_thread_id;  /* Thread to open after room switch completes */
   int message_display_mode;  /* GnalkMessageDisplayMode: 0=bubbles, 1=aligned */
   char   *user_name;
   guint   typing_send_timer_id;  /* Timer for throttling typing messages */
@@ -327,6 +329,9 @@ gint gnalk_window_compare_conversations_by_activity (gconstpointer a, gconstpoin
 void gnalk_window_clear_search_results              (GnalkWindow *self);
 void gnalk_window_update_conversation_active_states (GnalkWindow *self, const char *old_token, const char *new_token);
 
+/* Tree model children callback for conversation threads */
+GListModel *gnalk_window_create_conversation_children (gpointer item, gpointer user_data);
+
 /* Search signal handlers */
 void gnalk_window_on_sidebar_search_changed         (GnalkConversationSidebar *sidebar,
                                                       const char *text, GnalkWindow *self);
@@ -355,6 +360,11 @@ void gnalk_window_on_conversation_controller_deleted     (GnalkConversationContr
 void gnalk_window_on_data_repository_changed (GnalkDataRepository *repository,
                                                const char          *scope,
                                                GnalkWindow         *self);
+
+/* Thread sync handler (relayed from Session) */
+void gnalk_window_on_threads_synced              (GnalkSession *session,
+                                                   JsonArray *thread_infos,
+                                                   GnalkWindow *self);
 
 /* Federation invitation handlers */
 void gnalk_window_on_invitations_updated       (GnalkConversationController *controller,
@@ -417,6 +427,7 @@ void gnalk_window_unblock_participants_toggle   (GnalkWindow *self);
 /* ============ Internal helper functions called from conversation-list code ============ */
 
 /* These are implemented in gnalk-window.c and called from gnalk-window-conversation-list.c */
+void gnalk_window_on_conv_expand_toggled        (GnalkConversationRow *row, GnalkWindow *self);
 void gnalk_window_on_conv_leave_requested      (GnalkConversationRow *row, const char *token, GnalkWindow *self);
 void gnalk_window_on_conv_delete_requested     (GnalkConversationRow *row, const char *token, GnalkWindow *self);
 void gnalk_window_on_conv_favorite_toggled     (GnalkConversationRow *row, const char *token,

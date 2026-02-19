@@ -24,6 +24,7 @@ struct _GnalkSyncCoordinator
   guint     periodic_timer_id;
   gboolean  periodic_enabled;
   gboolean  is_syncing;
+  gboolean  has_threads;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkSyncCoordinator, gnalk_sync_coordinator, G_TYPE_OBJECT)
@@ -34,6 +35,7 @@ enum {
   SIGNAL_SYNC_STARTED,
   SIGNAL_SYNC_FINISHED,
   SIGNAL_ERROR,
+  SIGNAL_THREADS_SYNCED,
   N_SIGNALS
 };
 
@@ -41,6 +43,10 @@ static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 static void on_conversations_fetched (GnalkHttpClient *client,
+                                      JsonNode        *response,
+                                      GError          *error,
+                                      gpointer         user_data);
+static void on_threads_fetched       (GnalkHttpClient *client,
                                       JsonNode        *response,
                                       GError          *error,
                                       gpointer         user_data);
@@ -554,8 +560,45 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
   if (!self->calls_initialized)
     self->calls_initialized = TRUE;
 
+  /* Fetch subscribed threads if server supports them */
+  if (self->has_threads && http_client)
+    gnalk_http_client_get_subscribed_threads (http_client, 100, 0,
+                                              on_threads_fetched, self);
+
   g_signal_emit (self, signals[SIGNAL_SYNC_FINISHED], 0, TRUE);
   conversation_fetch_data_free (fetch_data);
+}
+
+/* ============ Thread Sync ============ */
+
+static void
+on_threads_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
+                    JsonNode        *response,
+                    GError          *error,
+                    gpointer         user_data)
+{
+  GnalkSyncCoordinator *self = GNALK_SYNC_COORDINATOR (user_data);
+
+  if (error)
+    {
+      g_debug ("SyncCoordinator: thread fetch failed: %s", error->message);
+      return;
+    }
+
+  if (!response || !JSON_NODE_HOLDS_OBJECT (response))
+    return;
+
+  JsonObject *root = json_node_get_object (response);
+  JsonObject *ocs = json_object_get_object_member (root, "ocs");
+  if (!ocs)
+    return;
+
+  JsonArray *data = json_object_get_array_member (ocs, "data");
+  if (!data)
+    return;
+
+  g_message ("SyncCoordinator: fetched %u subscribed threads", json_array_get_length (data));
+  g_signal_emit (self, signals[SIGNAL_THREADS_SYNCED], 0, data);
 }
 
 /* ============ Periodic Timer ============ */
@@ -678,6 +721,23 @@ gnalk_sync_coordinator_class_init (GnalkSyncCoordinatorClass *klass)
                   NULL,
                   G_TYPE_NONE, 1,
                   G_TYPE_STRING);  /* message */
+
+  /**
+   * GnalkSyncCoordinator::threads-synced:
+   * @self: The sync coordinator
+   * @thread_infos: A JsonArray of TalkThreadInfo objects
+   *
+   * Emitted when subscribed threads have been fetched from the server.
+   */
+  signals[SIGNAL_THREADS_SYNCED] =
+    g_signal_new ("threads-synced",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 1,
+                  JSON_TYPE_ARRAY);  /* thread_infos */
 }
 
 static void
@@ -859,4 +919,12 @@ gnalk_sync_coordinator_clear_active_call (GnalkSyncCoordinator *self,
   g_return_if_fail (room_token != NULL);
 
   g_hash_table_remove (self->active_calls, room_token);
+}
+
+void
+gnalk_sync_coordinator_set_has_threads (GnalkSyncCoordinator *self,
+                                        gboolean              has_threads)
+{
+  g_return_if_fail (GNALK_IS_SYNC_COORDINATOR (self));
+  self->has_threads = has_threads;
 }

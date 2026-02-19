@@ -899,7 +899,6 @@ void
 gnalk_http_client_create_thread (GnalkHttpClient  *self,
                                  const char       *room_token,
                                  const char       *message,
-                                 gint64            reply_to,
                                  const char       *thread_title,
                                  const char       *reference_id,
                                  GnalkHttpCallback callback,
@@ -915,10 +914,11 @@ gnalk_http_client_create_thread (GnalkHttpClient  *self,
   g_autofree char *encoded_message = g_uri_escape_string (message ? message : "", NULL, TRUE);
   g_autofree char *encoded_title = thread_title ? g_uri_escape_string (thread_title, NULL, TRUE) : NULL;
 
+  /* NOTE: The Nextcloud API requires replyTo=0 for thread creation:
+   * $createThread = $replyTo === 0 && $threadTitle !== ''
+   * So we NEVER send replyTo here — it would prevent thread creation. */
   GString *body_str = g_string_new (NULL);
   g_string_append_printf (body_str, "message=%s", encoded_message);
-  if (reply_to > 0)
-    g_string_append_printf (body_str, "&replyTo=%" G_GINT64_FORMAT, reply_to);
   if (encoded_title && *encoded_title)
     g_string_append_printf (body_str, "&threadTitle=%s", encoded_title);
   if (reference_id && *reference_id)
@@ -2763,6 +2763,37 @@ gnalk_http_client_leave_call_federation (GnalkHttpClient   *self,
     room_token);
 
   SoupMessage *msg = create_message (self, "DELETE", endpoint);
+
+  HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
+  g_weak_ref_init (&data->client_ref, self);
+  data->message = g_object_ref (msg);
+  data->url = g_strdup_printf ("%s%s", self->server_url, endpoint);
+  data->callback = (GCallback) callback;
+  data->user_data = user_data;
+
+  soup_session_send_and_read_async (self->session, msg, G_PRIORITY_DEFAULT,
+                                     self->cancellable, on_json_response, data);
+  g_object_unref (msg);
+}
+
+/* Subscribed threads API */
+
+void
+gnalk_http_client_get_subscribed_threads (GnalkHttpClient  *self,
+                                          gint              limit,
+                                          gint              offset,
+                                          GnalkHttpCallback callback,
+                                          gpointer          user_data)
+{
+  g_return_if_fail (GNALK_IS_HTTP_CLIENT (self));
+
+  g_autofree char *endpoint = g_strdup_printf (
+      "/ocs/v2.php/apps/spreed/api/v1/chat/subscribed-threads?format=json&limit=%d&offset=%d",
+      limit, offset);
+
+  SoupMessage *msg = create_message (self, "GET", endpoint);
+
+  gnalk_log_http_request (self->user_id, "GET", endpoint, NULL);
 
   HttpCallbackData *data = g_new0 (HttpCallbackData, 1);
   g_weak_ref_init (&data->client_ref, self);

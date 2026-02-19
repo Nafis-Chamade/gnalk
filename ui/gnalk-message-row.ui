@@ -152,32 +152,60 @@
             </child>
           </object>
         </child>
-        <!-- Thread button (visible only on thread root messages) -->
+        <!-- Thread entry box (visible only on thread root messages) -->
         <child>
-          <object class="GtkButton" id="thread_button">
+          <object class="GtkBox" id="thread_box">
+            <property name="orientation">vertical</property>
             <property name="visible">false</property>
-            <property name="halign">start</property>
+            <property name="spacing">4</property>
             <style>
-              <class name="thread-button"/>
-              <class name="flat"/>
+              <class name="thread-entry"/>
             </style>
             <child>
-              <object class="GtkBox">
-                <property name="orientation">horizontal</property>
-                <property name="spacing">4</property>
+              <object class="GtkLabel" id="thread_title_label">
+                <property name="halign">start</property>
+                <property name="visible">false</property>
+                <property name="ellipsize">end</property>
+                <style>
+                  <class name="thread-entry-title"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="thread_description_label">
+                <property name="halign">start</property>
+                <property name="visible">false</property>
+                <property name="wrap">true</property>
+                <property name="wrap-mode">word-char</property>
+                <property name="lines">2</property>
+                <property name="ellipsize">end</property>
+                <style>
+                  <class name="thread-entry-description"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="thread_button">
+                <property name="halign">start</property>
+                <style>
+                  <class name="thread-entry-button"/>
+                  <class name="suggested-action"/>
+                </style>
                 <child>
-                  <object class="GtkImage">
-                    <property name="icon-name">mail-reply-all-symbolic</property>
-                    <property name="pixel-size">14</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="thread_label">
-                    <property name="label" translatable="yes">Reply in thread</property>
-                    <style>
-                      <class name="dim-label"/>
-                      <class name="caption"/>
-                    </style>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkImage">
+                        <property name="icon-name">go-next-symbolic</property>
+                        <property name="pixel-size">16</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="thread_label">
+                        <property name="label" translatable="yes">View thread</property>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>

@@ -170,4 +170,15 @@ gint64 gnalk_sync_coordinator_get_account_id (GnalkSyncCoordinator *self);
 void gnalk_sync_coordinator_clear_active_call (GnalkSyncCoordinator *self,
                                                 const char            *room_token);
 
+/**
+ * gnalk_sync_coordinator_set_has_threads:
+ * @self: The sync coordinator
+ * @has_threads: Whether the server supports threads
+ *
+ * Enables thread syncing when TRUE. When enabled, subscribed threads
+ * are fetched after each conversation sync and emitted via "threads-synced".
+ */
+void gnalk_sync_coordinator_set_has_threads (GnalkSyncCoordinator *self,
+                                             gboolean              has_threads);
+
 G_END_DECLS

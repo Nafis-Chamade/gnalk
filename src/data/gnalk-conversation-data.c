@@ -1,4 +1,5 @@
 #include "gnalk-conversation-data.h"
+#include "gnalk-thread-data.h"
 #include "gnalk-session.h"
 #include "gnalk-account.h"
 #include "gnalk-message-utils.h"
@@ -89,6 +90,10 @@ struct _GnalkConversationData
   /* Federation invitation ID (>0 means this is a pending invitation) */
   gint64  invitation_id;
 
+  /* Thread sub-list for sidebar tree (lazily created) */
+  GListStore *threads_store;
+  gboolean    has_unread_threads;
+
   /* Session that owns this conversation (weak reference, not owned) */
   GnalkSession *session;
 };
@@ -121,6 +126,7 @@ gnalk_conversation_data_finalize (GObject *object)
   /* last_message_type is interned — do not free */
   g_clear_pointer (&self->last_message_params, json_object_unref);
   g_free (self->cached_subtitle);
+  g_clear_object (&self->threads_store);
 
   G_OBJECT_CLASS (gnalk_conversation_data_parent_class)->finalize (object);
 }
@@ -785,6 +791,23 @@ gnalk_conversation_data_update_from_data (GnalkConversationData *self,
     {
       self->last_read_message = source->last_read_message;
       changed = TRUE;
+
+      /* Re-compute thread unread states with updated last_read_message */
+      if (self->threads_store)
+        {
+          gboolean any_unread = FALSE;
+          guint n = g_list_model_get_n_items (G_LIST_MODEL (self->threads_store));
+          for (guint i = 0; i < n; i++)
+            {
+              GnalkThreadData *td = g_list_model_get_item (G_LIST_MODEL (self->threads_store), i);
+              gboolean unread = gnalk_thread_data_get_last_message_id (td) > self->last_read_message;
+              gnalk_thread_data_set_has_unread (td, unread);
+              if (unread)
+                any_unread = TRUE;
+              g_object_unref (td);
+            }
+          self->has_unread_threads = any_unread;
+        }
     }
 
   if (self->unread_messages != source->unread_messages)
@@ -905,6 +928,162 @@ gnalk_conversation_data_get_last_message_params_json (GnalkConversationData *sel
 {
   g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), NULL);
   return gnalk_message_utils_serialize_json_object (self->last_message_params);
+}
+
+/* ============ Thread Sub-List ============ */
+
+GListStore *
+gnalk_conversation_data_get_threads_store (GnalkConversationData *self)
+{
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), NULL);
+
+  if (!self->threads_store)
+    self->threads_store = g_list_store_new (GNALK_TYPE_THREAD_DATA);
+
+  return self->threads_store;
+}
+
+void
+gnalk_conversation_data_set_threads (GnalkConversationData *self,
+                                     GPtrArray             *thread_datas)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_DATA (self));
+
+  GListStore *store = gnalk_conversation_data_get_threads_store (self);
+
+  gboolean changed = FALSE;
+  gboolean any_unread = FALSE;
+
+  if (!thread_datas || thread_datas->len == 0)
+    {
+      /* Remove all threads */
+      if (g_list_model_get_n_items (G_LIST_MODEL (store)) > 0)
+        {
+          g_list_store_remove_all (store);
+          changed = TRUE;
+        }
+    }
+  else
+    {
+      /* Build hash of existing threads by ID for in-place update */
+      g_autoptr(GHashTable) existing = g_hash_table_new (g_direct_hash, g_direct_equal);
+      guint n_existing = g_list_model_get_n_items (G_LIST_MODEL (store));
+      for (guint i = 0; i < n_existing; i++)
+        {
+          GnalkThreadData *td = g_list_model_get_item (G_LIST_MODEL (store), i);
+          g_hash_table_insert (existing,
+                               GINT_TO_POINTER ((gint) gnalk_thread_data_get_thread_id (td)),
+                               GUINT_TO_POINTER (i));
+          g_object_unref (td);
+        }
+
+      /* Track which IDs are in the new set */
+      g_autoptr(GHashTable) new_ids = g_hash_table_new (g_direct_hash, g_direct_equal);
+
+      for (guint i = 0; i < thread_datas->len; i++)
+        {
+          GnalkThreadData *new_td = g_ptr_array_index (thread_datas, i);
+          gint64 tid = gnalk_thread_data_get_thread_id (new_td);
+          g_hash_table_add (new_ids, GINT_TO_POINTER ((gint) tid));
+
+          /* Compute unread: thread's last_message_id > conversation's last_read_message */
+          gboolean unread = gnalk_thread_data_get_last_message_id (new_td) > self->last_read_message;
+          gnalk_thread_data_set_has_unread (new_td, unread);
+          if (unread)
+            any_unread = TRUE;
+
+          gpointer idx_ptr;
+          if (g_hash_table_lookup_extended (existing, GINT_TO_POINTER ((gint) tid), NULL, &idx_ptr))
+            {
+              /* Update existing in place */
+              guint idx = GPOINTER_TO_UINT (idx_ptr);
+              GnalkThreadData *old_td = g_list_model_get_item (G_LIST_MODEL (store), idx);
+              if (gnalk_thread_data_update_from_data (old_td, new_td))
+                changed = TRUE;
+              g_object_unref (old_td);
+            }
+          else
+            {
+              /* New thread */
+              g_list_store_append (store, new_td);
+              changed = TRUE;
+            }
+        }
+
+      /* Remove threads no longer present (reverse order) */
+      for (gint i = (gint) n_existing - 1; i >= 0; i--)
+        {
+          GnalkThreadData *td = g_list_model_get_item (G_LIST_MODEL (store), i);
+          gint64 tid = gnalk_thread_data_get_thread_id (td);
+          g_object_unref (td);
+          if (!g_hash_table_contains (new_ids, GINT_TO_POINTER ((gint) tid)))
+            {
+              g_list_store_remove (store, i);
+              changed = TRUE;
+            }
+        }
+    }
+
+  /* Also compute any_unread from remaining items (in case we only updated in place) */
+  if (!any_unread)
+    {
+      guint n = g_list_model_get_n_items (G_LIST_MODEL (store));
+      for (guint i = 0; i < n; i++)
+        {
+          GnalkThreadData *td = g_list_model_get_item (G_LIST_MODEL (store), i);
+          if (gnalk_thread_data_get_has_unread (td))
+            any_unread = TRUE;
+          g_object_unref (td);
+          if (any_unread)
+            break;
+        }
+    }
+
+  /* Update aggregate flag */
+  if (self->has_unread_threads != any_unread)
+    {
+      self->has_unread_threads = any_unread;
+      changed = TRUE;
+    }
+
+  if (changed)
+    g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
+}
+
+gboolean
+gnalk_conversation_data_get_has_unread_threads (GnalkConversationData *self)
+{
+  g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), FALSE);
+  return self->has_unread_threads;
+}
+
+void
+gnalk_conversation_data_mark_thread_read (GnalkConversationData *self,
+                                          gint64                 thread_id)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_DATA (self));
+
+  if (!self->threads_store)
+    return;
+
+  guint n = g_list_model_get_n_items (G_LIST_MODEL (self->threads_store));
+  gboolean any_unread = FALSE;
+
+  for (guint i = 0; i < n; i++)
+    {
+      GnalkThreadData *td = g_list_model_get_item (G_LIST_MODEL (self->threads_store), i);
+      if (gnalk_thread_data_get_thread_id (td) == thread_id)
+        gnalk_thread_data_set_has_unread (td, FALSE);
+      if (gnalk_thread_data_get_has_unread (td))
+        any_unread = TRUE;
+      g_object_unref (td);
+    }
+
+  if (self->has_unread_threads != any_unread)
+    {
+      self->has_unread_threads = any_unread;
+      g_signal_emit (self, signals[SIGNAL_UPDATED], 0);
+    }
 }
 
 gint64

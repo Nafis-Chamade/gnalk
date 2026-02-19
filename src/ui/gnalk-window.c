@@ -6,6 +6,7 @@
 #include "gnalk-conversation-info-dialog.h"
 #include "gnalk-conversation-row.h"
 #include "gnalk-conversation-data.h"
+#include "gnalk-thread-data.h"
 #include "gnalk-message-row.h"
 #include "gnalk-message-data.h"
 #include "gnalk-network-monitor.h"
@@ -1520,6 +1521,29 @@ gnalk_window_on_message_controller_sent (GnalkMessageController *controller G_GN
 
           /* UI update happens via notify from confirm_sent (status change) */
           g_debug ("Message confirmed sent via controller: ref=%s id=%ld", reference_id, message_id);
+
+          /* Update thread sidebar subtitle when sending in thread mode.
+           * Must read text/author before unreffing msg_data. */
+          if (self->current_room && self->current_room->in_thread_mode &&
+              self->current_room_conv_data)
+            {
+              const char *text = gnalk_message_data_get_message (msg_data);
+              const char *author = gnalk_message_data_get_author_name (msg_data);
+              GListStore *threads = gnalk_conversation_data_get_threads_store (self->current_room_conv_data);
+              guint nt = g_list_model_get_n_items (G_LIST_MODEL (threads));
+              for (guint t = 0; t < nt; t++)
+                {
+                  GnalkThreadData *td = g_list_model_get_item (G_LIST_MODEL (threads), t);
+                  if (gnalk_thread_data_get_thread_id (td) == self->current_room->thread_root_id)
+                    {
+                      gnalk_thread_data_update_last_message (td, message_id, text, author);
+                      g_object_unref (td);
+                      break;
+                    }
+                  g_object_unref (td);
+                }
+            }
+
           g_object_unref (msg_data);
 
           /* Check if any pending messages remain - if not, re-sort the list */
@@ -1860,6 +1884,7 @@ gnalk_window_finalize (GObject *object)
   /* These are always owned by the window */
   g_clear_object (&self->avatar_cache);
   g_clear_object (&self->webrtc);
+  g_clear_object (&self->conversations_tree_model);
   g_clear_object (&self->conversations_sort_model);
   g_clear_object (&self->conversations_sorter);
   g_clear_object (&self->conversations_store);
@@ -2252,14 +2277,19 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect_swapped (self->invitation_decline_button, "clicked",
                              G_CALLBACK (on_invitation_decline_clicked), self);
 
-  /* Conversation list - uses GtkSortListModel for incremental sorting */
+  /* Conversation list - uses GtkSortListModel + GtkTreeListModel for threads */
   self->conversations_sorter = gtk_custom_sorter_new (
       (GCompareDataFunc) gnalk_window_compare_conversations_by_activity, NULL, NULL);
   self->conversations_sort_model = gtk_sort_list_model_new (
       G_LIST_MODEL (g_object_ref (self->conversations_store)),
       GTK_SORTER (g_object_ref (self->conversations_sorter)));
+  self->conversations_tree_model = gtk_tree_list_model_new (
+      G_LIST_MODEL (g_object_ref (self->conversations_sort_model)),
+      FALSE,  /* passthrough = FALSE: factory gets GtkTreeListRow */
+      FALSE,  /* autoexpand = FALSE */
+      gnalk_window_create_conversation_children, self, NULL);
   GtkNoSelection *conv_selection = gtk_no_selection_new (
-      G_LIST_MODEL (g_object_ref (self->conversations_sort_model)));
+      G_LIST_MODEL (g_object_ref (self->conversations_tree_model)));
   GtkListItemFactory *conv_factory = gtk_signal_list_item_factory_new ();
   g_signal_connect (conv_factory, "setup", G_CALLBACK (gnalk_window_on_conv_list_item_setup), self);
   g_signal_connect (conv_factory, "bind", G_CALLBACK (gnalk_window_on_conv_list_item_bind), self);

@@ -31,6 +31,7 @@ data_sources = [
   'data/gnalk-database.c',
   'data/gnalk-conversation-data.c',
   'data/gnalk-message-data.c',
+  'data/gnalk-thread-data.c',
   'data/gnalk-account.c',
   'data/gnalk-account-manager.c',
   'data/gnalk-data-repository.c',
@@ -105,6 +106,7 @@ ui_sources = [
   'ui/gnalk-video-player.c',
   'ui/gnalk-video-player-dialog.c',
   'ui/gnalk-video-thumbnail.c',
+  'ui/gnalk-thread-row.c',
 ]
 
 core_sources = [

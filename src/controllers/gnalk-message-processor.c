@@ -587,7 +587,12 @@ load_messages_from_db_finish (GObject      *source_object,
               gint64 tid = gnalk_message_data_get_thread_id (data);
               const char *sys_msg = gnalk_message_data_get_system_message (data);
               gboolean is_thread_created = sys_msg && g_strcmp0 (sys_msg, "thread_created") == 0;
-              if (tid > 0 && !is_thread_created)
+              /* The API sets threadId == id for ALL messages (not just threads).
+               * Only filter when is_thread is true OR threadId != msg_id
+               * (actual thread content). Regular messages pass through. */
+              gboolean is_thread_msg = gnalk_message_data_get_is_thread (data);
+              if (tid > 0 && !is_thread_created
+                  && (is_thread_msg || msg_id != tid))
                 {
                   if (msg_id == tid)
                     {
@@ -679,6 +684,15 @@ load_messages_from_db_finish (GObject      *source_object,
   /* Track oldest loaded message for lazy loading */
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (store));
   GNALK_TRACE_MESSAGES ("load_messages_from_db_finish: store now has %u messages total", n_items);
+
+  /* All cached messages were thread replies / duplicates — fall back to server fetch */
+  if (n_items == 0)
+    {
+      g_message ("load_messages_from_db_finish: all %u cached messages filtered (thread replies), fetching from server", n_cached);
+      if (self->message_controller)
+        gnalk_message_controller_load_messages (self->message_controller);
+      return;
+    }
 
   if (n_items > 0)
     {
@@ -1061,10 +1075,10 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
   if (!self->current_room)
     return;
 
-  /* In context/thread mode, skip non-initial messages (poll responses).
-   * They are already saved to DB by the MC and will appear on restore. */
-  if ((self->current_room->in_context_mode || self->current_room->in_thread_mode)
-      && !is_initial_load)
+  /* In context mode, skip non-initial messages (poll responses).
+   * They are already saved to DB by the MC and will appear on restore.
+   * Thread mode uses per-message filtering below (current thread passes through). */
+  if (self->current_room->in_context_mode && !is_initial_load)
     return;
 
   const char *current_user = self->current_user_id;
@@ -1094,6 +1108,15 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
       gint64 msg_id = json_object_get_int_member_with_default (msg, "id", 0);
       if (msg_id > max_id)
         max_id = msg_id;
+
+      /* In thread mode for non-initial loads, only process messages belonging
+       * to the current thread.  Other messages are saved to DB by the MC. */
+      if (self->current_room->in_thread_mode && !is_initial_load)
+        {
+          gint64 msg_thread_id = json_object_get_int_member_with_default (msg, "threadId", 0);
+          if (msg_thread_id != self->current_room->thread_root_id)
+            continue;
+        }
 
       /* Check if this is a reaction message */
       const char *system_message = json_object_get_string_member_with_default (msg, "systemMessage", "");
@@ -1303,13 +1326,17 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
             {
               /* Filter thread replies and roots from main timeline.
                * Keep only thread_created system msgs as visible entry point.
-               * In thread mode, keep all messages. */
+               * In thread mode, keep all messages.
+               * Note: the API sets threadId == id for ALL messages (not just threads).
+               * Only filter when isThread is true OR threadId != msg_id (actual thread content). */
               gint64 json_thread_id = json_object_get_int_member_with_default (msg, "threadId", 0);
               const char *json_sys_msg = json_object_get_string_member_with_default (msg, "systemMessage", "");
               gboolean json_is_thread_created = g_strcmp0 (json_sys_msg, "thread_created") == 0;
+              gboolean json_is_thread = json_object_get_boolean_member_with_default (msg, "isThread", FALSE);
               if (json_thread_id > 0
                   && !self->current_room->in_thread_mode
-                  && !json_is_thread_created)
+                  && !json_is_thread_created
+                  && (json_is_thread || msg_id != json_thread_id))
                 {
                   if (msg_id == json_thread_id)
                     {

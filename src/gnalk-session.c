@@ -85,6 +85,7 @@ struct _GnalkSession
   gulong signaling_room_disinvited_handler_id;
   gulong signaling_chat_message_handler_id;
   gulong sync_room_messages_synced_handler_id;
+  gulong sync_threads_synced_handler_id;
   gulong sync_finished_handler_id;
 };
 
@@ -106,6 +107,7 @@ enum {
   SIGNAL_CALL_ENDED,
   SIGNAL_ROOM_DISINVITED,
   SIGNAL_ROOM_MESSAGES_SYNCED,
+  SIGNAL_THREADS_SYNCED,
   N_SIGNALS
 };
 
@@ -273,6 +275,11 @@ gnalk_session_class_init (GnalkSessionClass *klass)
     g_signal_new ("room-messages-synced", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL, G_TYPE_NONE, 2,
                   G_TYPE_STRING, G_TYPE_UINT);
+
+  signals[SIGNAL_THREADS_SYNCED] =
+    g_signal_new ("threads-synced", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL, G_TYPE_NONE, 1,
+                  JSON_TYPE_ARRAY);
 }
 
 static void
@@ -438,6 +445,14 @@ on_sync_coordinator_room_messages_synced (GnalkSyncCoordinator *coordinator G_GN
                                          GnalkSession         *self)
 {
   g_signal_emit (self, signals[SIGNAL_ROOM_MESSAGES_SYNCED], 0, room_token, count);
+}
+
+static void
+on_sync_coordinator_threads_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
+                                    JsonArray            *thread_infos,
+                                    GnalkSession         *self)
+{
+  g_signal_emit (self, signals[SIGNAL_THREADS_SYNCED], 0, thread_infos);
 }
 
 /* Re-fetch federation invitations after each successful sync */
@@ -660,6 +675,10 @@ set_state (GnalkSession *self, GnalkSessionState new_state)
           self->sync_room_messages_synced_handler_id =
             g_signal_connect (self->sync_coordinator, "room-messages-synced",
                               G_CALLBACK (on_sync_coordinator_room_messages_synced), self);
+          /* Relay threads-synced to window */
+          self->sync_threads_synced_handler_id =
+            g_signal_connect (self->sync_coordinator, "threads-synced",
+                              G_CALLBACK (on_sync_coordinator_threads_synced), self);
           /* Re-fetch invitations after each sync */
           self->sync_finished_handler_id =
             g_signal_connect (self->sync_coordinator, "sync-finished",
@@ -673,6 +692,7 @@ set_state (GnalkSession *self, GnalkSessionState new_state)
           gnalk_sync_coordinator_set_account (self->sync_coordinator,
                                               gnalk_account_get_id (self->account),
                                               gnalk_account_get_user_id (self->account));
+          gnalk_sync_coordinator_set_has_threads (self->sync_coordinator, self->has_threads);
           gnalk_sync_coordinator_start_periodic_sync (self->sync_coordinator);
 
           /* Trigger initial sync on connect/reconnect */

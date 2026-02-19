@@ -85,6 +85,9 @@ struct _GnalkMessageRow
   gulong             unread_handler_id;
 
   /* Thread support */
+  GtkWidget *thread_box;
+  GtkWidget *thread_title_label;
+  GtkWidget *thread_description_label;
   GtkWidget *thread_button;
   GtkWidget *thread_label;
   GtkWidget *start_thread_button;  /* In context menu */
@@ -212,15 +215,37 @@ on_bound_data_notify (GObject    *data_obj,
     }
   else if (g_strcmp0 (name, "thread-replies") == 0)
     {
-      gint replies = gnalk_message_data_get_thread_replies (data);
-      if (gnalk_message_data_get_is_thread (data))
+      const char *sm = gnalk_message_data_get_system_message (data);
+      gboolean is_tc = sm && g_strcmp0 (sm, "thread_created") == 0;
+      gboolean is_entry = is_tc && gnalk_message_data_get_is_thread (data);
+      if (is_entry)
         {
+          gint replies = gnalk_message_data_get_thread_replies (data);
           g_autofree char *label = NULL;
           if (replies > 0)
-            label = g_strdup_printf (ngettext ("%d reply", "%d replies", replies), replies);
+            label = g_strdup_printf (ngettext ("View thread (%d reply)",
+                                               "View thread (%d replies)", replies), replies);
           else
-            label = g_strdup (_("Reply in thread"));
+            label = g_strdup (_("View thread"));
           gtk_label_set_text (GTK_LABEL (self->thread_label), label);
+
+          /* Show thread title if available */
+          const char *thread_title = gnalk_message_data_get_thread_title (data);
+          if (thread_title && *thread_title)
+            {
+              gtk_label_set_text (GTK_LABEL (self->thread_title_label), thread_title);
+              gtk_widget_set_visible (self->thread_title_label, TRUE);
+            }
+
+          /* Show thread description (first message text) */
+          const char *msg_text = gnalk_message_data_get_thread_first_message (data);
+          if (msg_text && *msg_text)
+            {
+              gtk_label_set_text (GTK_LABEL (self->thread_description_label), msg_text);
+              gtk_widget_set_visible (self->thread_description_label, TRUE);
+            }
+
+          gtk_widget_set_visible (self->thread_box, TRUE);
         }
     }
 }
@@ -237,6 +262,7 @@ set_content_alignment (GnalkMessageRow *self, GtkAlign align)
   gtk_widget_set_halign (self->audio_player, align);
   gtk_widget_set_halign (self->video_thumbnail, align);
   gtk_widget_set_halign (self->footer_box, align);
+  gtk_widget_set_halign (self->thread_box, align);
 }
 
 /* Apply layout based on message type (system/self/other) and display mode */
@@ -458,6 +484,9 @@ gnalk_message_row_class_init (GnalkMessageRowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, date_separator);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, footer_box);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, status_icon);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, thread_box);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, thread_title_label);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, thread_description_label);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, thread_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, thread_label);
 
@@ -2071,26 +2100,69 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       gtk_widget_set_visible (self->message_bubble, TRUE);
     }
 
-  /* Thread button: show on actual thread root (id == thread_id) or on
-   * thread_created system messages (they serve as the visible entry point). */
-  gint64 msg_thread_id = gnalk_message_data_get_thread_id (data);
-  gboolean is_thread_entry = gnalk_message_data_get_is_thread (data)
-                              && msg_thread_id > 0
-                              && gnalk_message_data_get_id (data) == msg_thread_id;
+  /* Thread entry: show only on thread_created system messages.
+   * Thread roots are filtered from the store by the processor. */
+  const char *sys_msg_str = gnalk_message_data_get_system_message (data);
+  gboolean is_thread_created_msg = sys_msg_str && g_strcmp0 (sys_msg_str, "thread_created") == 0;
+  gboolean is_thread_entry = is_thread_created_msg && gnalk_message_data_get_is_thread (data);
   if (is_thread_entry)
     {
       gint replies = gnalk_message_data_get_thread_replies (data);
       g_autofree char *label = NULL;
       if (replies > 0)
-        label = g_strdup_printf (ngettext ("%d reply", "%d replies", replies), replies);
+        label = g_strdup_printf (ngettext ("View thread (%d reply)",
+                                           "View thread (%d replies)", replies), replies);
       else
-        label = g_strdup (_("Reply in thread"));
+        label = g_strdup (_("View thread"));
       gtk_label_set_text (GTK_LABEL (self->thread_label), label);
-      gtk_widget_set_visible (self->thread_button, TRUE);
+
+      /* Title: "You created thread {title}" or "{name} created thread {title}" */
+      const char *thread_title = gnalk_message_data_get_thread_title (data);
+      if (thread_title && *thread_title)
+        {
+          g_autofree char *escaped_title = g_markup_escape_text (thread_title, -1);
+          g_autofree char *title_markup = NULL;
+          if (self->is_self)
+            title_markup = g_strdup_printf (_("You created thread <b>%s</b>"), escaped_title);
+          else
+            {
+              const char *name = gnalk_message_data_get_author_name (data);
+              g_autofree char *escaped_name = g_markup_escape_text (name ? name : "", -1);
+              title_markup = g_strdup_printf (_("%s created thread <b>%s</b>"), escaped_name, escaped_title);
+            }
+          gtk_label_set_markup (GTK_LABEL (self->thread_title_label), title_markup);
+          gtk_widget_set_visible (self->thread_title_label, TRUE);
+        }
+      else
+        {
+          gtk_widget_set_visible (self->thread_title_label, FALSE);
+        }
+
+      /* Show first message as description */
+      const char *first_msg = gnalk_message_data_get_thread_first_message (data);
+      if (first_msg && *first_msg)
+        {
+          gtk_label_set_text (GTK_LABEL (self->thread_description_label), first_msg);
+          gtk_widget_set_visible (self->thread_description_label, TRUE);
+        }
+      else
+        {
+          gtk_widget_set_visible (self->thread_description_label, FALSE);
+        }
+
+      gtk_widget_set_visible (self->thread_box, TRUE);
+
+      /* Hide the message bubble — the thread entry widget replaces the
+       * "{actor} started a thread" system text. */
+      gtk_widget_set_visible (self->message_bubble, FALSE);
+
+      /* Add CSS class to override system message transparency */
+      gtk_widget_add_css_class (GTK_WIDGET (self), "thread-created-row");
     }
   else
     {
-      gtk_widget_set_visible (self->thread_button, FALSE);
+      gtk_widget_set_visible (self->thread_box, FALSE);
+      gtk_widget_remove_css_class (GTK_WIDGET (self), "thread-created-row");
     }
 
   /* Connect to data's property changes for live updates */
@@ -2145,6 +2217,7 @@ gnalk_message_row_reset (GnalkMessageRow *self)
   gtk_widget_remove_css_class (GTK_WIDGET (self), "message-other");
   gtk_widget_remove_css_class (GTK_WIDGET (self), "message-system");
   gtk_widget_remove_css_class (GTK_WIDGET (self), "message-grouped");
+  gtk_widget_remove_css_class (GTK_WIDGET (self), "thread-created-row");
   gtk_widget_remove_css_class (self->message_label, "message-emoji-only");
 
   /* Reset timestamp visibility */
@@ -2156,8 +2229,10 @@ gnalk_message_row_reset (GnalkMessageRow *self)
   gtk_widget_set_visible (GTK_WIDGET (self->date_separator), FALSE);
   gtk_widget_set_visible (self->status_icon, FALSE);
 
-  /* Reset thread button */
-  gtk_widget_set_visible (self->thread_button, FALSE);
+  /* Reset thread entry */
+  gtk_widget_set_visible (self->thread_box, FALSE);
+  gtk_widget_set_visible (self->thread_title_label, FALSE);
+  gtk_widget_set_visible (self->thread_description_label, FALSE);
 
   /* Reset file preview widget */
   gnalk_file_preview_reset (self->file_preview);

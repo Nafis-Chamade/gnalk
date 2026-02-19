@@ -40,6 +40,12 @@ struct _GnalkConversationRow
   gboolean can_delete;
   gboolean last_message_is_own;
 
+  /* Thread expand state */
+  GtkWidget *expand_button;
+  gboolean   expandable;
+  gboolean   expanded;
+  gboolean   has_unread_threads;
+
   /* Bound data for in-place updates */
   GnalkConversationData *bound_data;
   gulong                  updated_handler_id;
@@ -61,6 +67,7 @@ enum {
   SIGNAL_LEAVE_REQUESTED,
   SIGNAL_DELETE_REQUESTED,
   SIGNAL_FAVORITE_TOGGLED,
+  SIGNAL_EXPAND_TOGGLED,
   N_SIGNALS
 };
 
@@ -185,6 +192,13 @@ gnalk_conversation_row_class_init (GnalkConversationRowClass *klass)
                   0, NULL, NULL, NULL,
                   G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_BOOLEAN);
 
+  signals[SIGNAL_EXPAND_TOGGLED] =
+    g_signal_new ("expand-toggled",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 0);
+
   gtk_widget_class_set_template_from_resource (widget_class,
                                                 "/net/skilpa/gnalk/gnalk-conversation-row.ui");
   gtk_widget_class_bind_template_child (widget_class, GnalkConversationRow, avatar);
@@ -273,6 +287,15 @@ on_data_updated (GnalkConversationData *data,
   /* Update federation indicator */
   gtk_widget_set_visible (self->federation_icon,
                           gnalk_conversation_data_is_federated (data));
+
+  /* Update thread expand state */
+  {
+    GListStore *threads = gnalk_conversation_data_get_threads_store (data);
+    gboolean expandable = g_list_model_get_n_items (G_LIST_MODEL (threads)) > 0;
+    gnalk_conversation_row_set_expandable (self, expandable);
+    gnalk_conversation_row_set_has_unread_threads (self,
+        gnalk_conversation_data_get_has_unread_threads (data));
+  }
 
   /* Re-fetch room avatar (cache-hit is fast; actual fetch only after invalidation) */
   if (self->avatar_cache && self->token && self->room_type != 1)
@@ -418,9 +441,26 @@ on_long_press (GtkGestureLongPress *gesture,
 }
 
 static void
+on_expand_clicked (GtkButton *button, GnalkConversationRow *self)
+{
+  (void) button;
+  g_signal_emit (self, signals[SIGNAL_EXPAND_TOGGLED], 0);
+}
+
+static void
 gnalk_conversation_row_init (GnalkConversationRow *self)
 {
   gtk_widget_init_template (GTK_WIDGET (self));
+
+  /* Create expand/collapse button for thread tree */
+  self->expand_button = gtk_button_new_from_icon_name ("pan-end-symbolic");
+  gtk_button_set_has_frame (GTK_BUTTON (self->expand_button), FALSE);
+  gtk_widget_add_css_class (self->expand_button, "flat");
+  gtk_widget_add_css_class (self->expand_button, "expand-button");
+  gtk_widget_set_valign (self->expand_button, GTK_ALIGN_CENTER);
+  gtk_widget_set_visible (self->expand_button, FALSE);
+  g_signal_connect (self->expand_button, "clicked", G_CALLBACK (on_expand_clicked), self);
+  gtk_box_append (GTK_BOX (self), self->expand_button);
 
   /* Create context menu popover */
   self->context_popover = gtk_popover_new ();
@@ -795,5 +835,66 @@ gnalk_conversation_row_reset (GnalkConversationRow *self)
   gtk_widget_set_visible (self->federation_icon, FALSE);
   gtk_widget_remove_css_class (GTK_WIDGET (self), "conversation-unread");
   gtk_widget_remove_css_class (GTK_WIDGET (self), "conversation-active");
+  gtk_widget_remove_css_class (GTK_WIDGET (self), "thread-unread-indicator");
   gtk_image_set_from_icon_name (GTK_IMAGE (self->avatar), "avatar-default-symbolic");
+
+  /* Reset expand state */
+  self->expandable = FALSE;
+  self->expanded = FALSE;
+  self->has_unread_threads = FALSE;
+  gtk_widget_set_visible (self->expand_button, FALSE);
+}
+
+void
+gnalk_conversation_row_set_expandable (GnalkConversationRow *self,
+                                       gboolean              expandable)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_ROW (self));
+
+  if (self->expandable == expandable)
+    return;
+
+  self->expandable = expandable;
+  gtk_widget_set_visible (self->expand_button, expandable);
+}
+
+void
+gnalk_conversation_row_set_expanded (GnalkConversationRow *self,
+                                     gboolean              expanded)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_ROW (self));
+
+  if (self->expanded == expanded)
+    return;
+
+  self->expanded = expanded;
+
+  if (expanded)
+    gtk_button_set_icon_name (GTK_BUTTON (self->expand_button), "pan-down-symbolic");
+  else
+    gtk_button_set_icon_name (GTK_BUTTON (self->expand_button), "pan-end-symbolic");
+
+  /* Update unread indicator: show only when collapsed + has_unread_threads */
+  if (self->has_unread_threads && !expanded)
+    gtk_widget_add_css_class (GTK_WIDGET (self), "thread-unread-indicator");
+  else
+    gtk_widget_remove_css_class (GTK_WIDGET (self), "thread-unread-indicator");
+}
+
+void
+gnalk_conversation_row_set_has_unread_threads (GnalkConversationRow *self,
+                                                gboolean              has_unread)
+{
+  g_return_if_fail (GNALK_IS_CONVERSATION_ROW (self));
+
+  if (self->has_unread_threads == has_unread)
+    return;
+
+  self->has_unread_threads = has_unread;
+
+  /* Show unread indicator only when collapsed + has unread */
+  if (has_unread && !self->expanded)
+    gtk_widget_add_css_class (GTK_WIDGET (self), "thread-unread-indicator");
+  else
+    gtk_widget_remove_css_class (GTK_WIDGET (self), "thread-unread-indicator");
 }

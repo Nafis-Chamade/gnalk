@@ -1998,7 +1998,6 @@ gnalk_message_controller_create_thread (GnalkMessageController *self,
   gnalk_http_client_create_thread (self->http_client,
                                     self->room_token,
                                     message,
-                                    0,  /* replyTo must be 0 for thread creation */
                                     thread_title,
                                     reference_id,
                                     on_create_thread_response,

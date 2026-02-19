@@ -289,7 +289,6 @@ void gnalk_http_client_send_thread_message (GnalkHttpClient  *self,
 void gnalk_http_client_create_thread (GnalkHttpClient  *self,
                                       const char       *room_token,
                                       const char       *message,
-                                      gint64            reply_to,
                                       const char       *thread_title,
                                       const char       *reference_id,
                                       GnalkHttpCallback callback,
@@ -434,6 +433,13 @@ void gnalk_http_client_leave_call_federation (GnalkHttpClient   *self,
                                               const char         *room_token,
                                               GnalkHttpCallback  callback,
                                               gpointer            user_data);
+
+/* Subscribed threads (all rooms) */
+void gnalk_http_client_get_subscribed_threads (GnalkHttpClient  *self,
+                                               gint              limit,
+                                               gint              offset,
+                                               GnalkHttpCallback callback,
+                                               gpointer          user_data);
 
 /* Federation invitation API */
 void gnalk_http_client_get_federation_invitations (GnalkHttpClient   *self,

@@ -8,6 +8,7 @@
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
 #include "gnalk-conversation-data.h"
+#include "gnalk-thread-data.h"
 #include "gnalk-log.h"
 #include "gnalk-room-controller.h"
 #include "gnalk-session.h"
@@ -271,7 +272,7 @@ gnalk_window_on_room_controller_room_closed (GnalkRoomController *ctrl,
   if (self->current_room && self->current_room->in_thread_mode)
     {
       gnalk_message_processor_restore_from_thread (self->message_processor);
-      gnalk_message_view_set_thread_mode (self->message_view, FALSE);
+      gnalk_message_view_set_thread_mode (self->message_view, FALSE, NULL, NULL);
     }
   if (self->current_room && self->current_room->in_context_mode)
     {
@@ -457,6 +458,23 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
       self->pending_call_with_video = -1;
       gnalk_window_start_call (self, with_video);
     }
+
+  /* If we navigated here to open a thread, enter thread mode now */
+  if (self->pending_thread_id > 0)
+    {
+      gint64 tid = self->pending_thread_id;
+      self->pending_thread_id = 0;
+
+      /* Set thread mode early so poll responses are skipped while HTTP is in flight */
+      if (self->current_room)
+        {
+          self->current_room->in_thread_mode = TRUE;
+          self->current_room->thread_root_id = tid;
+        }
+
+      if (self->message_controller)
+        gnalk_message_controller_load_thread (self->message_controller, tid);
+    }
 }
 
 /**
@@ -483,16 +501,62 @@ gnalk_window_on_sidebar_conversation_selected (GnalkConversationSidebar *sidebar
                                                  GnalkWindow              *self)
 {
   (void) sidebar;
-  GnalkConversationData *data = g_list_model_get_item (G_LIST_MODEL (self->conversations_sort_model), position);
+  GtkTreeListRow *tree_row = g_list_model_get_item (
+      G_LIST_MODEL (self->conversations_tree_model), position);
 
-  if (!data)
+  if (!tree_row)
     return;
 
-  const char *token = gnalk_conversation_data_get_token (data);
-  g_object_unref (data);
+  gpointer real_item = gtk_tree_list_row_get_item (tree_row);
+  guint depth = gtk_tree_list_row_get_depth (tree_row);
 
-  /* Delegate debounced open to the room controller */
-  gnalk_room_controller_open_room_debounced (self->room_controller, token);
+  if (depth == 1 && GNALK_IS_THREAD_DATA (real_item))
+    {
+      /* Thread row clicked - open the parent conversation and enter thread mode */
+      GnalkThreadData *thread = GNALK_THREAD_DATA (real_item);
+      const char *token = gnalk_thread_data_get_room_token (thread);
+      gint64 thread_id = gnalk_thread_data_get_thread_id (thread);
+
+      /* Check if we're already in this room */
+      if (self->current_room && g_strcmp0 (token, self->current_room->room_token) == 0)
+        {
+          /* Set thread mode early so poll responses are skipped while HTTP is in flight */
+          self->current_room->in_thread_mode = TRUE;
+          self->current_room->thread_root_id = thread_id;
+
+          /* Already in the room - load thread messages */
+          if (self->message_controller)
+            gnalk_message_controller_load_thread (self->message_controller, thread_id);
+        }
+      else
+        {
+          /* Store pending thread and open the room */
+          self->pending_thread_id = thread_id;
+          gnalk_room_controller_open_room_debounced (self->room_controller, token);
+        }
+    }
+  else if (GNALK_IS_CONVERSATION_DATA (real_item))
+    {
+      GnalkConversationData *data = GNALK_CONVERSATION_DATA (real_item);
+      const char *token = gnalk_conversation_data_get_token (data);
+
+      /* If already in this room and in thread mode, exit thread mode */
+      if (self->current_room &&
+          g_strcmp0 (token, self->current_room->room_token) == 0 &&
+          self->current_room->in_thread_mode)
+        {
+          gnalk_message_processor_restore_from_thread (self->message_processor);
+          gnalk_message_view_set_thread_mode (self->message_view, FALSE, NULL, NULL);
+        }
+      else
+        {
+          /* Delegate debounced open to the room controller */
+          gnalk_room_controller_open_room_debounced (self->room_controller, token);
+        }
+    }
+
+  g_object_unref (real_item);
+  g_object_unref (tree_row);
 }
 
 /* ============ Content Page Hiding (Leave Room) ============ */

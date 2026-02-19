@@ -54,7 +54,8 @@ GnalkMessageData *gnalk_message_data_new_from_db (gint64                   id,
                                                      const char              *actor_type,
                                                      gint64                   thread_id,
                                                      gboolean                 is_thread,
-                                                     gint                     thread_replies);
+                                                     gint                     thread_replies,
+                                                     const char              *thread_title);
 
 /* Serialization for database storage */
 char *gnalk_message_data_serialize_reactions   (GnalkMessageData *self);
@@ -147,5 +148,13 @@ gboolean     gnalk_message_data_get_is_thread       (GnalkMessageData *self);
 gint         gnalk_message_data_get_thread_replies   (GnalkMessageData *self);
 void         gnalk_message_data_set_thread_replies   (GnalkMessageData *self,
                                                         gint               replies);
+const char  *gnalk_message_data_get_thread_title    (GnalkMessageData *self);
+void         gnalk_message_data_set_thread_title    (GnalkMessageData *self,
+                                                        const char        *title);
+const char  *gnalk_message_data_get_thread_first_message (GnalkMessageData *self);
+void         gnalk_message_data_set_thread_first_message (GnalkMessageData *self,
+                                                             const char        *message);
+void         gnalk_message_data_mark_as_thread      (GnalkMessageData *self,
+                                                        gint64             thread_id);
 
 G_END_DECLS

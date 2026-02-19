@@ -172,7 +172,9 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
 {
   /* Disconnect from old session and controllers */
   if (self->active_session)
-    disconnect_session_signals (self, self->active_session);
+    {
+      disconnect_session_signals (self, self->active_session);
+    }
   disconnect_controller_signals (self);
 
   self->active_session = session;
@@ -202,6 +204,10 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   /* Connect to session's controllers */
   connect_controller_signals (self, session);
 
+  /* Connect to session's threads-synced relay signal */
+  g_signal_connect (session, "threads-synced",
+                    G_CALLBACK (gnalk_window_on_threads_synced), self);
+
   /* Reset session_ready - new session's POST /participants/active hasn't happened yet */
   if (self->message_controller)
     gnalk_message_controller_set_session_ready (self->message_controller, FALSE);
@@ -228,7 +234,7 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
         self->cached_delete_timeout = gnalk_application_get_chat_delete_timeout (app);
       }
 
-    /* Cache thread capability */
+    /* Cache thread capability (coordinator gets it from session in set_state) */
     self->cached_has_threads = gnalk_session_has_threads (session);
   }
 

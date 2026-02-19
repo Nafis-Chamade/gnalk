@@ -1,7 +1,11 @@
 #pragma once
 
 #include <glib-object.h>
+#include <gio/gio.h>
 #include <json-glib/json-glib.h>
+
+/* Forward declarations */
+typedef struct _GnalkThreadData GnalkThreadData;
 
 G_BEGIN_DECLS
 
@@ -90,6 +94,14 @@ char *gnalk_conversation_data_get_last_message_params_json (GnalkConversationDat
 GnalkSession *gnalk_conversation_data_get_session (GnalkConversationData *self);
 void           gnalk_conversation_data_set_session (GnalkConversationData *self,
                                                       GnalkSession          *session);
+
+/* Thread sub-list for conversation sidebar tree */
+GListStore *gnalk_conversation_data_get_threads_store      (GnalkConversationData *self);
+void         gnalk_conversation_data_set_threads            (GnalkConversationData *self,
+                                                             GPtrArray             *thread_datas);
+gboolean     gnalk_conversation_data_get_has_unread_threads (GnalkConversationData *self);
+void         gnalk_conversation_data_mark_thread_read      (GnalkConversationData *self,
+                                                             gint64                 thread_id);
 
 /* Set title in-place (emits "updated" signal if changed) */
 void gnalk_conversation_data_set_title (GnalkConversationData *self,

@@ -33,4 +33,8 @@ gint64 gnalk_conversation_row_get_last_activity (GnalkConversationRow *self);
 gint64 gnalk_conversation_row_get_last_common_read_message (GnalkConversationRow *self);
 void gnalk_conversation_row_set_active (GnalkConversationRow *self, gboolean active);
 
+void gnalk_conversation_row_set_expandable         (GnalkConversationRow *self, gboolean expandable);
+void gnalk_conversation_row_set_expanded            (GnalkConversationRow *self, gboolean expanded);
+void gnalk_conversation_row_set_has_unread_threads  (GnalkConversationRow *self, gboolean has_unread);
+
 G_END_DECLS

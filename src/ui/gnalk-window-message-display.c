@@ -22,6 +22,9 @@
 #include "gnalk-participant-controller.h"
 #include "gnalk-incoming-call-banner.h"
 #include "gnalk-message-row.h"
+#include "gnalk-conversation-data.h"
+#include "gnalk-thread-data.h"
+#include "gnalk-http-client.h"
 #include "gnalk-log.h"
 #include <adwaita.h>
 #include <json-glib/json-glib.h>
@@ -213,9 +216,23 @@ gnalk_window_on_processor_state_synced (GnalkMessageProcessor *proc G_GNUC_UNUSE
 void
 gnalk_window_on_message_controller_messages_loaded (GnalkMessageController *controller G_GNUC_UNUSED,
                                                       JsonArray               *messages,
-                                                      gboolean                 is_initial G_GNUC_UNUSED,
+                                                      gboolean                 is_initial,
                                                       GnalkWindow            *self)
 {
+  /* In context mode, non-initial loads (HPB refresh) are already saved
+   * to DB by the MC. Skip display — they'll appear when restoring. */
+  if (!is_initial && self->current_room && self->current_room->in_context_mode)
+    return;
+
+  /* In thread mode, non-initial loads: pass to processor with is_initial=FALSE
+   * so per-message threadId filtering keeps only current-thread messages. */
+  if (!is_initial && self->current_room && self->current_room->in_thread_mode)
+    {
+      gnalk_message_processor_process_json (self->message_processor, messages, FALSE,
+                                              gnalk_message_view_is_at_bottom (self->message_view));
+      return;
+    }
+
   gnalk_message_processor_process_json (self->message_processor, messages, TRUE,
                                           gnalk_message_view_is_at_bottom (self->message_view));
 
@@ -286,6 +303,11 @@ gnalk_window_on_message_controller_older_messages_loaded (GnalkMessageController
                                                             gboolean                 has_more,
                                                             GnalkWindow            *self)
 {
+  /* Skip stale main-timeline older-messages responses that arrive after entering thread/context mode */
+  if (self->current_room &&
+      (self->current_room->in_thread_mode || self->current_room->in_context_mode))
+    return;
+
   gnalk_message_processor_process_older_from_server (self->message_processor, messages, has_more);
 }
 
@@ -340,7 +362,7 @@ gnalk_window_on_thread_open_requested (GnalkMessageRow *row G_GNUC_UNUSED,
   if (self->current_room->in_thread_mode)
     {
       gnalk_message_processor_restore_from_thread (self->message_processor);
-      gnalk_message_view_set_thread_mode (self->message_view, FALSE);
+      gnalk_message_view_set_thread_mode (self->message_view, FALSE, NULL, NULL);
     }
 
   /* Load thread messages from server */
@@ -417,7 +439,42 @@ gnalk_window_on_thread_messages_loaded (GnalkMessageController *mc G_GNUC_UNUSED
                                         GnalkWindow            *self)
 {
   gnalk_message_processor_load_thread (self->message_processor, messages, thread_id);
-  gnalk_message_view_set_thread_mode (self->message_view, TRUE);
+
+  /* Extract title and first message from thread for the banner */
+  const char *title = NULL;
+  const char *description = NULL;
+  if (json_array_get_length (messages) > 0)
+    {
+      JsonObject *root = json_array_get_object_element (messages, 0);
+      title = json_object_get_string_member_with_default (root, "threadTitle", NULL);
+      description = json_object_get_string_member_with_default (root, "message", NULL);
+    }
+
+  gnalk_message_view_set_thread_mode (self->message_view, TRUE, title, description);
+
+  /* Clear unread state for this thread in the sidebar */
+  if (self->current_room_conv_data)
+    gnalk_conversation_data_mark_thread_read (self->current_room_conv_data, thread_id);
+
+  /* Mark thread messages as read on the server.
+   * Thread messages contribute to the room's unread count, so we need to
+   * call mark_chat_read with the highest thread message ID.
+   * Use mark_messages_read_up_to which updates the conversation data locally
+   * from the server response (avoids waiting for next sync cycle). */
+  if (self->current_room)
+    {
+      guint n = json_array_get_length (messages);
+      gint64 highest_id = 0;
+      for (guint i = 0; i < n; i++)
+        {
+          JsonObject *msg = json_array_get_object_element (messages, i);
+          gint64 mid = json_object_get_int_member_with_default (msg, "id", 0);
+          if (mid > highest_id)
+            highest_id = mid;
+        }
+      if (highest_id > 0)
+        gnalk_window_mark_messages_read_up_to (self, highest_id);
+    }
 }
 
 void
@@ -434,5 +491,5 @@ gnalk_window_on_exit_thread (GnalkMessageView *view G_GNUC_UNUSED,
                              GnalkWindow      *self)
 {
   gnalk_message_processor_restore_from_thread (self->message_processor);
-  gnalk_message_view_set_thread_mode (self->message_view, FALSE);
+  gnalk_message_view_set_thread_mode (self->message_view, FALSE, NULL, NULL);
 }
