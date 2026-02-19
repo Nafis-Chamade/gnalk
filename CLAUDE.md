@@ -80,7 +80,7 @@ src/
 
 **Cache-first**: Window loads from DB immediately, controllers sync in background, emit signals only when data changed.
 
-**Session facade**: Each Session owns its controllers (MC, CC, PC) and relays their signals. Window connects to ~11 Session signals + controller signals via getters. At account switch, only Session signals need reconnection.
+**Session facade**: Each Session owns its controllers (MC, CC, PC) and relays their signals. Window connects to ~11 Session signals + controller signals via getters. At account switch, only Session signals need reconnection. Session parses `spreed.config.federation.outgoing-enabled` from capabilities to gate federated features.
 
 **MessageProcessor**: Owns message store manipulation (insert, update, sort). Pre-computes display flags (show_date_header, show_timestamp, show_avatar). Maintains hash table indexes for O(1) lookups (msg_index by ID, ref_index by reference_id).
 
@@ -123,3 +123,4 @@ src/
 - Window partials share `gnalk-window-private.h` (minimal includes + forward declares, each .c adds its own)
 - Hash table indexes in MessageProcessor for O(1) message lookups
 - `g_signal_connect_object()` in factory setup for auto-disconnect safety
+- Federated user search: `shareTypes[]=6` in autocomplete, remote avatars via unauthenticated SoupSession, group conversation creation (roomType=2) with deduplication

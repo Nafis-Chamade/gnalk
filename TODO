@@ -5,5 +5,3 @@
 ## Federated server avatar ?
 
 Vérifier (en ligne si nécessaire) si les instances nextcloud ont des avatars (=logo). Si oui, dans la bannière des participants d'une conversation, l'utiliser pour indiquer qu'un participant appartient à un autre serveur, plutot que le nom du serveur (y'a pas assez de place). L'afficher dans la dialog profile aussi (uniquement pour les participants externes).
-
-

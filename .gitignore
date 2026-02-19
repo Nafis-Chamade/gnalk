@@ -20,6 +20,7 @@ subprojects/
 # Generated files
 compile_commands.json
 data/gschemas.compiled
+*.mo
 
 # Tool configs
 .cache/
