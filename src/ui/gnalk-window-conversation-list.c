@@ -12,6 +12,9 @@
 #include "gnalk-database.h"
 #include "gnalk-data-repository.h"
 #include "gnalk-sync-coordinator.h"
+#include "gnalk-room-controller.h"
+#include "gnalk-room-tab-manager.h"
+#include "gnalk-message-processor.h"
 #include "gnalk-conversation-row.h"
 #include "gnalk-conversation-sidebar.h"
 #include "gnalk-thread-row.h"
@@ -1104,19 +1107,30 @@ gnalk_window_on_conversation_controller_created (GnalkConversationController *co
   gnalk_window_open_conversation_by_token (self, room_token);
 }
 
-/* Called when user leaves a conversation */
-void
-gnalk_window_on_conversation_controller_left (GnalkConversationController *controller G_GNUC_UNUSED,
-                                               const char                   *room_token,
-                                               GnalkWindow                 *self)
+/**
+ * close_and_clear_room:
+ *
+ * Common logic for leave/delete: properly close the room via the controller
+ * (saves messages, leaves signaling/HTTP, stops polling), clear window state,
+ * remove the stale tab, and navigate back to the sidebar in mobile mode.
+ */
+static void
+close_and_clear_room (GnalkWindow *self, const char *room_token)
 {
-  g_debug ("Window: Left conversation: %s", room_token);
-
-  /* If this was the current room, clear the view */
   if (self->current_room && g_strcmp0 (room_token, self->current_room->room_token) == 0)
     {
       g_autofree char *old_token = g_strdup (self->current_room->room_token);
+
+      /* Close via controller: backgrounds tab, emits room-closed (saves messages,
+       * restores thread/context mode, clears typing/read tracking), stops participant
+       * polling, leaves signaling/HTTP, clears controller state. */
+      if (self->room_controller)
+        gnalk_room_controller_close_current (self->room_controller);
+
+      /* Clear window-side state */
       self->current_room = NULL;
+      gnalk_message_processor_set_room_state (self->message_processor, NULL);
+      gnalk_window_clear_messages_store (self);
       self->has_active_room = FALSE;
       g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
       gnalk_message_view_show_empty (self->message_view);
@@ -1124,8 +1138,24 @@ gnalk_window_on_conversation_controller_left (GnalkConversationController *contr
 
       /* Update conversation row highlight */
       gnalk_window_update_conversation_active_states (self, old_token, NULL);
+
+      /* Navigate back to sidebar in collapsed/mobile mode */
+      adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), FALSE);
     }
-  /* DataRepository::data-changed handles the reload (controller deletes via repository) */
+
+  /* Remove the stale tab (conversation no longer exists) */
+  if (self->tab_manager)
+    gnalk_room_tab_manager_remove_tab (self->tab_manager, room_token);
+}
+
+/* Called when user leaves a conversation */
+void
+gnalk_window_on_conversation_controller_left (GnalkConversationController *controller G_GNUC_UNUSED,
+                                               const char                   *room_token,
+                                               GnalkWindow                 *self)
+{
+  g_debug ("Window: Left conversation: %s", room_token);
+  close_and_clear_room (self, room_token);
 }
 
 /* Called when a conversation is deleted */
@@ -1135,21 +1165,7 @@ gnalk_window_on_conversation_controller_deleted (GnalkConversationController *co
                                                   GnalkWindow                 *self)
 {
   g_debug ("Window: Conversation deleted: %s", room_token);
-
-  /* If this was the current room, clear the view */
-  if (self->current_room && g_strcmp0 (room_token, self->current_room->room_token) == 0)
-    {
-      g_autofree char *old_token = g_strdup (self->current_room->room_token);
-      self->current_room = NULL;
-      self->has_active_room = FALSE;
-      g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
-      gnalk_message_view_show_empty (self->message_view);
-      gnalk_conversation_header_set_visible (self->conversation_header, FALSE);
-
-      /* Update conversation row highlight */
-      gnalk_window_update_conversation_active_states (self, old_token, NULL);
-    }
-  /* DataRepository::data-changed handles the reload (controller deletes via repository) */
+  close_and_clear_room (self, room_token);
 }
 
 /* Debounce timer callback for conversation list reload */
