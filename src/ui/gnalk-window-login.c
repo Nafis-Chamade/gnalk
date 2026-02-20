@@ -257,6 +257,14 @@ on_login_flow_v2_failed (GnalkLoginFlowV2 *flow G_GNUC_UNUSED,
 }
 
 static void
+on_login_flow_v2_browser_opened (GnalkLoginFlowV2 *flow G_GNUC_UNUSED,
+                                  const char        *login_url,
+                                  GnalkWindow       *self)
+{
+  gnalk_login_view_set_login_url (self->login_view, login_url);
+}
+
+static void
 start_browser_login (GnalkWindow *self)
 {
   const char *server = gnalk_login_view_get_server (self->login_view);
@@ -278,6 +286,8 @@ start_browser_login (GnalkWindow *self)
                     G_CALLBACK (on_login_flow_v2_completed), self);
   g_signal_connect (self->login_flow_v2, "failed",
                     G_CALLBACK (on_login_flow_v2_failed), self);
+  g_signal_connect (self->login_flow_v2, "browser-opened",
+                    G_CALLBACK (on_login_flow_v2_browser_opened), self);
 
   gnalk_login_view_set_browser_waiting (self->login_view, TRUE);
   gnalk_login_flow_v2_start (self->login_flow_v2, server);

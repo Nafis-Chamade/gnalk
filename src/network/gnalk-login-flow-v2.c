@@ -50,6 +50,7 @@ enum
 {
   SIGNAL_COMPLETED,
   SIGNAL_FAILED,
+  SIGNAL_BROWSER_OPENED,
   N_SIGNALS
 };
 
@@ -440,6 +441,9 @@ on_init_response (GObject      *source,
       return;
     }
 
+  /* Notify listeners of the login URL (so UI can show a copiable link) */
+  g_signal_emit (self, signals[SIGNAL_BROWSER_OPENED], 0, login_url);
+
   /* Start polling */
   self->state = FLOW_STATE_POLLING;
 
@@ -494,6 +498,16 @@ gnalk_login_flow_v2_class_init (GnalkLoginFlowV2Class *klass)
                   NULL,
                   G_TYPE_NONE, 1,
                   G_TYPE_STRING);  /* error_message */
+
+  signals[SIGNAL_BROWSER_OPENED] =
+    g_signal_new ("browser-opened",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0,
+                  NULL, NULL,
+                  NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_STRING);  /* login_url */
 }
 
 static void

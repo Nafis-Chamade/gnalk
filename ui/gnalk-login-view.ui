@@ -140,6 +140,52 @@
                     </style>
                   </object>
                 </child>
+                <!-- Copiable login URL (shown after browser-opened signal) -->
+                <child>
+                  <object class="GtkBox" id="login_url_box">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">6</property>
+                    <property name="visible">false</property>
+                    <child>
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">If the browser didn't open, copy this link:</property>
+                        <property name="wrap">true</property>
+                        <style>
+                          <class name="dim-label"/>
+                          <class name="caption"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="spacing">6</property>
+                        <property name="halign">center</property>
+                        <child>
+                          <object class="GtkLabel" id="login_url_label">
+                            <property name="selectable">true</property>
+                            <property name="wrap">true</property>
+                            <property name="wrap-mode">char</property>
+                            <property name="max-width-chars">40</property>
+                            <style>
+                              <class name="monospace"/>
+                              <class name="caption"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="login_url_copy_button">
+                            <property name="icon-name">edit-copy-symbolic</property>
+                            <property name="valign">center</property>
+                            <property name="tooltip-text" translatable="yes">Copy link</property>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
               </object>
             </child>
             <!-- Guest mode fields (Guest tab) -->

@@ -20,6 +20,9 @@ struct _GnalkLoginView
   GtkWidget *browser_waiting_box;
   GtkWidget *browser_waiting_spinner;
   GtkWidget *browser_waiting_label;
+  GtkWidget *login_url_box;
+  GtkWidget *login_url_label;
+  GtkWidget *login_url_copy_button;
   GtkWidget *guest_mode_group;
   GtkWidget *server_entry;
   GtkWidget *user_entry;
@@ -186,6 +189,19 @@ on_goa_account_row_activated (AdwActionRow    *row,
 }
 
 static void
+on_login_url_copy_clicked (GtkButton       *button,
+                            GnalkLoginView *self)
+{
+  (void) button;
+  const char *url = gtk_label_get_text (GTK_LABEL (self->login_url_label));
+  if (url && *url)
+    {
+      GdkClipboard *clipboard = gtk_widget_get_clipboard (GTK_WIDGET (self));
+      gdk_clipboard_set_text (clipboard, url);
+    }
+}
+
+static void
 gnalk_login_view_class_init (GnalkLoginViewClass *klass)
 {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
@@ -205,6 +221,9 @@ gnalk_login_view_class_init (GnalkLoginViewClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, browser_waiting_box);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, browser_waiting_spinner);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, browser_waiting_label);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, login_url_box);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, login_url_label);
+  gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, login_url_copy_button);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, guest_mode_group);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, server_entry);
   gtk_widget_class_bind_template_child (widget_class, GnalkLoginView, user_entry);
@@ -278,6 +297,8 @@ gnalk_login_view_init (GnalkLoginView *self)
                     G_CALLBACK (on_mode_button_toggled), self);
   g_signal_connect (self->guest_mode_button, "toggled",
                     G_CALLBACK (on_mode_button_toggled), self);
+  g_signal_connect (self->login_url_copy_button, "clicked",
+                    G_CALLBACK (on_login_url_copy_clicked), self);
   g_signal_connect (self->server_entry, "activate",
                     G_CALLBACK (on_entry_activated), self);
   g_signal_connect (self->user_entry, "activate",
@@ -427,7 +448,26 @@ gnalk_login_view_set_browser_waiting (GnalkLoginView *self,
 
   self->browser_waiting = waiting;
   gtk_spinner_set_spinning (GTK_SPINNER (self->browser_waiting_spinner), waiting);
+  if (!waiting)
+    gtk_widget_set_visible (self->login_url_box, FALSE);
   update_mode_ui (self);
+}
+
+void
+gnalk_login_view_set_login_url (GnalkLoginView *self,
+                                  const char      *url)
+{
+  g_return_if_fail (GNALK_IS_LOGIN_VIEW (self));
+
+  if (url && *url)
+    {
+      gtk_label_set_text (GTK_LABEL (self->login_url_label), url);
+      gtk_widget_set_visible (self->login_url_box, TRUE);
+    }
+  else
+    {
+      gtk_widget_set_visible (self->login_url_box, FALSE);
+    }
 }
 
 void
@@ -439,6 +479,7 @@ gnalk_login_view_show_error (GnalkLoginView *self,
   /* Reset browser waiting state on error */
   self->browser_waiting = FALSE;
   gtk_spinner_set_spinning (GTK_SPINNER (self->browser_waiting_spinner), FALSE);
+  gtk_widget_set_visible (self->login_url_box, FALSE);
 
   gtk_widget_set_visible (self->spinner, FALSE);
   gtk_spinner_set_spinning (GTK_SPINNER (self->spinner), FALSE);

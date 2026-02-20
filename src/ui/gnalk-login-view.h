@@ -67,6 +67,8 @@ void gnalk_login_view_set_connecting     (GnalkLoginView *self,
                                             gboolean         connecting);
 void gnalk_login_view_set_browser_waiting (GnalkLoginView *self,
                                             gboolean         waiting);
+void gnalk_login_view_set_login_url       (GnalkLoginView *self,
+                                            const char      *url);
 void gnalk_login_view_show_error          (GnalkLoginView *self,
                                             const char      *message);
 void gnalk_login_view_clear_error         (GnalkLoginView *self);
