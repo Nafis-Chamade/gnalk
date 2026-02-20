@@ -269,9 +269,28 @@ gnalk_session_manager_stop_session (GnalkSessionManager *self,
   if (!session)
     return;
 
-  /* If this was the active session, clear it */
-  if (self->active_session == session)
-    gnalk_session_manager_set_active_session (self, NULL);
+  gboolean was_active = (self->active_session == session);
+
+  /* If this was the active session, find the next one BEFORE removing.
+   * This avoids an intermediate NULL active session that would flash the
+   * login view before immediately switching to the remaining account. */
+  if (was_active)
+    {
+      GnalkSession *next = NULL;
+      GHashTableIter iter;
+      gpointer value;
+      g_hash_table_iter_init (&iter, self->sessions);
+      while (g_hash_table_iter_next (&iter, NULL, &value))
+        {
+          if (GNALK_SESSION (value) != session)
+            {
+              next = GNALK_SESSION (value);
+              break;
+            }
+        }
+      /* Switch directly to next session (or NULL if none remain) */
+      gnalk_session_manager_set_active_session (self, next);
+    }
 
   /* Disconnect signals */
   disconnect_session_signals (self, session);
@@ -287,16 +306,6 @@ gnalk_session_manager_stop_session (GnalkSessionManager *self,
 
   /* Update global unread */
   update_global_unread (self);
-
-  /* If we have other sessions, make one active */
-  if (!self->active_session && g_hash_table_size (self->sessions) > 0)
-    {
-      GHashTableIter iter;
-      gpointer value;
-      g_hash_table_iter_init (&iter, self->sessions);
-      if (g_hash_table_iter_next (&iter, NULL, &value))
-        gnalk_session_manager_set_active_session (self, GNALK_SESSION (value));
-    }
 }
 
 void

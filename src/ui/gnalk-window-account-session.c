@@ -186,6 +186,24 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
 
   if (!session)
     {
+      /* Close the current room before showing login — ensures we leave
+       * signaling/HTTP and clear all room state cleanly. */
+      if (self->room_controller)
+        gnalk_room_controller_close_current (self->room_controller);
+
+      if (self->current_room)
+        {
+          self->current_room = NULL;
+          gnalk_message_processor_set_room_state (self->message_processor, NULL);
+          gnalk_window_clear_messages_store (self);
+          self->has_active_room = FALSE;
+          g_object_notify_by_pspec (G_OBJECT (self), gnalk_window_properties[GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM]);
+          adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), FALSE);
+        }
+
+      if (self->tab_manager)
+        gnalk_room_tab_manager_clear_all (self->tab_manager);
+
       /* No active session - show login view, but only after initial startup.
        * During startup, the UI template defaults to main view while autologin
        * is attempted. Only show login if auth has completed and there's no session. */

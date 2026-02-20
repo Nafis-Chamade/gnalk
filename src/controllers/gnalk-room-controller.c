@@ -575,7 +575,31 @@ gnalk_room_controller_restore_last_room (GnalkRoomController *self,
   /* Only restore if the room exists in our conversation list */
   g_autoptr(GnalkConversationData) conv = find_conversation_by_token (self, last_room);
   if (conv)
-    gnalk_room_controller_open_room (self, last_room);
+    {
+      gnalk_room_controller_open_room (self, last_room);
+      return;
+    }
+
+  /* Last room not found (e.g., account was removed and we switched to another).
+   * Fall back to opening the first conversation in the list. */
+  if (!self->conversations_store)
+    return;
+
+  guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+  for (guint i = 0; i < n; i++)
+    {
+      g_autoptr(GnalkConversationData) first = g_list_model_get_item (G_LIST_MODEL (self->conversations_store), i);
+      if (first && !gnalk_conversation_data_is_section_header (first))
+        {
+          const char *token = gnalk_conversation_data_get_token (first);
+          if (token)
+            {
+              g_message ("room_controller: last room not found, opening first conversation %s", token);
+              gnalk_room_controller_open_room (self, token);
+            }
+          return;
+        }
+    }
 }
 
 /* ============ State queries ============ */
