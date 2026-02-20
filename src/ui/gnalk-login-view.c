@@ -299,17 +299,17 @@ gnalk_login_view_init (GnalkLoginView *self)
                     G_CALLBACK (on_mode_button_toggled), self);
   g_signal_connect (self->login_url_copy_button, "clicked",
                     G_CALLBACK (on_login_url_copy_clicked), self);
-  g_signal_connect (self->server_entry, "activate",
+  g_signal_connect (self->server_entry, "entry-activated",
                     G_CALLBACK (on_entry_activated), self);
-  g_signal_connect (self->user_entry, "activate",
+  g_signal_connect (self->user_entry, "entry-activated",
                     G_CALLBACK (on_entry_activated), self);
-  g_signal_connect (self->password_entry, "activate",
+  g_signal_connect (self->password_entry, "entry-activated",
                     G_CALLBACK (on_entry_activated), self);
-  g_signal_connect (self->room_url_entry, "activate",
+  g_signal_connect (self->room_url_entry, "entry-activated",
                     G_CALLBACK (on_entry_activated), self);
-  g_signal_connect (self->display_name_entry, "activate",
+  g_signal_connect (self->display_name_entry, "entry-activated",
                     G_CALLBACK (on_entry_activated), self);
-  g_signal_connect (self->guest_password_entry, "activate",
+  g_signal_connect (self->guest_password_entry, "entry-activated",
                     G_CALLBACK (on_entry_activated), self);
 }
 

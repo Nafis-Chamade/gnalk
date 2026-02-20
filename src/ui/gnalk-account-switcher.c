@@ -97,7 +97,9 @@ on_any_session_state_changed (GnalkSessionManager  *manager G_GNUC_UNUSED,
                               int                    new_state G_GNUC_UNUSED,
                               GnalkAccountSwitcher *self)
 {
-  /* Rebuild list to update status icons */
+  /* Rebuild list to update status icons, and update the button label
+   * (display name may have been fetched since the session was first set active) */
+  update_ui (self);
   rebuild_accounts_list (self);
 }
 
