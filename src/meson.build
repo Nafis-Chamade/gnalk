@@ -7,6 +7,7 @@ network_sources = [
   'network/gnalk-push-client.c',
   'network/gnalk-network-monitor.c',
   'network/gnalk-sdp-utils.c',
+  'network/gnalk-login-flow-v2.c',
 ]
 
 call_sources = [

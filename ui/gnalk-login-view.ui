@@ -40,7 +40,7 @@
                 </child>
               </object>
             </child>
-            <!-- Mode selector (segmented buttons) -->
+            <!-- Mode selector tabs -->
             <child>
               <object class="GtkBox" id="mode_selector_box">
                 <property name="orientation">horizontal</property>
@@ -50,9 +50,26 @@
                   <class name="linked"/>
                 </style>
                 <child>
-                  <object class="GtkToggleButton" id="account_mode_button">
-                    <property name="label" translatable="yes">Account</property>
+                  <object class="GtkToggleButton" id="goa_mode_button">
+                    <property name="label" translatable="yes">GNOME</property>
+                    <property name="visible">false</property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkToggleButton" id="browser_mode_button">
+                    <property name="label" translatable="yes">Browser</property>
                     <property name="active">true</property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkToggleButton" id="manual_mode_button">
+                    <property name="label" translatable="yes">Manual</property>
                     <style>
                       <class name="flat"/>
                     </style>
@@ -61,7 +78,6 @@
                 <child>
                   <object class="GtkToggleButton" id="guest_mode_button">
                     <property name="label" translatable="yes">Guest</property>
-                    <property name="active">false</property>
                     <style>
                       <class name="flat"/>
                     </style>
@@ -69,36 +85,28 @@
                 </child>
               </object>
             </child>
-            <!-- GOA accounts section -->
+            <!-- GOA accounts section (GOA tab) -->
             <child>
               <object class="AdwPreferencesGroup" id="goa_accounts_group">
                 <property name="visible">false</property>
                 <property name="title" translatable="yes">GNOME Online Accounts</property>
                 <property name="description" translatable="yes">Select a configured Nextcloud account</property>
-                <!-- GOA account rows are added dynamically -->
               </object>
             </child>
-            <!-- Link to show manual login when GOA is shown -->
+            <!-- Server URL field (shared: Browser + Manual tabs) -->
             <child>
-              <object class="GtkButton" id="manual_login_link">
-                <property name="visible">false</property>
-                <property name="label" translatable="yes">Or sign in with different credentials</property>
-                <property name="halign">center</property>
-                <property name="margin-bottom">12</property>
-                <style>
-                  <class name="flat"/>
-                  <class name="link"/>
-                </style>
-              </object>
-            </child>
-            <!-- User mode fields -->
-            <child>
-              <object class="AdwPreferencesGroup" id="user_mode_group">
+              <object class="AdwPreferencesGroup" id="server_url_group">
                 <child>
                   <object class="AdwEntryRow" id="server_entry">
                     <property name="title" translatable="yes">Server URL</property>
                   </object>
                 </child>
+              </object>
+            </child>
+            <!-- Manual credentials (Manual tab only) -->
+            <child>
+              <object class="AdwPreferencesGroup" id="credentials_group">
+                <property name="visible">false</property>
                 <child>
                   <object class="AdwEntryRow" id="user_entry">
                     <property name="title" translatable="yes">User ID</property>
@@ -111,7 +119,30 @@
                 </child>
               </object>
             </child>
-            <!-- Guest mode fields -->
+            <!-- Browser waiting state (Browser tab when polling) -->
+            <child>
+              <object class="GtkBox" id="browser_waiting_box">
+                <property name="orientation">vertical</property>
+                <property name="spacing">12</property>
+                <property name="halign">center</property>
+                <property name="visible">false</property>
+                <child>
+                  <object class="GtkSpinner" id="browser_waiting_spinner">
+                    <property name="halign">center</property>
+                    <property name="spinning">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="browser_waiting_label">
+                    <property name="label" translatable="yes">Waiting for authentication in browser…</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <!-- Guest mode fields (Guest tab) -->
             <child>
               <object class="AdwPreferencesGroup" id="guest_mode_group">
                 <property name="visible">false</property>
@@ -132,6 +163,7 @@
                 </child>
               </object>
             </child>
+            <!-- Action buttons -->
             <child>
               <object class="GtkBox" id="button_box">
                 <property name="orientation">horizontal</property>

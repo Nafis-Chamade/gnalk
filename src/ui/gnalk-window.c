@@ -20,6 +20,7 @@
 #include "gnalk-session.h"
 #include "gnalk-session-manager.h"
 #include "gnalk-login-view.h"
+#include "gnalk-login-flow-v2.h"
 #include "gnalk-conversation-sidebar.h"
 #include "gnalk-message-view.h"
 #include "gnalk-message-input.h"
@@ -1933,6 +1934,13 @@ gnalk_window_finalize (GObject *object)
         }
       g_queue_free (self->upload_queue);
       self->upload_queue = NULL;
+    }
+
+  /* Login Flow v2 cleanup */
+  if (self->login_flow_v2)
+    {
+      gnalk_login_flow_v2_cancel (self->login_flow_v2);
+      g_clear_object (&self->login_flow_v2);
     }
 
   /* Autologin cleanup */

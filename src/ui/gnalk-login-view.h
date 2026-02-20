@@ -8,6 +8,13 @@ G_BEGIN_DECLS
 
 G_DECLARE_FINAL_TYPE (GnalkLoginView, gnalk_login_view, GNALK, LOGIN_VIEW, GtkBox)
 
+typedef enum {
+  GNALK_LOGIN_MODE_GOA,
+  GNALK_LOGIN_MODE_BROWSER,
+  GNALK_LOGIN_MODE_MANUAL,
+  GNALK_LOGIN_MODE_GUEST
+} GnalkLoginMode;
+
 GnalkLoginView *gnalk_login_view_new (void);
 
 /**
@@ -32,11 +39,10 @@ void gnalk_login_view_set_goa_accounts (GnalkLoginView *self,
 void gnalk_login_view_clear_goa_accounts (GnalkLoginView *self);
 
 /* Mode control */
-gboolean gnalk_login_view_get_is_guest_mode (GnalkLoginView *self);
-void     gnalk_login_view_set_guest_mode    (GnalkLoginView *self,
-                                               gboolean         guest_mode);
+GnalkLoginMode gnalk_login_view_get_login_mode   (GnalkLoginView *self);
+gboolean       gnalk_login_view_get_is_guest_mode (GnalkLoginView *self);
 
-/* User mode getters */
+/* Field getters */
 const char *gnalk_login_view_get_server   (GnalkLoginView *self);
 const char *gnalk_login_view_get_user     (GnalkLoginView *self);
 const char *gnalk_login_view_get_password (GnalkLoginView *self);
@@ -57,10 +63,12 @@ void gnalk_login_view_set_room_url (GnalkLoginView *self,
                                       const char      *room_url);
 
 /* UI state control */
-void gnalk_login_view_set_connecting (GnalkLoginView *self,
-                                        gboolean         connecting);
-void gnalk_login_view_show_error     (GnalkLoginView *self,
-                                        const char      *message);
-void gnalk_login_view_clear_error    (GnalkLoginView *self);
+void gnalk_login_view_set_connecting     (GnalkLoginView *self,
+                                            gboolean         connecting);
+void gnalk_login_view_set_browser_waiting (GnalkLoginView *self,
+                                            gboolean         waiting);
+void gnalk_login_view_show_error          (GnalkLoginView *self,
+                                            const char      *message);
+void gnalk_login_view_clear_error         (GnalkLoginView *self);
 
 G_END_DECLS

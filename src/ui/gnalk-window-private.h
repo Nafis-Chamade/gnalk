@@ -50,6 +50,7 @@ typedef struct _GnalkMessageSearch GnalkMessageSearch;
 typedef struct _GnalkConversationInfoDialog GnalkConversationInfoDialog;
 typedef struct _GnalkParticipantProfileDialog GnalkParticipantProfileDialog;
 typedef struct _GnalkConversationData GnalkConversationData;
+typedef struct _GnalkLoginFlowV2 GnalkLoginFlowV2;
 
 G_BEGIN_DECLS
 
@@ -83,6 +84,7 @@ struct _GnalkWindow
 
   /* Login view */
   GnalkLoginView *login_view;
+  GnalkLoginFlowV2 *login_flow_v2;  /* Browser-based Login Flow v2 */
   char      *login_room_token;  /* For guest mode */
 
   GtkWidget *split_view;

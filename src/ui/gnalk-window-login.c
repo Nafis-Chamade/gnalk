@@ -13,6 +13,7 @@
 #include "gnalk-database.h"
 #include "gnalk-data-repository.h"
 #include "gnalk-login-view.h"
+#include "gnalk-login-flow-v2.h"
 #include "gnalk-account-switcher.h"
 #include "gnalk-avatar-cache.h"
 #include "gnalk-user-status-menu.h"
@@ -35,6 +36,45 @@ void
 gnalk_window_login_set_connecting (GnalkWindow *self, gboolean connecting)
 {
   gnalk_login_view_set_connecting (self->login_view, connecting);
+}
+
+/* ============ Common Login Finalization ============ */
+
+static void
+finalize_authenticated_login (GnalkWindow *self,
+                              const char  *server_url,
+                              const char  *user_id,
+                              const char  *password,
+                              const char  *goa_id)
+{
+  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+
+  GnalkAccount *account = gnalk_account_manager_add_account (account_manager, server_url, user_id);
+
+  if (goa_id)
+    gnalk_account_set_goa_account_id (account, goa_id);
+
+  GError *keyring_error = NULL;
+  if (!gnalk_keyring_store_password_sync (server_url, user_id, password, &keyring_error))
+    {
+      g_warning ("Failed to store password: %s",
+                 keyring_error ? keyring_error->message : "unknown error");
+      g_clear_error (&keyring_error);
+    }
+
+  gnalk_account_set_autologin (account, TRUE);
+  gnalk_account_set_enabled (account, TRUE);
+  gnalk_account_manager_save_account (account_manager, account);
+
+  GSettings *settings = gnalk_application_get_settings (app);
+  g_settings_set_boolean (settings, "autologin-enabled", TRUE);
+  g_settings_set_string (settings, "last-server-url", server_url);
+  g_settings_set_string (settings, "last-user-id", user_id);
+
+  GnalkSession *session = gnalk_session_manager_start_session (self->session_manager, account, password);
+  if (session)
+    gnalk_session_manager_set_active_session (self->session_manager, session);
 }
 
 /* ============ GOA Helper Functions ============ */
@@ -186,40 +226,62 @@ on_login_view_goa_account_selected (GnalkLoginView *view G_GNUC_UNUSED,
   /* Show connecting state */
   gnalk_window_login_set_connecting (self, TRUE);
 
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
-
-  /* Create or get existing account and link it to GOA */
-  GnalkAccount *account = gnalk_account_manager_add_account (account_manager, server_url, user_id);
-  gnalk_account_set_goa_account_id (account, goa_id);
-
-  /* Store password in keyring (GOA passwords are app tokens, same as manual login) */
-  GError *keyring_error = NULL;
-  if (!gnalk_keyring_store_password_sync (server_url, user_id, password, &keyring_error))
-    {
-      g_warning ("Failed to store password in keyring: %s",
-                 keyring_error ? keyring_error->message : "unknown error");
-      g_clear_error (&keyring_error);
-    }
-
-  /* Enable autologin for this account */
-  gnalk_account_set_autologin (account, TRUE);
-  gnalk_account_set_enabled (account, TRUE);
-  gnalk_account_manager_save_account (account_manager, account);
-
-  /* Update GSettings for compatibility */
-  GSettings *settings = gnalk_application_get_settings (app);
-  g_settings_set_boolean (settings, "autologin-enabled", TRUE);
-  g_settings_set_string (settings, "last-server-url", server_url);
-  g_settings_set_string (settings, "last-user-id", user_id);
-
-  /* Start session via SessionManager */
-  GnalkSession *session = gnalk_session_manager_start_session (self->session_manager, account, password);
-  if (session)
-    gnalk_session_manager_set_active_session (self->session_manager, session);
+  finalize_authenticated_login (self, server_url, user_id, password, goa_id);
 }
 
 #endif /* HAVE_GOA */
+
+/* ============ Login Flow v2 Handlers ============ */
+
+static void
+on_login_flow_v2_completed (GnalkLoginFlowV2 *flow G_GNUC_UNUSED,
+                            const char        *server_url,
+                            const char        *login_name,
+                            const char        *app_password,
+                            GnalkWindow       *self)
+{
+  gnalk_login_view_set_browser_waiting (self->login_view, FALSE);
+  gnalk_window_login_set_connecting (self, TRUE);
+  finalize_authenticated_login (self, server_url, login_name, app_password, NULL);
+  g_clear_object (&self->login_flow_v2);
+}
+
+static void
+on_login_flow_v2_failed (GnalkLoginFlowV2 *flow G_GNUC_UNUSED,
+                         const char        *error_message,
+                         GnalkWindow       *self)
+{
+  gnalk_login_view_set_browser_waiting (self->login_view, FALSE);
+  gnalk_window_login_show_error (self, error_message);
+  g_clear_object (&self->login_flow_v2);
+}
+
+static void
+start_browser_login (GnalkWindow *self)
+{
+  const char *server = gnalk_login_view_get_server (self->login_view);
+  if (!server || !*server)
+    {
+      gnalk_window_login_show_error (self, _("Please enter a server URL"));
+      return;
+    }
+
+  /* Cancel any previous flow */
+  if (self->login_flow_v2)
+    {
+      gnalk_login_flow_v2_cancel (self->login_flow_v2);
+      g_clear_object (&self->login_flow_v2);
+    }
+
+  self->login_flow_v2 = gnalk_login_flow_v2_new ();
+  g_signal_connect (self->login_flow_v2, "completed",
+                    G_CALLBACK (on_login_flow_v2_completed), self);
+  g_signal_connect (self->login_flow_v2, "failed",
+                    G_CALLBACK (on_login_flow_v2_failed), self);
+
+  gnalk_login_view_set_browser_waiting (self->login_view, TRUE);
+  gnalk_login_flow_v2_start (self->login_flow_v2, server);
+}
 
 /* ============ Login View Signal Handler ============ */
 
@@ -229,10 +291,21 @@ gnalk_window_on_login_view_connect_clicked (GnalkLoginView *view,
 {
   (void) view;
 
-  if (gnalk_login_view_get_is_guest_mode (self->login_view))
-    gnalk_window_start_guest_login (self);
-  else
-    gnalk_window_start_login (self);
+  switch (gnalk_login_view_get_login_mode (self->login_view))
+    {
+    case GNALK_LOGIN_MODE_BROWSER:
+      start_browser_login (self);
+      break;
+    case GNALK_LOGIN_MODE_MANUAL:
+      gnalk_window_start_login (self);
+      break;
+    case GNALK_LOGIN_MODE_GUEST:
+      gnalk_window_start_guest_login (self);
+      break;
+    case GNALK_LOGIN_MODE_GOA:
+      /* GOA login is handled by row activation, not connect button */
+      break;
+    }
 }
 
 void
@@ -240,6 +313,15 @@ gnalk_window_on_login_view_cancel_clicked (GnalkLoginView *view,
                                             GnalkWindow    *self)
 {
   (void) view;
+
+  /* Cancel Login Flow v2 if active */
+  if (self->login_flow_v2)
+    {
+      gnalk_login_flow_v2_cancel (self->login_flow_v2);
+      g_clear_object (&self->login_flow_v2);
+      gnalk_login_view_set_browser_waiting (self->login_view, FALSE);
+      return;
+    }
 
   /* Check if we have any active sessions */
   guint session_count = 0;
@@ -276,37 +358,7 @@ gnalk_window_start_login (GnalkWindow *self)
   /* Show connecting state */
   gnalk_window_login_set_connecting (self, TRUE);
 
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
-
-  /* Create or get existing account */
-  GnalkAccount *account = gnalk_account_manager_add_account (account_manager, server, user);
-
-  /* Store password in keyring */
-  GError *keyring_error = NULL;
-  if (!gnalk_keyring_store_password_sync (server, user, password, &keyring_error))
-    {
-      g_warning ("Failed to store password in keyring: %s",
-                 keyring_error ? keyring_error->message : "unknown error");
-      g_clear_error (&keyring_error);
-    }
-
-  /* Enable autologin for this account */
-  gnalk_account_set_autologin (account, TRUE);
-  gnalk_account_set_enabled (account, TRUE);
-  gnalk_account_manager_save_account (account_manager, account);
-
-  /* Update GSettings for compatibility with old autologin code */
-  GSettings *settings = gnalk_application_get_settings (app);
-  g_settings_set_boolean (settings, "autologin-enabled", TRUE);
-  g_settings_set_string (settings, "last-server-url", server);
-  g_settings_set_string (settings, "last-user-id", user);
-
-  /* Start session via SessionManager - state changes will update UI.
-   * Make the new session active since user explicitly logged in with these credentials. */
-  GnalkSession *session = gnalk_session_manager_start_session (self->session_manager, account, password);
-  if (session)
-    gnalk_session_manager_set_active_session (self->session_manager, session);
+  finalize_authenticated_login (self, server, user, password, NULL);
 }
 
 /* Parse room URL like https://nc.example.com/call/TOKEN */
