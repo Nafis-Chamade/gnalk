@@ -302,6 +302,23 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       gnalk_room_controller_set_participant_controller (self->room_controller, self->participant_controller);
     }
 
+  /* Configure guest/non-guest UI regardless of session state */
+  {
+    gboolean is_guest = gnalk_session_is_guest (session);
+    gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), TRUE);
+
+    if (is_guest)
+      {
+        /* Show generic avatar for guests (no user_id → fallback icon) */
+        gnalk_user_status_menu_set_user (self->user_status_menu, NULL, NULL);
+        gnalk_user_status_menu_set_status (self->user_status_menu, NULL);
+      }
+    else
+      {
+        adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), TRUE);
+      }
+  }
+
   /* Update UI based on session state */
   GnalkSessionState state = gnalk_session_get_state (session);
 
@@ -347,9 +364,6 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
         /* Configure UI for guest mode */
         if (is_guest)
           {
-            /* Hide user avatar and status button for guests */
-            gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), FALSE);
-
             /* Show content pane but keep sidebar navigable for account switching */
             adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
 
@@ -371,14 +385,6 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
             const char *room_token = gnalk_application_get_guest_room_token (app);
             if (room_token)
               gnalk_window_open_conversation_by_token (self, room_token);
-          }
-        else
-          {
-            /* Ensure status menu is visible for non-guests */
-            gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), TRUE);
-
-            /* Restore navigation in case we're coming from guest mode */
-            adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), TRUE);
           }
 
         /* Sync call capability from session */

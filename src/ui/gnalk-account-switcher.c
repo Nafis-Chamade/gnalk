@@ -357,12 +357,12 @@ gnalk_account_switcher_init (GnalkAccountSwitcher *self)
 
   self->button_label = gtk_label_new ("");
   gtk_label_set_ellipsize (GTK_LABEL (self->button_label), PANGO_ELLIPSIZE_END);
-  gtk_widget_set_halign (self->button_label, GTK_ALIGN_END);
+  gtk_widget_set_halign (self->button_label, GTK_ALIGN_START);
   gtk_box_append (GTK_BOX (label_box), self->button_label);
 
   self->button_subtitle = gtk_label_new ("");
   gtk_label_set_ellipsize (GTK_LABEL (self->button_subtitle), PANGO_ELLIPSIZE_END);
-  gtk_widget_set_halign (self->button_subtitle, GTK_ALIGN_END);
+  gtk_widget_set_halign (self->button_subtitle, GTK_ALIGN_START);
   gtk_widget_add_css_class (self->button_subtitle, "dim-label");
   gtk_widget_add_css_class (self->button_subtitle, "caption");
   gtk_box_append (GTK_BOX (label_box), self->button_subtitle);
