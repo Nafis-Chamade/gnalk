@@ -2454,11 +2454,14 @@ on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
       {
         GnalkConversationData *conv = gnalk_conversation_data_new_from_db (&init);
         g_list_store_append (self->conversations, conv);
+
+        /* Save to DB so Window picks it up via data-changed */
+        if (self->data_repository)
+          gnalk_data_repository_save_conversation (self->data_repository,
+                                                   gnalk_account_get_id (self->account),
+                                                   conv);
         g_object_unref (conv);
       }
-
-    /* Emit conversations-updated to notify window */
-    g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_UPDATED], 0);
   }
 
   /* Guest is now online */

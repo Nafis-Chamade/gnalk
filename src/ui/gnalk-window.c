@@ -929,7 +929,18 @@ on_conversation_info_requested (GnalkConversationHeader *header G_GNUC_UNUSED,
     }
 
   if (!conversation)
-    return;
+    {
+      /* Guest rooms may not be in conversation list — create minimal data from room state */
+      GnalkConversationDataInit init = {
+        .token       = self->current_room->room_token,
+        .title       = self->current_room->room_name ? self->current_room->room_name
+                                                     : self->current_room->room_token,
+        .description = self->current_room->room_description,
+        .room_type   = self->current_room->room_type,
+        .session     = self->active_session,
+      };
+      conversation = gnalk_conversation_data_new_from_db (&init);
+    }
 
   GnalkConversationInfoDialog *dialog = gnalk_conversation_info_dialog_new ();
   gnalk_conversation_info_dialog_set_http_client (dialog, self->http_client);
