@@ -453,8 +453,7 @@ gnalk_window_on_session_manager_active_changed (GnalkSessionManager *manager G_G
   gnalk_window_switch_to_session (self, session);
 
   /* Save last active account to settings for restore on next launch */
-  /* Don't save guest sessions - they are not persisted */
-  if (session && !gnalk_session_is_guest (session))
+  if (session)
     {
       gint64 account_id = gnalk_session_get_account_id (session);
       GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));

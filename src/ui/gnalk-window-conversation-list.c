@@ -148,6 +148,23 @@ load_conversations_from_db_finish (GObject      *source_object,
 
   self->conv_load_in_progress = FALSE;
 
+  /* Check if active session changed while we were loading */
+  LoadConversationsData *load_data = g_task_get_task_data (G_TASK (result));
+  gint64 loaded_account_id = load_data ? load_data->account_id : 0;
+  gint64 current_account_id = self->active_session
+    ? gnalk_session_get_account_id (self->active_session) : 0;
+
+  if (loaded_account_id > 0 && current_account_id > 0 &&
+      loaded_account_id != current_account_id)
+    {
+      /* Stale result from a different account — discard and reload */
+      GListStore *stale = g_task_propagate_pointer (G_TASK (result), NULL);
+      g_clear_object (&stale);
+      self->conv_load_pending = FALSE;
+      gnalk_window_load_conversations_from_db (self);
+      return;
+    }
+
   GListStore *cached = g_task_propagate_pointer (G_TASK (result), NULL);
   if (!cached)
     {
@@ -165,6 +182,10 @@ load_conversations_from_db_finish (GObject      *source_object,
     {
       g_object_unref (cached);
       self->initial_conversations_loaded = TRUE;
+
+      /* Clear stale conversations from a previous account */
+      if (g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store)) > 0)
+        g_list_store_remove_all (self->conversations_store);
 
       /* Empty DB + session online: force a sync so conversations appear */
       if (self->active_session)
