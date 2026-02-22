@@ -436,7 +436,8 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
     }
   else
     {
-      /* Conversation not in our list - minimal UI setup (e.g. guest room not yet synced) */
+      /* Conversation not in our list yet — safety net for timing (data-changed
+       * may not have fired yet for a freshly saved guest room). */
       gnalk_window_show_messages_view (self);
 
       gnalk_conversation_header_set_room (self->conversation_header, token, token, NULL, 0);

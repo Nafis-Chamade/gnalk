@@ -33,8 +33,6 @@ G_DECLARE_FINAL_TYPE (GnalkSessionManager, gnalk_session_manager, GNALK, SESSION
  *     Emitted when total unread count across all sessions changes
  * - "any-session-state-changed" (GnalkSession *session, int old_state, int new_state)
  *     Forwarded from any session's state-changed signal
- * - "conversations-changed" (GnalkSession *session)
- *     Emitted when any session's conversation list changes
  */
 
 GnalkSessionManager *gnalk_session_manager_new (GnalkAccountManager      *account_manager,

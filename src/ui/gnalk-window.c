@@ -315,46 +315,14 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         /* Note: Don't reload messages here - they're already loaded from cache at startup.
          * Long-polling will fetch any new messages incrementally. */
 
-        /* For guests: populate the window's conversations_store from the session's
-         * internal list (guest data is not in the DB, so load_conversations_from_db
-         * won't find anything) and open the room now that the session is online. */
+        /* For guests: open the guest room now that the session is online.
+         * The conversation is saved to DB by the session and loaded via data-changed. */
         if (gnalk_session_is_guest (session) && !self->current_room)
           {
-            GListStore *session_convs = gnalk_session_get_conversations (session);
-            if (session_convs)
-              {
-                guint n_existing = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
-                guint n = g_list_model_get_n_items (G_LIST_MODEL (session_convs));
-                for (guint i = 0; i < n; i++)
-                  {
-                    g_autoptr(GnalkConversationData) conv =
-                        g_list_model_get_item (G_LIST_MODEL (session_convs), i);
-
-                    /* Skip if already in the store (e.g. from switch_to_session) */
-                    gboolean already_present = FALSE;
-                    const char *token = gnalk_conversation_data_get_token (conv);
-                    for (guint j = 0; j < n_existing; j++)
-                      {
-                        g_autoptr(GnalkConversationData) ex =
-                            g_list_model_get_item (G_LIST_MODEL (self->conversations_store), j);
-                        if (g_strcmp0 (gnalk_conversation_data_get_token (ex), token) == 0)
-                          {
-                            already_present = TRUE;
-                            break;
-                          }
-                      }
-                    if (!already_present)
-                      g_list_store_append (self->conversations_store, conv);
-                  }
-              }
-
-            if (gnalk_session_is_guest (session))
-              {
-                GnalkAccount *guest_account = gnalk_session_get_account (session);
-                const char *room_token = gnalk_account_get_room_token (guest_account);
-                if (room_token)
-                  gnalk_window_open_conversation_by_token (self, room_token);
-              }
+            GnalkAccount *guest_account = gnalk_session_get_account (session);
+            const char *room_token = gnalk_account_get_room_token (guest_account);
+            if (room_token)
+              gnalk_window_open_conversation_by_token (self, room_token);
           }
 
         /* Refresh participants now that we're online (may have been empty from offline start) */
@@ -2256,8 +2224,6 @@ gnalk_window_init (GnalkWindow *self)
                                G_CALLBACK (gnalk_window_on_session_manager_active_changed), self, G_CONNECT_DEFAULT);
       g_signal_connect_object (self->session_manager, "any-session-state-changed",
                                G_CALLBACK (gnalk_window_on_session_manager_any_state_changed), self, G_CONNECT_DEFAULT);
-      /* conversations-changed reload now handled by DataRepository::data-changed */
-
       /* Set up account switcher (created from template) */
       if (self->account_switcher)
         {

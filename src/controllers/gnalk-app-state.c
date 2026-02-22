@@ -1,12 +1,8 @@
 #include "gnalk-app-state.h"
-#include "gnalk-session.h"
 
 struct _GnalkAppState
 {
   GObject parent_instance;
-
-  /* Merged conversations from all sessions */
-  GListStore *conversations;
 
   /* Status */
   gboolean         is_online;
@@ -18,7 +14,6 @@ struct _GnalkAppState
 G_DEFINE_FINAL_TYPE (GnalkAppState, gnalk_app_state, G_TYPE_OBJECT)
 
 enum {
-  SIGNAL_CONVERSATIONS_CHANGED,
   SIGNAL_ONLINE_CHANGED,
   SIGNAL_LOADING_CHANGED,
   SIGNAL_SYNC_STATUS_CHANGED,
@@ -32,7 +27,6 @@ gnalk_app_state_finalize (GObject *object)
 {
   GnalkAppState *self = GNALK_APP_STATE (object);
 
-  g_clear_object (&self->conversations);
   g_free (self->sync_message);
 
   G_OBJECT_CLASS (gnalk_app_state_parent_class)->finalize (object);
@@ -43,10 +37,6 @@ gnalk_app_state_class_init (GnalkAppStateClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
   object_class->finalize = gnalk_app_state_finalize;
-
-  signals[SIGNAL_CONVERSATIONS_CHANGED] =
-    g_signal_new ("conversations-changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 
   signals[SIGNAL_ONLINE_CHANGED] =
     g_signal_new ("online-changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
@@ -64,7 +54,6 @@ gnalk_app_state_class_init (GnalkAppStateClass *klass)
 static void
 gnalk_app_state_init (GnalkAppState *self)
 {
-  self->conversations = g_list_store_new (GNALK_TYPE_CONVERSATION_DATA);
   self->is_online = FALSE;
   self->is_loading = FALSE;
   self->sync_status = GNALK_SYNC_STATUS_IDLE;
@@ -74,150 +63,6 @@ GnalkAppState *
 gnalk_app_state_new (void)
 {
   return g_object_new (GNALK_TYPE_APP_STATE, NULL);
-}
-
-/* Conversations */
-
-GListStore *
-gnalk_app_state_get_conversations (GnalkAppState *self)
-{
-  g_return_val_if_fail (GNALK_IS_APP_STATE (self), NULL);
-  return self->conversations;
-}
-
-/* Comparison function for sorting conversations by last activity (descending) */
-static int
-compare_conversations_by_activity (gconstpointer a, gconstpointer b, gpointer user_data G_GNUC_UNUSED)
-{
-  GnalkConversationData *conv_a = GNALK_CONVERSATION_DATA ((gpointer) a);
-  GnalkConversationData *conv_b = GNALK_CONVERSATION_DATA ((gpointer) b);
-
-  /* Favorites first */
-  gboolean fav_a = gnalk_conversation_data_get_is_favorite (conv_a);
-  gboolean fav_b = gnalk_conversation_data_get_is_favorite (conv_b);
-
-  if (fav_a && !fav_b)
-    return -1;
-  if (!fav_a && fav_b)
-    return 1;
-
-  /* Then by last activity (descending) */
-  gint64 time_a = gnalk_conversation_data_get_last_activity (conv_a);
-  gint64 time_b = gnalk_conversation_data_get_last_activity (conv_b);
-
-  if (time_a > time_b)
-    return -1;
-  if (time_a < time_b)
-    return 1;
-
-  return 0;
-}
-
-void
-gnalk_app_state_set_conversations (GnalkAppState *self,
-                                     GListStore     *conversations,
-                                     GnalkSession  *session)
-{
-  g_return_if_fail (GNALK_IS_APP_STATE (self));
-
-  /* For now, we do a simple approach:
-   * - Clear conversations from this session
-   * - Add all new conversations
-   * - Re-sort
-   *
-   * In future we could do smarter diffing.
-   */
-
-  /* Remove conversations from this session */
-  guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations));
-  for (guint i = n; i > 0; i--)
-    {
-      GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations), i - 1);
-      if (gnalk_conversation_data_get_session (conv) == session)
-        g_list_store_remove (self->conversations, i - 1);
-      g_object_unref (conv);
-    }
-
-  /* Add new conversations */
-  if (conversations)
-    {
-      guint count = g_list_model_get_n_items (G_LIST_MODEL (conversations));
-      for (guint i = 0; i < count; i++)
-        {
-          GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (conversations), i);
-          /* Ensure session is set */
-          gnalk_conversation_data_set_session (conv, session);
-          g_list_store_append (self->conversations, conv);
-          g_object_unref (conv);
-        }
-    }
-
-  /* Sort by activity */
-  g_list_store_sort (self->conversations, compare_conversations_by_activity, NULL);
-
-  g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_CHANGED], 0);
-}
-
-void
-gnalk_app_state_clear_conversations (GnalkAppState *self,
-                                       GnalkSession  *session)
-{
-  g_return_if_fail (GNALK_IS_APP_STATE (self));
-
-  if (session == NULL)
-    {
-      g_list_store_remove_all (self->conversations);
-    }
-  else
-    {
-      guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations));
-      for (guint i = n; i > 0; i--)
-        {
-          GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations), i - 1);
-          if (gnalk_conversation_data_get_session (conv) == session)
-            g_list_store_remove (self->conversations, i - 1);
-          g_object_unref (conv);
-        }
-    }
-
-  g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_CHANGED], 0);
-}
-
-void
-gnalk_app_state_update_conversation (GnalkAppState         *self,
-                                       GnalkConversationData *conversation)
-{
-  g_return_if_fail (GNALK_IS_APP_STATE (self));
-  g_return_if_fail (GNALK_IS_CONVERSATION_DATA (conversation));
-
-  /* Find and update the conversation */
-  const char *token = gnalk_conversation_data_get_token (conversation);
-  GnalkSession *session = gnalk_conversation_data_get_session (conversation);
-
-  guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations));
-  for (guint i = 0; i < n; i++)
-    {
-      GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations), i);
-      if (gnalk_conversation_data_get_session (conv) == session &&
-          g_strcmp0 (gnalk_conversation_data_get_token (conv), token) == 0)
-        {
-          /* Replace with updated conversation */
-          g_list_store_splice (self->conversations, i, 1, (gpointer *) &conversation, 1);
-          g_object_unref (conv);
-
-          /* Re-sort since activity may have changed */
-          g_list_store_sort (self->conversations, compare_conversations_by_activity, NULL);
-
-          g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_CHANGED], 0);
-          return;
-        }
-      g_object_unref (conv);
-    }
-
-  /* Not found - add it */
-  g_list_store_append (self->conversations, conversation);
-  g_list_store_sort (self->conversations, compare_conversations_by_activity, NULL);
-  g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_CHANGED], 0);
 }
 
 /* Online status */

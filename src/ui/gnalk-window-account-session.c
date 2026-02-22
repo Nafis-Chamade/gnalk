@@ -34,7 +34,6 @@ connect_session_signals (GnalkWindow  *self,
 
   /* Note: Don't connect to "state-changed" here - we receive state changes through
    * session_manager's "any-session-state-changed" signal (connected in gnalk_window_init). */
-  /* conversations-updated reload now handled by DataRepository::data-changed */
   g_signal_connect (session, "room-joined",
                     G_CALLBACK (gnalk_window_on_session_room_joined), self);
   g_signal_connect (session, "signaling-room-joined",
@@ -370,28 +369,12 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
             /* Show content pane but keep sidebar navigable for account switching */
             adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
 
-            /* Populate conversations_store from session's internal list
-             * (guest data is not in DB, so load_conversations_from_db won't find it) */
-            GListStore *session_convs = gnalk_session_get_conversations (session);
-            if (session_convs)
-              {
-                guint n = g_list_model_get_n_items (G_LIST_MODEL (session_convs));
-                for (guint i = 0; i < n; i++)
-                  {
-                    g_autoptr(GnalkConversationData) conv =
-                        g_list_model_get_item (G_LIST_MODEL (session_convs), i);
-                    g_list_store_append (self->conversations_store, conv);
-                  }
-              }
-
-            /* Auto-select the guest room */
-            if (gnalk_session_is_guest (session))
-              {
-                GnalkAccount *guest_account = gnalk_session_get_account (session);
-                const char *room_token = gnalk_account_get_room_token (guest_account);
-                if (room_token)
-                  gnalk_window_open_conversation_by_token (self, room_token);
-              }
+            /* Auto-select the guest room.  The conversation is saved to DB
+             * by the session and loaded via data-changed. */
+            GnalkAccount *guest_account = gnalk_session_get_account (session);
+            const char *room_token = gnalk_account_get_room_token (guest_account);
+            if (room_token)
+              gnalk_window_open_conversation_by_token (self, room_token);
           }
 
         /* Sync call capability from session */

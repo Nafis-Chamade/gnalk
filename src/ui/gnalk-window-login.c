@@ -599,8 +599,6 @@ gnalk_window_attempt_autologin (GnalkWindow *self)
                                G_CALLBACK (gnalk_window_on_session_manager_active_changed), self, G_CONNECT_DEFAULT);
       g_signal_connect_object (self->session_manager, "any-session-state-changed",
                                G_CALLBACK (gnalk_window_on_session_manager_any_state_changed), self, G_CONNECT_DEFAULT);
-      /* conversations-changed → Application/AppState only; Window uses DataRepository::data-changed */
-
       if (self->account_switcher)
         {
           gnalk_account_switcher_set_session_manager (self->account_switcher, self->session_manager);

@@ -55,15 +55,12 @@ typedef enum {
  * - HTTP client (configured with account credentials)
  * - Signaling WebSocket
  * - Sync manager (offline queue)
- * - Conversation list
  * - Connection state machine
  * - Reconnection logic
  *
  * Signals:
  * - "state-changed" (GnalkSessionState old_state, GnalkSessionState new_state)
  *     Emitted when connection state changes
- * - "conversations-updated" ()
- *     Emitted when conversation list is refreshed
  * - "room-joined" (const char *room_token, const char *session_id)
  *     Emitted when HTTP room join succeeds
  * - "room-left" ()
@@ -123,8 +120,6 @@ const char *gnalk_session_get_current_room_token (GnalkSession *self);
 const char *gnalk_session_get_current_session_id (GnalkSession *self);
 
 /* Conversations */
-GListStore *gnalk_session_get_conversations   (GnalkSession *self);
-void        gnalk_session_refresh_conversations (GnalkSession *self);
 int         gnalk_session_get_total_unread    (GnalkSession *self);
 
 /* Messaging (delegates to sync manager when offline) */

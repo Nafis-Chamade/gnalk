@@ -67,9 +67,6 @@ static void on_database_opened (GnalkDataRepository *repository,
                                  gpointer              result,
                                  GError               *error,
                                  gpointer              user_data);
-static void on_session_conversations_changed (GnalkSessionManager *manager,
-                                                GnalkSession        *session,
-                                                GnalkApplication    *self);
 static void on_session_online_changed (GnalkSessionManager *manager,
                                          GnalkSession        *session,
                                          int                   old_state,
@@ -509,8 +506,6 @@ on_database_opened (GnalkDataRepository *repository G_GNUC_UNUSED,
                                                      self->notification_service);
 
   /* Connect session manager signals to update app state */
-  g_signal_connect (self->session_manager, "conversations-changed",
-                    G_CALLBACK (on_session_conversations_changed), self);
   g_signal_connect (self->session_manager, "any-session-state-changed",
                     G_CALLBACK (on_session_online_changed), self);
 
@@ -566,16 +561,6 @@ on_database_opened (GnalkDataRepository *repository G_GNUC_UNUSED,
 }
 
 /* Session manager signal handlers for updating app state */
-
-static void
-on_session_conversations_changed (GnalkSessionManager *manager G_GNUC_UNUSED,
-                                    GnalkSession        *session,
-                                    GnalkApplication    *self)
-{
-  /* Get conversations from session and update app state */
-  GListStore *conversations = gnalk_session_get_conversations (session);
-  gnalk_app_state_set_conversations (self->app_state, conversations, session);
-}
 
 static void
 on_session_online_changed (GnalkSessionManager *manager,

@@ -25,7 +25,6 @@ enum {
   SIGNAL_ACTIVE_SESSION_CHANGED,
   SIGNAL_GLOBAL_UNREAD_CHANGED,
   SIGNAL_ANY_SESSION_STATE_CHANGED,
-  SIGNAL_CONVERSATIONS_CHANGED,
   N_SIGNALS
 };
 
@@ -76,9 +75,6 @@ gnalk_session_manager_class_init (GnalkSessionManagerClass *klass)
                   0, NULL, NULL, NULL, G_TYPE_NONE, 3,
                   GNALK_TYPE_SESSION, G_TYPE_INT, G_TYPE_INT);
 
-  signals[SIGNAL_CONVERSATIONS_CHANGED] =
-    g_signal_new ("conversations-changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 1, GNALK_TYPE_SESSION);
 }
 
 static void
@@ -108,13 +104,6 @@ on_session_unread_changed (GnalkSession        *session G_GNUC_UNUSED,
 }
 
 static void
-on_session_conversations_updated (GnalkSession        *session,
-                                   GnalkSessionManager *self)
-{
-  g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_CHANGED], 0, session);
-}
-
-static void
 connect_session_signals (GnalkSessionManager *self,
                          GnalkSession        *session)
 {
@@ -122,8 +111,6 @@ connect_session_signals (GnalkSessionManager *self,
                     G_CALLBACK (on_session_state_changed), self);
   g_signal_connect (session, "unread-count-changed",
                     G_CALLBACK (on_session_unread_changed), self);
-  g_signal_connect (session, "conversations-updated",
-                    G_CALLBACK (on_session_conversations_updated), self);
 }
 
 static void

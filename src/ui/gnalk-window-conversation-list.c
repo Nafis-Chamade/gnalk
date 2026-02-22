@@ -188,9 +188,8 @@ load_conversations_from_db_finish (GObject      *source_object,
         g_list_store_remove_all (self->conversations_store);
 
       /* Empty DB + session online: force a sync so conversations appear.
-       * Skip for guests — the guest room is opened directly via state-changed,
-       * and forcing sync here would loop (test-dev's data-changed triggers a
-       * reload for the guest, which finds 0 convs, forces sync, etc.) */
+       * Skip for guests — the guest room is saved to DB by Session and
+       * SyncCoordinator is not created for guests (GET /rooms fails). */
       if (self->active_session && !gnalk_session_is_guest (self->active_session))
         {
           GnalkSessionState state = gnalk_session_get_state (self->active_session);

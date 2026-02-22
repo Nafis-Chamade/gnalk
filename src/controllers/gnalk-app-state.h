@@ -2,12 +2,8 @@
 
 #include <glib-object.h>
 #include <gio/gio.h>
-#include "gnalk-conversation-data.h"
 
 G_BEGIN_DECLS
-
-/* Forward declarations */
-typedef struct _GnalkSession GnalkSession;
 
 #define GNALK_TYPE_APP_STATE (gnalk_app_state_get_type ())
 G_DECLARE_FINAL_TYPE (GnalkAppState, gnalk_app_state, GNALK, APP_STATE, GObject)
@@ -15,12 +11,10 @@ G_DECLARE_FINAL_TYPE (GnalkAppState, gnalk_app_state, GNALK, APP_STATE, GObject)
 /**
  * GnalkAppState:
  *
- * Single source of truth for UI-relevant application state.
- * Observable via GObject signals - the Window observes this
- * instead of directly accessing sessions or database.
+ * Centralized UI-relevant application state.
+ * Observable via GObject signals.
  *
  * Signals:
- * - "conversations-changed": Emitted when conversation list changes
  * - "online-changed": Emitted when online status changes
  * - "loading-changed": Emitted when loading state changes
  * - "sync-status-changed": Emitted when sync status message changes
@@ -44,52 +38,6 @@ typedef enum {
 
 /* Constructor */
 GnalkAppState *gnalk_app_state_new (void);
-
-/* Conversations */
-
-/**
- * gnalk_app_state_get_conversations:
- * @self: The app state
- *
- * Get the merged list of conversations from all accounts.
- * Sorted by last activity.
- *
- * Returns: (transfer none): The conversations GListStore
- */
-GListStore *gnalk_app_state_get_conversations (GnalkAppState *self);
-
-/**
- * gnalk_app_state_set_conversations:
- * @self: The app state
- * @conversations: The conversations to set (will be merged)
- * @session: The session these conversations belong to
- *
- * Replace conversations for a session. Used when loading from cache
- * or receiving server data.
- */
-void gnalk_app_state_set_conversations (GnalkAppState *self,
-                                          GListStore     *conversations,
-                                          GnalkSession  *session);
-
-/**
- * gnalk_app_state_clear_conversations:
- * @self: The app state
- * @session: The session to clear conversations for (or NULL for all)
- *
- * Clear conversations for a session (e.g., when logging out).
- */
-void gnalk_app_state_clear_conversations (GnalkAppState *self,
-                                            GnalkSession  *session);
-
-/**
- * gnalk_app_state_update_conversation:
- * @self: The app state
- * @conversation: The conversation to update
- *
- * Update a single conversation (e.g., unread count changed).
- */
-void gnalk_app_state_update_conversation (GnalkAppState         *self,
-                                            GnalkConversationData *conversation);
 
 /* Online status */
 

@@ -66,8 +66,7 @@ struct _GnalkSession
   char *current_room_token;
   char *current_session_id;
   gboolean signaling_room_confirmed;
-  /* Conversations */
-  GListStore *conversations;
+  /* Unread tracking */
   int total_unread;
 
   /* Capabilities */
@@ -96,7 +95,6 @@ G_DEFINE_FINAL_TYPE (GnalkSession, gnalk_session, G_TYPE_OBJECT)
 
 enum {
   SIGNAL_STATE_CHANGED,
-  SIGNAL_CONVERSATIONS_UPDATED,
   SIGNAL_ROOM_JOINED,
   SIGNAL_ROOM_LEFT,
   SIGNAL_SIGNALING_ROOM_JOINED,
@@ -183,7 +181,6 @@ gnalk_session_finalize (GObject *object)
   g_clear_object (&self->message_controller);
   g_clear_object (&self->conversation_controller);
   g_clear_object (&self->participant_controller);
-  g_clear_object (&self->conversations);
   g_clear_object (&self->account);
   g_clear_object (&self->database);
   g_clear_object (&self->network_monitor);
@@ -221,10 +218,6 @@ gnalk_session_class_init (GnalkSessionClass *klass)
   signals[SIGNAL_STATE_CHANGED] =
     g_signal_new ("state-changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_INT, G_TYPE_INT);
-
-  signals[SIGNAL_CONVERSATIONS_UPDATED] =
-    g_signal_new ("conversations-updated", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
-                  0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 
   signals[SIGNAL_ROOM_JOINED] =
     g_signal_new ("room-joined", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
@@ -290,7 +283,6 @@ static void
 gnalk_session_init (GnalkSession *self)
 {
   self->state = GNALK_SESSION_STATE_DISCONNECTED;
-  self->conversations = g_list_store_new (GNALK_TYPE_CONVERSATION_DATA);
 }
 
 /* Network change handler */
@@ -561,22 +553,6 @@ gnalk_session_new (GnalkAccount             *account,
   /* Create controllers and relay remaining signaling signals */
   setup_controllers_and_relays (self);
 
-  /* Load cached conversations */
-  GListStore *cached = gnalk_database_load_conversations (database,
-                                                            gnalk_account_get_id (account));
-  if (cached)
-    {
-      guint n = g_list_model_get_n_items (G_LIST_MODEL (cached));
-      for (guint i = 0; i < n; i++)
-        {
-          GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (cached), i);
-          gnalk_conversation_data_set_session (conv, self);
-          g_list_store_append (self->conversations, conv);
-          g_object_unref (conv);
-        }
-      g_object_unref (cached);
-    }
-
   return self;
 }
 
@@ -668,8 +644,9 @@ set_state (GnalkSession *self, GnalkSessionState new_state)
       start_health_check (self);
       start_heartbeat (self);
 
-      /* Create sync coordinator if not exists (requires data_repository) */
-      if (!self->sync_coordinator && self->data_repository && self->notification_service)
+      /* Create sync coordinator if not exists (requires data_repository).
+       * Skip for guests — GET /rooms fails without auth, wasting HTTP requests. */
+      if (!self->is_guest && !self->sync_coordinator && self->data_repository && self->notification_service)
         {
           self->sync_coordinator = gnalk_sync_coordinator_new (self->data_repository,
                                                                self->notification_service);
@@ -687,8 +664,8 @@ set_state (GnalkSession *self, GnalkSessionState new_state)
                               G_CALLBACK (on_sync_coordinator_sync_finished), self);
         }
 
-      /* Configure and start sync coordinator */
-      if (self->sync_coordinator)
+      /* Configure and start sync coordinator (skipped for guests) */
+      if (!self->is_guest && self->sync_coordinator)
         {
           gnalk_sync_coordinator_set_http_client (self->sync_coordinator, self->http_client);
           gnalk_sync_coordinator_set_account (self->sync_coordinator,
@@ -1010,7 +987,8 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  /* Parse and store conversations */
+  /* Parse conversations and save to DB.  Window picks them up via
+   * DataRepository::data-changed — no in-memory GListStore needed. */
   if (response && JSON_NODE_HOLDS_OBJECT (response))
     {
       JsonObject *obj = json_node_get_object (response);
@@ -1022,27 +1000,9 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
               JsonArray *data = json_object_get_array_member (ocs, "data");
               guint len = json_array_get_length (data);
 
-              /* Build lookup of existing conversations by token */
-              GHashTable *existing_by_token = g_hash_table_new (g_str_hash, g_str_equal);
-              guint n_existing = g_list_model_get_n_items (G_LIST_MODEL (self->conversations));
-              for (guint i = 0; i < n_existing; i++)
-                {
-                  GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations), i);
-                  if (conv)
-                    {
-                      const char *token = gnalk_conversation_data_get_token (conv);
-                      if (token)
-                        g_hash_table_insert (existing_by_token, (gpointer) token, conv);
-                      /* Don't unref - hash table holds reference */
-                    }
-                }
-
-              /* Build set of server tokens for stale detection */
-              GHashTable *server_tokens = g_hash_table_new (g_str_hash, g_str_equal);
               GPtrArray *valid_tokens = g_ptr_array_new ();
               self->total_unread = 0;
 
-              /* Update existing or add new conversations */
               for (guint i = 0; i < len; i++)
                 {
                   JsonObject *conv_obj = json_array_get_object_element (data, i);
@@ -1051,73 +1011,25 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
                   if (!token || !*token)
                     continue;
 
-                  g_hash_table_add (server_tokens, (gpointer) token);
-
-                  GnalkConversationData *existing = g_hash_table_lookup (existing_by_token, token);
-                  if (existing)
-                    {
-                      /* Update existing conversation in place */
-                      gnalk_conversation_data_update_from_json (existing, conv_obj);
-                      self->total_unread += gnalk_conversation_data_get_unread_messages (existing);
-                      g_ptr_array_add (valid_tokens, (gpointer) token);
-                    }
-                  else
-                    {
-                      /* New conversation - create and append */
-                      GnalkConversationData *conv = gnalk_conversation_data_new_from_json (conv_obj, self);
-                      if (conv)
-                        {
-                          g_list_store_append (self->conversations, conv);
-                          self->total_unread += gnalk_conversation_data_get_unread_messages (conv);
-                          g_ptr_array_add (valid_tokens, (gpointer) gnalk_conversation_data_get_token (conv));
-                          g_object_unref (conv);
-                        }
-                    }
-
-                  /* Save to database (for both new and updated) */
-                  GnalkConversationData *to_save = existing ? existing :
-                    g_list_model_get_item (G_LIST_MODEL (self->conversations),
-                                           g_list_model_get_n_items (G_LIST_MODEL (self->conversations)) - 1);
-                  if (to_save)
-                    {
-                      gnalk_database_save_conversation (self->database,
-                                                          gnalk_account_get_id (self->account),
-                                                          to_save);
-                      if (!existing)
-                        g_object_unref (to_save);
-                    }
-                }
-
-              /* Remove stale conversations (iterate backwards to avoid index shifts) */
-              n_existing = g_list_model_get_n_items (G_LIST_MODEL (self->conversations));
-              for (gint i = (gint) n_existing - 1; i >= 0; i--)
-                {
-                  GnalkConversationData *conv = g_list_model_get_item (G_LIST_MODEL (self->conversations), i);
+                  /* Create a temporary ConversationData to save to DB */
+                  GnalkConversationData *conv = gnalk_conversation_data_new_from_json (conv_obj, self);
                   if (conv)
                     {
-                      const char *token = gnalk_conversation_data_get_token (conv);
-                      if (token && !g_hash_table_contains (server_tokens, token))
-                        g_list_store_remove (self->conversations, i);
+                      gnalk_database_save_conversation (self->database,
+                                                        gnalk_account_get_id (self->account),
+                                                        conv);
+                      self->total_unread += gnalk_conversation_data_get_unread_messages (conv);
+                      g_ptr_array_add (valid_tokens, (gpointer) gnalk_conversation_data_get_token (conv));
                       g_object_unref (conv);
                     }
                 }
 
-              /* Clean up hash table references */
-              GHashTableIter iter;
-              gpointer value;
-              g_hash_table_iter_init (&iter, existing_by_token);
-              while (g_hash_table_iter_next (&iter, NULL, &value))
-                g_object_unref (value);
-              g_hash_table_destroy (existing_by_token);
-              g_hash_table_destroy (server_tokens);
-
               /* Delete stale conversations from database */
               gnalk_database_delete_stale_conversations (self->database,
-                                                           gnalk_account_get_id (self->account),
-                                                           valid_tokens);
+                                                         gnalk_account_get_id (self->account),
+                                                         valid_tokens);
               g_ptr_array_unref (valid_tokens);
 
-              g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_UPDATED], 0);
               g_signal_emit (self, signals[SIGNAL_UNREAD_COUNT_CHANGED], 0, self->total_unread);
             }
         }
@@ -1919,26 +1831,6 @@ gnalk_session_get_current_session_id (GnalkSession *self)
   return self->current_session_id;
 }
 
-GListStore *
-gnalk_session_get_conversations (GnalkSession *self)
-{
-  g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
-  return self->conversations;
-}
-
-void
-gnalk_session_refresh_conversations (GnalkSession *self)
-{
-  g_return_if_fail (GNALK_IS_SESSION (self));
-
-  if (self->state != GNALK_SESSION_STATE_ONLINE)
-    return;
-
-  gnalk_http_client_get_conversations (self->http_client,
-                                         on_conversations_response,
-                                         self);
-}
-
 int
 gnalk_session_get_total_unread (GnalkSession *self)
 {
@@ -2435,33 +2327,14 @@ on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
         .session          = self,
     };
 
-    /* Check if the conversation already exists (reconnect case) */
-    gboolean found = FALSE;
-    guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations));
-    for (guint i = 0; i < n; i++)
-      {
-        g_autoptr(GnalkConversationData) existing =
-            g_list_model_get_item (G_LIST_MODEL (self->conversations), i);
-        if (g_strcmp0 (gnalk_conversation_data_get_token (existing),
-                       self->current_room_token) == 0)
-          {
-            found = TRUE;
-            break;
-          }
-      }
-
-    if (!found)
-      {
-        GnalkConversationData *conv = gnalk_conversation_data_new_from_db (&init);
-        g_list_store_append (self->conversations, conv);
-
-        /* Save to DB so Window picks it up via data-changed */
-        if (self->data_repository)
-          gnalk_data_repository_save_conversation (self->data_repository,
-                                                   gnalk_account_get_id (self->account),
-                                                   conv);
-        g_object_unref (conv);
-      }
+    /* Save guest conversation to DB — Window picks it up via data-changed.
+     * On reconnect the DB row already exists, save_conversation upserts. */
+    GnalkConversationData *conv = gnalk_conversation_data_new_from_db (&init);
+    if (self->data_repository)
+      gnalk_data_repository_save_conversation (self->data_repository,
+                                               gnalk_account_get_id (self->account),
+                                               conv);
+    g_object_unref (conv);
   }
 
   /* Guest is now online */

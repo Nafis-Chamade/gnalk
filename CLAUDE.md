@@ -32,7 +32,7 @@ src/
 │   ├── gnalk-conversation-controller  # Conversation CRUD (create, leave, delete, search)
 │   ├── gnalk-participant-controller   # Participant polling (60s), promote/demote/remove
 │   ├── gnalk-room-controller          # Room open/close orchestration, tab management
-│   ├── gnalk-app-state                # Centralized state
+│   ├── gnalk-app-state                # Centralized status (online, loading, sync)
 │   └── gnalk-sync-manager             # Offline queue flush
 │
 ├── data/                               # Models and persistence
