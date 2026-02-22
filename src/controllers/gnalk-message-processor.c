@@ -171,6 +171,13 @@ gnalk_message_processor_set_room_state (GnalkMessageProcessor *self,
     {
       msg_index_clear (self);
 
+      /* Reset loading_older so a stale in-flight request doesn't block the new room */
+      if (self->loading_older)
+        {
+          self->loading_older = FALSE;
+          g_signal_emit (self, signals[SIGNAL_LOADING_OLDER_CHANGED], 0, FALSE);
+        }
+
       /* Rebuild indexes from existing store items (cached tab returning) */
       if (state && state->messages_store)
         {
@@ -579,20 +586,16 @@ load_messages_from_db_finish (GObject      *source_object,
 
           if (!already_exists)
             {
-              /* Filter thread replies and thread roots from main timeline.
-               * Keep only thread_created system messages as the visible entry
-               * point at the correct chronological position.  Thread roots
-               * (id == threadId) are added to the index for data lookup but
-               * NOT to the store (the thread_created widget replaces them). */
+              /* Filter thread-sidebar replies from main timeline.
+               * Only hide messages explicitly posted from the thread sidebar
+               * (is_thread=true).  Regular replies (parent field, is_thread=false)
+               * always appear in the main timeline. */
               gint64 tid = gnalk_message_data_get_thread_id (data);
               const char *sys_msg = gnalk_message_data_get_system_message (data);
               gboolean is_thread_created = sys_msg && g_strcmp0 (sys_msg, "thread_created") == 0;
-              /* The API sets threadId == id for ALL messages (not just threads).
-               * Only filter when is_thread is true OR threadId != msg_id
-               * (actual thread content). Regular messages pass through. */
               gboolean is_thread_msg = gnalk_message_data_get_is_thread (data);
               if (tid > 0 && !is_thread_created
-                  && (is_thread_msg || msg_id != tid))
+                  && is_thread_msg)
                 {
                   if (msg_id == tid)
                     {
@@ -969,10 +972,10 @@ gnalk_message_processor_process_older_from_server (GnalkMessageProcessor *self,
   guint len = json_array_get_length (messages);
   if (len == 0)
     {
-      if (self->current_room)
+      if (self->current_room && !has_more)
         self->current_room->has_more_history = FALSE;
-      GNALK_TRACE_MESSAGES ("process_older_from_server: no messages, history exhausted");
-      g_debug ("No more messages from server, history exhausted");
+      GNALK_TRACE_MESSAGES ("process_older_from_server: no messages, has_more=%d", has_more);
+      g_debug ("No more older messages from server (has_more=%d)", has_more);
       return;
     }
 
@@ -1098,6 +1101,10 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
     }
 
   gint64 max_id = self->current_room->last_known_message_id;
+
+  /* Track thread reply counts for roots not yet in msg_index (newest-first order).
+   * After the loop, apply retroactively to roots that were added later. */
+  g_autoptr(GHashTable) pending_thread_replies = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, g_free);
 
   for (guint i = 0; i < len; i++)
     {
@@ -1324,11 +1331,11 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
 
           if (!existing)
             {
-              /* Filter thread replies and roots from main timeline.
-               * Keep only thread_created system msgs as visible entry point.
-               * In thread mode, keep all messages.
-               * Note: the API sets threadId == id for ALL messages (not just threads).
-               * Only filter when isThread is true OR threadId != msg_id (actual thread content). */
+              /* Filter thread-sidebar replies from main timeline.
+               * Only hide messages explicitly posted from the thread sidebar
+               * (isThread=true).  Regular replies that quote a message (parent
+               * field, isThread absent/false) always appear in the main timeline.
+               * The API sets threadId == id for ALL messages (not just threads). */
               gint64 json_thread_id = json_object_get_int_member_with_default (msg, "threadId", 0);
               const char *json_sys_msg = json_object_get_string_member_with_default (msg, "systemMessage", "");
               gboolean json_is_thread_created = g_strcmp0 (json_sys_msg, "thread_created") == 0;
@@ -1336,7 +1343,7 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
               if (json_thread_id > 0
                   && !self->current_room->in_thread_mode
                   && !json_is_thread_created
-                  && (json_is_thread || msg_id != json_thread_id))
+                  && json_is_thread)
                 {
                   if (msg_id == json_thread_id)
                     {
@@ -1347,7 +1354,7 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
                     }
                   else
                     {
-                      /* Thread reply: update root metadata */
+                      /* Thread reply: update root metadata (or defer if root not indexed yet) */
                       GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &json_thread_id);
                       if (root)
                         {
@@ -1360,6 +1367,24 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
                             }
                           gnalk_message_data_set_thread_replies (root,
                               gnalk_message_data_get_thread_replies (root) + 1);
+                        }
+                      else
+                        {
+                          /* Root not yet processed (newest-first order).
+                           * Accumulate reply count to apply after the loop. */
+                          gint *count = g_hash_table_lookup (pending_thread_replies, &json_thread_id);
+                          if (count)
+                            {
+                              (*count)++;
+                            }
+                          else
+                            {
+                              gint64 *key = g_new (gint64, 1);
+                              *key = json_thread_id;
+                              gint *val = g_new (gint, 1);
+                              *val = 1;
+                              g_hash_table_insert (pending_thread_replies, key, val);
+                            }
                         }
                     }
                   continue;
@@ -1410,6 +1435,28 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
           else
             {
               GNALK_TRACE_MESSAGES ("process_json: msg %"G_GINT64_FORMAT" already exists, skipped", msg_id);
+            }
+        }
+    }
+
+  /* Retroactively mark thread roots that were processed after their replies
+   * (happens when messages arrive newest-first from the server). */
+  if (g_hash_table_size (pending_thread_replies) > 0)
+    {
+      GHashTableIter iter;
+      gpointer key, value;
+      g_hash_table_iter_init (&iter, pending_thread_replies);
+      while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+          gint64 thread_id = *(gint64 *)key;
+          gint reply_count = *(gint *)value;
+          GnalkMessageData *root = g_hash_table_lookup (self->msg_index, &thread_id);
+          if (root)
+            {
+              if (!gnalk_message_data_get_is_thread (root))
+                gnalk_message_data_mark_as_thread (root, thread_id);
+              gnalk_message_data_set_thread_replies (root,
+                  gnalk_message_data_get_thread_replies (root) + reply_count);
             }
         }
     }

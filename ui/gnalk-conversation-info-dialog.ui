@@ -78,6 +78,7 @@
                                     <property name="justify">center</property>
                                     <property name="visible">false</property>
                                     <property name="selectable">true</property>
+                                    <property name="focusable">false</property>
                                     <style>
                                       <class name="dim-label"/>
                                     </style>

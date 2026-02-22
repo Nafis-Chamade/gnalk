@@ -444,8 +444,10 @@ gnalk_room_controller_open_room (GnalkRoomController *self, const char *token)
   if (self->message_controller)
     gnalk_message_controller_set_room (self->message_controller, token);
 
-  /* Save last room to settings */
-  if (self->settings && found_data)
+  /* Save last room to settings (skip for guest sessions — don't overwrite
+   * the normal account's last room with a guest room token) */
+  if (self->settings && found_data &&
+      !(self->active_session && gnalk_session_is_guest (self->active_session)))
     g_settings_set_string (self->settings, "last-room-token", token);
 
   /* Emit room-opened - Window does all UI updates */
@@ -534,8 +536,11 @@ gnalk_room_controller_close_current (GnalkRoomController *self)
   if (self->participant_controller)
     gnalk_participant_controller_set_active_room (self->participant_controller, NULL, 0);
 
-  /* Leave room via session's signaling and HTTP */
-  if (self->active_session)
+  /* Leave room via session's signaling and HTTP.
+   * Skip for guest sessions: leaving the room invalidates the guest's
+   * server-side session entirely (signaling drops, API returns 404).
+   * Guest sessions keep their connection alive in the background. */
+  if (self->active_session && !gnalk_session_is_guest (self->active_session))
     {
       GnalkSignaling *sig = gnalk_session_get_signaling (self->active_session);
       GnalkHttpClient *http = gnalk_session_get_http_client (self->active_session);

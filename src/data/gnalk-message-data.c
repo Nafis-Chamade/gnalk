@@ -254,9 +254,11 @@ gnalk_message_data_new_from_json (JsonObject *message_data,
     }
 
   /* Copy parent (quoted message) if present and is an object.
-   * Skip when parent.id == threadId — the server sets the thread root as
-   * parent for every thread reply, but quoting it on each message is noise. */
+   * Skip when parent.id == threadId for thread-sidebar replies (isThread=true)
+   * — those always quote the root which is noise.  Regular replies (isThread
+   * absent/false) keep their parent even if it matches threadId. */
   gint64 json_thread_id = json_object_get_int_member_with_default (message_data, "threadId", 0);
+  gboolean is_thread_reply = json_object_get_boolean_member_with_default (message_data, "isThread", FALSE);
   if (json_object_has_member (message_data, "parent"))
     {
       JsonNode *node = json_object_get_member (message_data, "parent");
@@ -266,7 +268,7 @@ gnalk_message_data_new_from_json (JsonObject *message_data,
           if (parent)
             {
               gint64 parent_id = json_object_get_int_member_with_default (parent, "id", 0);
-              if (json_thread_id == 0 || parent_id != json_thread_id)
+              if (!is_thread_reply || json_thread_id == 0 || parent_id != json_thread_id)
                 self->parent = json_object_ref (parent);
             }
         }

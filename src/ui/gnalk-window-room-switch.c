@@ -238,8 +238,7 @@ gnalk_window_load_participants (GnalkWindow *self, const char *token)
     gnalk_participants_list_hide (self->participants_list);
 
   /* Guests cannot fetch participant list (403 Forbidden) */
-  GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  if (gnalk_application_is_guest (app))
+  if (self->active_session && gnalk_session_is_guest (self->active_session))
     {
       gnalk_participants_list_hide (self->participants_list);
       return;

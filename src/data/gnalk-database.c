@@ -1052,7 +1052,7 @@ gnalk_database_load_messages (GnalkDatabase *self,
         "thread_id, is_thread, thread_replies, thread_title "
         "FROM messages WHERE account_id = ? AND conversation_token = ? AND id < ? "
         "AND (thread_id IS NULL OR thread_id = 0 OR id = thread_id "
-        "     OR system_message = 'thread_created') "
+        "     OR is_thread = 0 OR system_message = 'thread_created') "
         "ORDER BY timestamp DESC LIMIT ?";
     }
   else
@@ -1064,7 +1064,7 @@ gnalk_database_load_messages (GnalkDatabase *self,
         "thread_id, is_thread, thread_replies, thread_title "
         "FROM messages WHERE account_id = ? AND conversation_token = ? "
         "AND (thread_id IS NULL OR thread_id = 0 OR id = thread_id "
-        "     OR system_message = 'thread_created') "
+        "     OR is_thread = 0 OR system_message = 'thread_created') "
         "ORDER BY timestamp DESC LIMIT ?";
     }
 

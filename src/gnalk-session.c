@@ -38,6 +38,8 @@ struct _GnalkSession
   char *guest_display_name;    /* Display name for guest sessions */
   char *room_password;         /* Room password for guest sessions (optional) */
   char *guest_room_name;       /* Room display name for guest sessions */
+  char *guest_room_description;/* Room description for guest sessions */
+  gint  guest_participant_type;/* Participant type from server (default 4 = guest) */
   guint reconnect_timer_id;
   int   reconnect_attempts;
   guint health_check_timer_id;
@@ -190,6 +192,7 @@ gnalk_session_finalize (GObject *object)
   g_free (self->guest_display_name);
   g_free (self->room_password);
   g_free (self->guest_room_name);
+  g_free (self->guest_room_description);
   g_free (self->signaling_server);
   g_free (self->signaling_ticket);
   g_free (self->stun_server);
@@ -2213,13 +2216,22 @@ on_guest_room_info_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  /* Store room display name for later use */
+  /* Store room display name, description, and participant type for later use */
   const char *display_name = json_object_get_string_member_with_default (data, "displayName", NULL);
   if (display_name && *display_name)
     {
       g_free (self->guest_room_name);
       self->guest_room_name = g_strdup (display_name);
     }
+
+  const char *description = json_object_get_string_member_with_default (data, "description", NULL);
+  if (description && *description)
+    {
+      g_free (self->guest_room_description);
+      self->guest_room_description = g_strdup (description);
+    }
+
+  self->guest_participant_type = json_object_get_int_member_with_default (data, "participantType", 4);
 
   /* Check if password is required */
   gboolean has_password = json_object_get_boolean_member_with_default (data, "hasPassword", FALSE);
@@ -2403,21 +2415,42 @@ on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
         }
     }
 
-  /* Create guest conversation data and add to conversations list */
+  /* Create or update guest conversation data in conversations list.
+   * On first connect this appends; on reconnect it updates in-place
+   * to avoid duplicates in the session's conversations list. */
   {
     const char *room_name = self->guest_room_name ? self->guest_room_name : "Guest Room";
     GnalkConversationDataInit init = {
         .token            = self->current_room_token,
         .title            = room_name,
         .name             = room_name,
+        .description      = self->guest_room_description,
         .room_type        = 3,  /* public */
-        .participant_type = 6,  /* guest */
+        .participant_type = self->guest_participant_type ? self->guest_participant_type : 4,
         .session          = self,
     };
-    GnalkConversationData *conv = gnalk_conversation_data_new_from_db (&init);
 
-    g_list_store_append (self->conversations, conv);
-    g_object_unref (conv);
+    /* Check if the conversation already exists (reconnect case) */
+    gboolean found = FALSE;
+    guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations));
+    for (guint i = 0; i < n; i++)
+      {
+        g_autoptr(GnalkConversationData) existing =
+            g_list_model_get_item (G_LIST_MODEL (self->conversations), i);
+        if (g_strcmp0 (gnalk_conversation_data_get_token (existing),
+                       self->current_room_token) == 0)
+          {
+            found = TRUE;
+            break;
+          }
+      }
+
+    if (!found)
+      {
+        GnalkConversationData *conv = gnalk_conversation_data_new_from_db (&init);
+        g_list_store_append (self->conversations, conv);
+        g_object_unref (conv);
+      }
 
     /* Emit conversations-updated to notify window */
     g_signal_emit (self, signals[SIGNAL_CONVERSATIONS_UPDATED], 0);

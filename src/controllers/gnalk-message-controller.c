@@ -359,6 +359,7 @@ gnalk_message_controller_set_room (GnalkMessageController *self,
   self->room_token = g_strdup (room_token);
   self->last_known_message_id = 0;
   self->polling_deferred = FALSE;
+  self->loading_older = FALSE;
 
   /* Increment generation to discard stale responses */
   self->generation++;
@@ -612,6 +613,10 @@ on_older_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
   if (error)
     {
       g_warning ("Failed to get older messages: %s", error->message);
+      /* Emit with empty array so the processor resets its loading_older flag.
+       * has_more=TRUE preserves has_more_history so the user can retry. */
+      g_autoptr(JsonArray) empty = json_array_new ();
+      g_signal_emit (self, signals[SIGNAL_OLDER_MESSAGES_LOADED], 0, empty, TRUE);
       return;
     }
 

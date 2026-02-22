@@ -259,7 +259,7 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
         /* Connect push client (only first time going online from connecting) */
         if (prev_state == GNALK_SESSION_STATE_CONNECTING &&
             self->push_client && !gnalk_push_client_is_connected (self->push_client) &&
-            !gnalk_application_is_guest (app))
+            !gnalk_session_is_guest (session))
           {
             const char *push_url = gnalk_application_get_push_websocket_url (app);
             const char *server_url = account ? gnalk_account_get_server_url (account) : NULL;
@@ -285,7 +285,7 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
           }
 
         /* Update user status menu to show online (heartbeat is handled by session) */
-        if (!gnalk_application_is_guest (app) && user_id)
+        if (!gnalk_session_is_guest (session) && user_id)
           gnalk_user_status_menu_set_status (self->user_status_menu, "online");
 
         /* Show connected/reconnected toast if we had an error */
@@ -314,6 +314,44 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
 
         /* Note: Don't reload messages here - they're already loaded from cache at startup.
          * Long-polling will fetch any new messages incrementally. */
+
+        /* For guests: populate the window's conversations_store from the session's
+         * internal list (guest data is not in the DB, so load_conversations_from_db
+         * won't find anything) and open the room now that the session is online. */
+        if (gnalk_session_is_guest (session) && !self->current_room)
+          {
+            GListStore *session_convs = gnalk_session_get_conversations (session);
+            if (session_convs)
+              {
+                guint n_existing = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+                guint n = g_list_model_get_n_items (G_LIST_MODEL (session_convs));
+                for (guint i = 0; i < n; i++)
+                  {
+                    g_autoptr(GnalkConversationData) conv =
+                        g_list_model_get_item (G_LIST_MODEL (session_convs), i);
+
+                    /* Skip if already in the store (e.g. from switch_to_session) */
+                    gboolean already_present = FALSE;
+                    const char *token = gnalk_conversation_data_get_token (conv);
+                    for (guint j = 0; j < n_existing; j++)
+                      {
+                        g_autoptr(GnalkConversationData) ex =
+                            g_list_model_get_item (G_LIST_MODEL (self->conversations_store), j);
+                        if (g_strcmp0 (gnalk_conversation_data_get_token (ex), token) == 0)
+                          {
+                            already_present = TRUE;
+                            break;
+                          }
+                      }
+                    if (!already_present)
+                      g_list_store_append (self->conversations_store, conv);
+                  }
+              }
+
+            const char *room_token = gnalk_application_get_guest_room_token (app);
+            if (room_token)
+              gnalk_window_open_conversation_by_token (self, room_token);
+          }
 
         /* Refresh participants now that we're online (may have been empty from offline start) */
         if (self->current_room && self->participant_controller)
@@ -578,6 +616,15 @@ gnalk_window_on_sign_out_requested (GnalkAccountSwitcher *switcher G_GNUC_UNUSED
                                      GnalkWindow          *self)
 {
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+
+  /* Guest sign-out: just stop the guest session */
+  if (account_id == -1)
+    {
+      gnalk_application_set_guest_mode (app, FALSE, NULL);
+      gnalk_session_manager_stop_guest_session (self->session_manager);
+      return;
+    }
+
   GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
 
   /* Get account info before removing */
@@ -1200,22 +1247,32 @@ on_message_view_load_older_requested (GnalkMessageView *view,
   (void) view;
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
-  if (self->current_room &&
-      self->current_room->has_more_history && !gnalk_message_view_get_loading_older (self->message_view) &&
-      self->current_room->oldest_loaded_id > 0)
+  if (!self->current_room ||
+      !self->current_room->has_more_history ||
+      gnalk_message_view_get_loading_older (self->message_view) ||
+      self->current_room->oldest_loaded_id <= 0)
     {
-      if (self->current_room->in_thread_mode && self->message_controller)
-        {
-          g_debug ("Message view requested older thread messages");
-          gnalk_message_controller_load_older_thread (self->message_controller,
-              self->current_room->thread_root_id,
-              self->current_room->oldest_loaded_id);
-        }
-      else
-        {
-          g_debug ("Message view requested older messages");
-          gnalk_window_load_older_messages (self);
-        }
+      g_message ("load-older blocked: room=%d has_more=%d view_loading=%d oldest_id=%"G_GINT64_FORMAT,
+                 self->current_room != NULL,
+                 self->current_room ? self->current_room->has_more_history : 0,
+                 gnalk_message_view_get_loading_older (self->message_view),
+                 self->current_room ? self->current_room->oldest_loaded_id : 0);
+      return;
+    }
+
+  if (self->current_room->in_thread_mode && self->message_controller)
+    {
+      g_message ("load-older: requesting older thread messages (before %"G_GINT64_FORMAT")",
+                 self->current_room->oldest_loaded_id);
+      gnalk_message_controller_load_older_thread (self->message_controller,
+          self->current_room->thread_root_id,
+          self->current_room->oldest_loaded_id);
+    }
+  else
+    {
+      g_message ("load-older: requesting older messages (before %"G_GINT64_FORMAT")",
+                 self->current_room->oldest_loaded_id);
+      gnalk_window_load_older_messages (self);
     }
 }
 

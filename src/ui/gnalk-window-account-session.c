@@ -20,6 +20,7 @@
 #include "gnalk-message-processor.h"
 #include "gnalk-room-controller.h"
 #include "gnalk-room-tab-manager.h"
+#include "gnalk-participants-list.h"
 #include <glib/gi18n.h>
 
 /* ============ Session Signal Connection Helpers ============ */
@@ -276,9 +277,18 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), FALSE);
     }
 
+  /* Clear participant banner to avoid showing the previous room's participants */
+  if (self->participants_list)
+    gnalk_participants_list_clear (self->participants_list);
+
   /* Clear all room tabs to avoid showing messages from the wrong account */
   if (self->tab_manager)
     gnalk_room_tab_manager_clear_all (self->tab_manager);
+
+  /* Clear conversation list immediately to avoid showing the previous account's rooms
+   * while the async DB load is in-flight (or won't run at all for guest sessions). */
+  if (self->conversations_store)
+    g_list_store_remove_all (self->conversations_store);
 
   g_clear_object (&self->avatar_cache);
   gint64 account_id = gnalk_session_get_account_id (session);
@@ -326,7 +336,7 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
 
         /* Set user status to online (not for guests) */
         GnalkApplication *app = GNALK_APPLICATION (g_application_get_default ());
-        gboolean is_guest = gnalk_application_is_guest (app);
+        gboolean is_guest = gnalk_session_is_guest (session);
 
         if (!is_guest && user_id)
           {
@@ -340,12 +350,22 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
             /* Hide user avatar and status button for guests */
             gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), FALSE);
 
-            /* Collapse sidebar for guests - they only have access to one room */
-            adw_navigation_split_view_set_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+            /* Show content pane but keep sidebar navigable for account switching */
             adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
 
-            /* Disable back button for guests - they can't return to conversations list */
-            adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), FALSE);
+            /* Populate conversations_store from session's internal list
+             * (guest data is not in DB, so load_conversations_from_db won't find it) */
+            GListStore *session_convs = gnalk_session_get_conversations (session);
+            if (session_convs)
+              {
+                guint n = g_list_model_get_n_items (G_LIST_MODEL (session_convs));
+                for (guint i = 0; i < n; i++)
+                  {
+                    g_autoptr(GnalkConversationData) conv =
+                        g_list_model_get_item (G_LIST_MODEL (session_convs), i);
+                    g_list_store_append (self->conversations_store, conv);
+                  }
+              }
 
             /* Auto-select the guest room */
             const char *room_token = gnalk_application_get_guest_room_token (app);
@@ -356,6 +376,9 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
           {
             /* Ensure status menu is visible for non-guests */
             gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), TRUE);
+
+            /* Restore navigation in case we're coming from guest mode */
+            adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), TRUE);
           }
 
         /* Sync call capability from session */

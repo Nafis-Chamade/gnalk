@@ -188,6 +188,11 @@ gnalk_session_manager_get_session (GnalkSessionManager *self,
                                      gint64                account_id)
 {
   g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (self), NULL);
+
+  /* Guest sessions have account_id=-1 and are stored separately */
+  if (account_id == -1 && self->guest_session)
+    return self->guest_session;
+
   return g_hash_table_lookup (self->sessions, &account_id);
 }
 
@@ -203,6 +208,10 @@ gnalk_session_manager_get_all_sessions (GnalkSessionManager *self)
   g_hash_table_iter_init (&iter, self->sessions);
   while (g_hash_table_iter_next (&iter, NULL, &value))
     list = g_list_prepend (list, g_object_ref (value));
+
+  /* Include guest session so it appears in the account switcher */
+  if (self->guest_session)
+    list = g_list_prepend (list, g_object_ref (self->guest_session));
 
   return list;
 }

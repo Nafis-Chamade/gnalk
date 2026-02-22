@@ -418,8 +418,10 @@ gnalk_window_load_conversations_from_db (GnalkWindow *self)
   GnalkDataRepository *repo = gnalk_application_get_data_repository (app);
   gint64 account_id = self->active_session ? gnalk_session_get_account_id (self->active_session) : 0;
 
-  /* If no active session (e.g., starting offline), get account_id from autologin accounts */
-  if (account_id <= 0)
+  /* If no active session (e.g., starting offline), get account_id from autologin accounts.
+   * Only fall back when there's no active session at all — guest sessions have account_id=-1
+   * and must NOT load another account's conversations. */
+  if (account_id <= 0 && !self->active_session)
     {
       GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
       GList *autologin_accounts = gnalk_account_manager_get_autologin_accounts (account_manager);

@@ -521,6 +521,9 @@ update_info_page (GnalkConversationInfoDialog *self)
   const char *name = gnalk_conversation_data_get_title (self->conversation);
   const char *description = gnalk_conversation_data_get_description (self->conversation);
   gint room_type = gnalk_conversation_data_get_room_type (self->conversation);
+  gboolean can_moderate = gnalk_conversation_data_can_moderate (self->conversation);
+  gint participant_type = gnalk_conversation_data_get_participant_type (self->conversation);
+  gboolean is_guest = (participant_type >= 4 && participant_type <= 6);
 
   gtk_label_set_text (GTK_LABEL (self->info_name), name ? name : "");
 
@@ -536,6 +539,9 @@ update_info_page (GnalkConversationInfoDialog *self)
     {
       gtk_widget_set_visible (self->info_description, FALSE);
     }
+
+  /* Hide settings gear for users who cannot moderate */
+  gtk_widget_set_visible (self->settings_button, can_moderate);
 
   /* Load avatar - use user avatar for 1:1, room avatar for groups */
   if (self->avatar_cache)
@@ -557,8 +563,16 @@ update_info_page (GnalkConversationInfoDialog *self)
         }
     }
 
-  /* Load shared media */
-  load_shared_media (self);
+  /* Hide media for guests — file previews require an authenticated Nextcloud user */
+  if (is_guest)
+    {
+      gtk_widget_set_visible (self->media_group, FALSE);
+    }
+  else
+    {
+      /* Load shared media */
+      load_shared_media (self);
+    }
 
   /* Load participants */
   load_participants (self);
