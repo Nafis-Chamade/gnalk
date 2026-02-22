@@ -92,9 +92,7 @@ GnalkSession *gnalk_session_new (GnalkAccount             *account,
                                 GnalkDataRepository      *data_repository,
                                 GnalkNotificationService *notification_service);
 
-GnalkSession *gnalk_session_new_guest (const char               *server_url,
-                                       const char               *room_token,
-                                       const char               *display_name,
+GnalkSession *gnalk_session_new_guest (GnalkAccount             *account,
                                        const char               *room_password,
                                        GnalkDatabase            *database,
                                        GnalkNetworkMonitor      *network_monitor,
@@ -150,6 +148,7 @@ void gnalk_session_set_user_status (GnalkSession *self,
                                     const char   *status);
 
 /* Internal component access (for call window, etc.) */
+GnalkDatabase               *gnalk_session_get_database                (GnalkSession *self);
 GnalkHttpClient             *gnalk_session_get_http_client             (GnalkSession *self);
 GnalkSignaling              *gnalk_session_get_signaling               (GnalkSession *self);
 GnalkSyncManager            *gnalk_session_get_sync_manager            (GnalkSession *self);

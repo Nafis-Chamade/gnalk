@@ -307,6 +307,9 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
     gboolean is_guest = gnalk_session_is_guest (session);
     gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), TRUE);
 
+    /* Hide message search for guests (Unified Search requires a Nextcloud user) */
+    gtk_widget_set_visible (self->message_search_button, !is_guest);
+
     if (is_guest)
       {
         /* Show generic avatar for guests (no user_id → fallback icon) */
@@ -382,9 +385,13 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
               }
 
             /* Auto-select the guest room */
-            const char *room_token = gnalk_application_get_guest_room_token (app);
-            if (room_token)
-              gnalk_window_open_conversation_by_token (self, room_token);
+            if (gnalk_session_is_guest (session))
+              {
+                GnalkAccount *guest_account = gnalk_session_get_account (session);
+                const char *room_token = gnalk_account_get_room_token (guest_account);
+                if (room_token)
+                  gnalk_window_open_conversation_by_token (self, room_token);
+              }
           }
 
         /* Sync call capability from session */

@@ -13,7 +13,6 @@ struct _GnalkSessionManager
 
   GHashTable    *sessions;       /* gint64 account_id -> GnalkSession */
   GnalkSession *active_session;
-  GnalkSession *guest_session;   /* Single guest session (not in sessions hash) */
 
   int global_unread;
 };
@@ -41,7 +40,6 @@ gnalk_session_manager_finalize (GObject *object)
   GnalkSessionManager *self = GNALK_SESSION_MANAGER (object);
 
   gnalk_session_manager_disconnect_all (self);
-  gnalk_session_manager_stop_guest_session (self);
 
   g_clear_pointer (&self->sessions, g_hash_table_unref);
   g_clear_object (&self->account_manager);
@@ -188,11 +186,6 @@ gnalk_session_manager_get_session (GnalkSessionManager *self,
                                      gint64                account_id)
 {
   g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (self), NULL);
-
-  /* Guest sessions have account_id=-1 and are stored separately */
-  if (account_id == -1 && self->guest_session)
-    return self->guest_session;
-
   return g_hash_table_lookup (self->sessions, &account_id);
 }
 
@@ -208,10 +201,6 @@ gnalk_session_manager_get_all_sessions (GnalkSessionManager *self)
   g_hash_table_iter_init (&iter, self->sessions);
   while (g_hash_table_iter_next (&iter, NULL, &value))
     list = g_list_prepend (list, g_object_ref (value));
-
-  /* Include guest session so it appears in the account switcher */
-  if (self->guest_session)
-    list = g_list_prepend (list, g_object_ref (self->guest_session));
 
   return list;
 }
@@ -336,26 +325,44 @@ gnalk_session_manager_connect_all (GnalkSessionManager *self)
           continue;
         }
 
-      /* Load password from keyring */
-      char *password = gnalk_keyring_lookup_password_sync (
-        gnalk_account_get_server_url (account),
-        gnalk_account_get_user_id (account),
-        NULL);
-
-      if (password)
+      if (gnalk_account_get_is_guest (account))
         {
-          g_debug ("SessionManager: Auto-connecting account %s@%s",
+          /* Guest account: load room password from keyring using "guest:TOKEN" user_id */
+          char *room_password = gnalk_keyring_lookup_password_sync (
+            gnalk_account_get_server_url (account),
+            gnalk_account_get_user_id (account),
+            NULL);
+
+          g_debug ("SessionManager: Auto-connecting guest account %s@%s",
                    gnalk_account_get_user_id (account),
                    gnalk_account_get_server_url (account));
 
-          gnalk_session_manager_start_session (self, account, password);
-          g_free (password);
+          gnalk_session_manager_start_guest_session (self, account, room_password);
+          g_free (room_password);
         }
       else
         {
-          g_debug ("SessionManager: No password for account %s@%s, skipping autologin",
-                   gnalk_account_get_user_id (account),
-                   gnalk_account_get_server_url (account));
+          /* Normal account: load password from keyring */
+          char *password = gnalk_keyring_lookup_password_sync (
+            gnalk_account_get_server_url (account),
+            gnalk_account_get_user_id (account),
+            NULL);
+
+          if (password)
+            {
+              g_debug ("SessionManager: Auto-connecting account %s@%s",
+                       gnalk_account_get_user_id (account),
+                       gnalk_account_get_server_url (account));
+
+              gnalk_session_manager_start_session (self, account, password);
+              g_free (password);
+            }
+          else
+            {
+              g_debug ("SessionManager: No password for account %s@%s, skipping autologin",
+                       gnalk_account_get_user_id (account),
+                       gnalk_account_get_server_url (account));
+            }
         }
 
       g_object_unref (account);
@@ -436,10 +443,6 @@ gnalk_session_manager_has_any_online (GnalkSessionManager *self)
 {
   g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (self), FALSE);
 
-  /* Check guest session first */
-  if (self->guest_session && gnalk_session_is_online (self->guest_session))
-    return TRUE;
-
   GHashTableIter iter;
   gpointer value;
 
@@ -456,26 +459,29 @@ gnalk_session_manager_has_any_online (GnalkSessionManager *self)
 
 GnalkSession *
 gnalk_session_manager_start_guest_session (GnalkSessionManager *self,
-                                             const char           *server_url,
-                                             const char           *room_token,
-                                             const char           *display_name,
+                                             GnalkAccount        *account,
                                              const char           *room_password)
 {
   g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (self), NULL);
-  g_return_val_if_fail (server_url != NULL, NULL);
-  g_return_val_if_fail (room_token != NULL, NULL);
-  g_return_val_if_fail (display_name != NULL && *display_name, NULL);
+  g_return_val_if_fail (GNALK_IS_ACCOUNT (account), NULL);
+  g_return_val_if_fail (gnalk_account_get_is_guest (account), NULL);
 
-  /* Stop any existing guest session first - only one at a time */
-  if (self->guest_session)
-    gnalk_session_manager_stop_guest_session (self);
+  gint64 account_id = gnalk_account_get_id (account);
+
+  /* If session for this account already running, just return it */
+  GnalkSession *existing = gnalk_session_manager_get_session (self, account_id);
+  if (existing)
+    return existing;
 
   /* Create guest session */
-  GnalkSession *session = gnalk_session_new_guest (server_url, room_token, display_name,
-                                                   room_password,
+  GnalkSession *session = gnalk_session_new_guest (account, room_password,
                                                    self->database, self->network_monitor,
                                                    self->data_repository, self->notification_service);
-  self->guest_session = session;
+
+  /* Store in hash table like any other session */
+  gint64 *key = g_new (gint64, 1);
+  *key = account_id;
+  g_hash_table_insert (self->sessions, key, session);
 
   /* Connect signals */
   connect_session_signals (self, session);
@@ -486,49 +492,17 @@ gnalk_session_manager_start_guest_session (GnalkSessionManager *self,
   /* Start connecting */
   gnalk_session_connect_guest (session);
 
+  /* If no active session, make this one active */
+  if (!self->active_session)
+    gnalk_session_manager_set_active_session (self, session);
+
   return session;
 }
 
 void
-gnalk_session_manager_stop_guest_session (GnalkSessionManager *self)
+gnalk_session_manager_stop_guest_session (GnalkSessionManager *self,
+                                           gint64                account_id)
 {
   g_return_if_fail (GNALK_IS_SESSION_MANAGER (self));
-
-  if (!self->guest_session)
-    return;
-
-  GnalkSession *session = self->guest_session;
-
-  /* If this was the active session, clear it */
-  if (self->active_session == session)
-    gnalk_session_manager_set_active_session (self, NULL);
-
-  /* Disconnect signals */
-  disconnect_session_signals (self, session);
-
-  /* Disconnect the session */
-  gnalk_session_disconnect (session);
-
-  /* Emit signal with account_id = -1 for guest */
-  g_signal_emit (self, signals[SIGNAL_SESSION_REMOVED], 0, (gint64) -1);
-
-  /* Clear and unref */
-  g_clear_object (&self->guest_session);
-
-  /* If we have other sessions, make one active */
-  if (!self->active_session && g_hash_table_size (self->sessions) > 0)
-    {
-      GHashTableIter iter;
-      gpointer value;
-      g_hash_table_iter_init (&iter, self->sessions);
-      if (g_hash_table_iter_next (&iter, NULL, &value))
-        gnalk_session_manager_set_active_session (self, GNALK_SESSION (value));
-    }
-}
-
-GnalkSession *
-gnalk_session_manager_get_guest_session (GnalkSessionManager *self)
-{
-  g_return_val_if_fail (GNALK_IS_SESSION_MANAGER (self), NULL);
-  return self->guest_session;
+  gnalk_session_manager_stop_session (self, account_id);
 }

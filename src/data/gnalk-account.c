@@ -12,8 +12,9 @@ struct _GnalkAccount
   gboolean enabled;
   gboolean autologin;
   char   *goa_account_id;
-  gboolean is_guest;    /* TRUE for guest accounts (not persisted) */
-  char   *room_token;   /* Room token for guest sessions */
+  gboolean is_guest;      /* TRUE for guest accounts */
+  char   *room_token;     /* Room token for guest sessions */
+  char   *last_room_token; /* Last opened room token (per-account) */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkAccount, gnalk_account, G_TYPE_OBJECT)
@@ -44,6 +45,7 @@ gnalk_account_finalize (GObject *object)
   g_free (self->avatar_url);
   g_free (self->goa_account_id);
   g_free (self->room_token);
+  g_free (self->last_room_token);
 
   G_OBJECT_CLASS (gnalk_account_parent_class)->finalize (object);
 }
@@ -210,18 +212,25 @@ gnalk_account_new_full (gint64      id,
                            const char *avatar_url,
                            gboolean    enabled,
                            gboolean    autologin,
-                           const char *goa_account_id)
+                           const char *goa_account_id,
+                           gboolean    is_guest,
+                           const char *room_token,
+                           const char *last_room_token)
 {
-  return g_object_new (GNALK_TYPE_ACCOUNT,
-                       "id", id,
-                       "server-url", server_url,
-                       "user-id", user_id,
-                       "display-name", display_name,
-                       "avatar-url", avatar_url,
-                       "enabled", enabled,
-                       "autologin", autologin,
-                       "goa-account-id", goa_account_id,
-                       NULL);
+  GnalkAccount *self = g_object_new (GNALK_TYPE_ACCOUNT,
+                                        "id", id,
+                                        "server-url", server_url,
+                                        "user-id", user_id,
+                                        "display-name", display_name,
+                                        "avatar-url", avatar_url,
+                                        "enabled", enabled,
+                                        "autologin", autologin,
+                                        "goa-account-id", goa_account_id,
+                                        NULL);
+  self->is_guest = is_guest;
+  self->room_token = g_strdup (room_token);
+  self->last_room_token = g_strdup (last_room_token);
+  return self;
 }
 
 gint64
@@ -371,15 +380,17 @@ gnalk_account_new_guest (const char *server_url,
                            const char *room_token,
                            const char *display_name)
 {
-  /* Guest accounts have id=-1 to indicate they are not persisted */
+  g_autofree char *user_id = g_strdup_printf ("guest:%s", room_token);
+
   GnalkAccount *self = g_object_new (GNALK_TYPE_ACCOUNT,
                                         "id", (gint64) -1,
                                         "server-url", server_url,
-                                        "user-id", "",
+                                        "user-id", user_id,
                                         "display-name", display_name,
                                         NULL);
   self->is_guest = TRUE;
   self->room_token = g_strdup (room_token);
+  self->last_room_token = g_strdup (room_token);
   return self;
 }
 
@@ -395,4 +406,32 @@ gnalk_account_get_room_token (GnalkAccount *self)
 {
   g_return_val_if_fail (GNALK_IS_ACCOUNT (self), NULL);
   return self->room_token;
+}
+
+const char *
+gnalk_account_get_last_room_token (GnalkAccount *self)
+{
+  g_return_val_if_fail (GNALK_IS_ACCOUNT (self), NULL);
+  return self->last_room_token;
+}
+
+void
+gnalk_account_set_last_room_token (GnalkAccount *self,
+                                   const char   *token)
+{
+  g_return_if_fail (GNALK_IS_ACCOUNT (self));
+
+  if (g_strcmp0 (self->last_room_token, token) == 0)
+    return;
+
+  g_free (self->last_room_token);
+  self->last_room_token = g_strdup (token);
+}
+
+void
+gnalk_account_set_id (GnalkAccount *self,
+                      gint64        id)
+{
+  g_return_if_fail (GNALK_IS_ACCOUNT (self));
+  self->id = id;
 }

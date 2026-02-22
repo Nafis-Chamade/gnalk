@@ -165,36 +165,26 @@ gboolean gnalk_session_manager_has_any_online (GnalkSessionManager *self);
 /**
  * gnalk_session_manager_start_guest_session:
  * @self: The session manager
- * @server_url: The Nextcloud server URL
- * @room_token: The room token to join
- * @display_name: Display name for the guest
+ * @account: The persisted guest account
  * @room_password: Room password (nullable)
  *
  * Creates a guest session and starts connecting.
- * Only one guest session can exist at a time.
+ * If a session for this account already exists, returns it.
  *
- * Returns: (transfer none): The new guest session
+ * Returns: (transfer none): The new or existing guest session
  */
 GnalkSession *gnalk_session_manager_start_guest_session (GnalkSessionManager *self,
-                                                              const char           *server_url,
-                                                              const char           *room_token,
-                                                              const char           *display_name,
+                                                              GnalkAccount        *account,
                                                               const char           *room_password);
 
 /**
  * gnalk_session_manager_stop_guest_session:
  * @self: The session manager
+ * @account_id: The guest account ID to stop
  *
- * Stops and destroys the guest session if one exists.
+ * Stops and destroys the guest session. Delegates to stop_session.
  */
-void gnalk_session_manager_stop_guest_session (GnalkSessionManager *self);
-
-/**
- * gnalk_session_manager_get_guest_session:
- * @self: The session manager
- *
- * Returns: (transfer none) (nullable): The guest session, or NULL
- */
-GnalkSession *gnalk_session_manager_get_guest_session (GnalkSessionManager *self);
+void gnalk_session_manager_stop_guest_session (GnalkSessionManager *self,
+                                                  gint64                account_id);
 
 G_END_DECLS

@@ -264,11 +264,50 @@ gnalk_account_manager_save_account (GnalkAccountManager *self,
   g_return_if_fail (GNALK_IS_ACCOUNT_MANAGER (self));
   g_return_if_fail (GNALK_IS_ACCOUNT (account));
 
-  /* Don't persist guest accounts */
-  if (gnalk_account_get_is_guest (account))
-    return;
-
   gnalk_database_save_account (self->database, account);
+}
+
+GnalkAccount *
+gnalk_account_manager_add_guest_account (GnalkAccountManager *self,
+                                         const char           *server_url,
+                                         const char           *room_token,
+                                         const char           *display_name)
+{
+  g_return_val_if_fail (GNALK_IS_ACCOUNT_MANAGER (self), NULL);
+  g_return_val_if_fail (server_url != NULL, NULL);
+  g_return_val_if_fail (room_token != NULL, NULL);
+
+  g_autofree char *user_id = g_strdup_printf ("guest:%s", room_token);
+
+  /* Check if guest account for this room already exists */
+  GnalkAccount *existing = gnalk_account_manager_find_account (self, server_url, user_id);
+  if (existing)
+    {
+      /* Update display name if changed */
+      if (display_name)
+        gnalk_account_set_display_name (existing, display_name);
+      g_object_unref (existing);
+      return gnalk_account_manager_find_account (self, server_url, user_id);
+    }
+
+  /* Create in database */
+  gint64 account_id = gnalk_database_create_account (self->database, server_url, user_id);
+  if (account_id <= 0)
+    {
+      g_warning ("Failed to create guest account in database");
+      return NULL;
+    }
+
+  /* Create account object with guest fields */
+  GnalkAccount *account = gnalk_account_new_full (account_id, server_url, user_id,
+                                                     display_name, NULL,
+                                                     TRUE, TRUE, NULL,
+                                                     TRUE, room_token, room_token);
+  gnalk_database_save_account (self->database, account);
+  add_account_internal (self, account, TRUE);
+  g_object_unref (account);
+
+  return gnalk_account_manager_get_account_by_id (self, account_id);
 }
 
 GList *

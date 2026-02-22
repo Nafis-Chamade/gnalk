@@ -36,6 +36,9 @@ void gnalk_database_save_account (GnalkDatabase *self,
                                     GnalkAccount *account);
 void gnalk_database_delete_account (GnalkDatabase *self,
                                        gint64 account_id);
+void gnalk_database_update_last_room_token (GnalkDatabase *self,
+                                            gint64          account_id,
+                                            const char     *token);
 
 /* Conversations */
 void gnalk_database_save_conversation (GnalkDatabase *self,

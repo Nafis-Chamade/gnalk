@@ -519,6 +519,34 @@ on_database_opened (GnalkDataRepository *repository G_GNUC_UNUSED,
                                                   on_app_push_notification,
                                                   self);
 
+  /* One-time migration: GSettings last-room-token → per-account last_room_token */
+  {
+    g_autofree char *legacy_token = g_settings_get_string (self->settings, "last-room-token");
+    if (legacy_token && *legacy_token)
+      {
+        /* Migrate to the first autologin account that has no last_room_token */
+        GList *autologin = gnalk_account_manager_get_autologin_accounts (self->account_manager);
+        for (GList *l = autologin; l; l = l->next)
+          {
+            GnalkAccount *account = GNALK_ACCOUNT (l->data);
+            if (!gnalk_account_get_is_guest (account) &&
+                !gnalk_account_get_last_room_token (account))
+              {
+                gnalk_account_set_last_room_token (account, legacy_token);
+                gnalk_database_update_last_room_token (self->database,
+                                                       gnalk_account_get_id (account),
+                                                       legacy_token);
+                g_message ("Migrated last-room-token '%s' to account %ld",
+                           legacy_token, (long) gnalk_account_get_id (account));
+                break;
+              }
+          }
+        g_list_free_full (autologin, g_object_unref);
+        /* Clear the legacy key */
+        g_settings_set_string (self->settings, "last-room-token", "");
+      }
+  }
+
   /* Mark startup complete */
   self->startup_complete = TRUE;
 

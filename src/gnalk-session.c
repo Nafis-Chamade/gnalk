@@ -581,29 +581,27 @@ gnalk_session_new (GnalkAccount             *account,
 }
 
 GnalkSession *
-gnalk_session_new_guest (const char               *server_url,
-                         const char               *room_token,
-                         const char               *display_name,
+gnalk_session_new_guest (GnalkAccount             *account,
                          const char               *room_password,
                          GnalkDatabase            *database,
                          GnalkNetworkMonitor      *network_monitor,
                          GnalkDataRepository      *data_repository,
                          GnalkNotificationService *notification_service)
 {
-  g_return_val_if_fail (server_url != NULL, NULL);
-  g_return_val_if_fail (room_token != NULL, NULL);
-  g_return_val_if_fail (display_name != NULL, NULL);
+  g_return_val_if_fail (GNALK_IS_ACCOUNT (account), NULL);
+  g_return_val_if_fail (gnalk_account_get_is_guest (account), NULL);
   g_return_val_if_fail (GNALK_IS_DATABASE (database), NULL);
   g_return_val_if_fail (GNALK_IS_NETWORK_MONITOR (network_monitor), NULL);
   g_return_val_if_fail (GNALK_IS_DATA_REPOSITORY (data_repository), NULL);
   g_return_val_if_fail (GNALK_IS_NOTIFICATION_SERVICE (notification_service), NULL);
 
-  /* Create a guest account */
-  GnalkAccount *account = gnalk_account_new_guest (server_url, room_token, display_name);
+  const char *server_url = gnalk_account_get_server_url (account);
+  const char *room_token = gnalk_account_get_room_token (account);
+  const char *display_name = gnalk_account_get_display_name (account);
 
   GnalkSession *self = g_object_new (GNALK_TYPE_SESSION, NULL);
 
-  self->account = account;  /* Takes ownership */
+  self->account = g_object_ref (account);
   self->database = g_object_ref (database);
   self->network_monitor = g_object_ref (network_monitor);
   self->data_repository = data_repository;  /* Not owned */
@@ -1420,7 +1418,7 @@ connect_signaling (GnalkSession *self)
   gnalk_signaling_connect (self->signaling,
                              self->signaling_server,
                              gnalk_account_get_server_url (self->account),
-                             gnalk_account_get_user_id (self->account),
+                             self->is_guest ? "" : gnalk_account_get_user_id (self->account),
                              self->signaling_ticket);
 }
 
@@ -2012,6 +2010,13 @@ gnalk_session_send_file (GnalkSession *self,
                                        room_token, file_path, file_name,
                                        content_type, caption, reply_to, reference_id);
     }
+}
+
+GnalkDatabase *
+gnalk_session_get_database (GnalkSession *self)
+{
+  g_return_val_if_fail (GNALK_IS_SESSION (self), NULL);
+  return self->database;
 }
 
 GnalkHttpClient *

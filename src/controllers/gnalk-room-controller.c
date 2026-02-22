@@ -13,6 +13,8 @@
 #include "gnalk-signaling.h"
 #include "gnalk-http-client.h"
 #include "gnalk-message-data.h"
+#include "gnalk-database.h"
+#include "gnalk-account.h"
 #include "gnalk-log.h"
 
 #define ROOM_SWITCH_DEBOUNCE_MS 300
@@ -444,11 +446,16 @@ gnalk_room_controller_open_room (GnalkRoomController *self, const char *token)
   if (self->message_controller)
     gnalk_message_controller_set_room (self->message_controller, token);
 
-  /* Save last room to settings (skip for guest sessions — don't overwrite
-   * the normal account's last room with a guest room token) */
-  if (self->settings && found_data &&
-      !(self->active_session && gnalk_session_is_guest (self->active_session)))
-    g_settings_set_string (self->settings, "last-room-token", token);
+  /* Save last room token per-account (skip for guests — fixed room) */
+  if (self->active_session && found_data &&
+      !gnalk_session_is_guest (self->active_session))
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      gnalk_account_set_last_room_token (account, token);
+      GnalkDatabase *db = gnalk_session_get_database (self->active_session);
+      if (db)
+        gnalk_database_update_last_room_token (db, gnalk_account_get_id (account), token);
+    }
 
   /* Emit room-opened - Window does all UI updates */
   g_signal_emit (self, signals[SIGNAL_ROOM_OPENED], 0, token, old_token, found_data);
@@ -568,10 +575,14 @@ gnalk_room_controller_restore_last_room (GnalkRoomController *self,
   if (is_collapsed)
     return;
 
-  if (!self->settings)
-    return;
+  /* Read per-account last room token */
+  const char *last_room = NULL;
+  if (self->active_session)
+    {
+      GnalkAccount *account = gnalk_session_get_account (self->active_session);
+      last_room = gnalk_account_get_last_room_token (account);
+    }
 
-  g_autofree char *last_room = g_settings_get_string (self->settings, "last-room-token");
   if (!last_room || !*last_room)
     return;
 

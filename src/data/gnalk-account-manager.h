@@ -118,6 +118,23 @@ void gnalk_account_manager_save_account (GnalkAccountManager *self,
                                            GnalkAccount        *account);
 
 /**
+ * gnalk_account_manager_add_guest_account:
+ * @self: The account manager
+ * @server_url: The Nextcloud server URL
+ * @room_token: The room token
+ * @display_name: Guest display name
+ *
+ * Creates or reuses a guest account for the given room.
+ * Uses synthetic user_id "guest:TOKEN" to satisfy UNIQUE(server_url, user_id).
+ *
+ * Returns: (transfer none): The new or existing guest account
+ */
+GnalkAccount *gnalk_account_manager_add_guest_account (GnalkAccountManager *self,
+                                                        const char           *server_url,
+                                                        const char           *room_token,
+                                                        const char           *display_name);
+
+/**
  * gnalk_account_manager_get_autologin_accounts:
  * @self: The account manager
  *

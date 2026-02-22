@@ -446,14 +446,37 @@ gnalk_window_start_guest_login (GnalkWindow *self)
   /* Show connecting state */
   gnalk_window_login_set_connecting (self, TRUE);
 
-  /* Set guest mode in application */
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-  gnalk_application_set_guest_mode (app, TRUE, room_token);
+  GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
+
+  /* Persist guest account in DB (creates or reuses) */
+  GnalkAccount *account = gnalk_account_manager_add_guest_account (
+      account_manager, server_url, room_token, display_name);
+  if (!account)
+    {
+      gnalk_window_login_show_error (self, _("Failed to create guest account"));
+      gnalk_window_login_set_connecting (self, FALSE);
+      return;
+    }
+
+  /* Store room password in keyring using "guest:TOKEN" as user_id */
+  const char *effective_password = (room_password && *room_password) ? room_password : NULL;
+  if (effective_password)
+    {
+      GError *keyring_error = NULL;
+      if (!gnalk_keyring_store_password_sync (server_url,
+                                              gnalk_account_get_user_id (account),
+                                              effective_password, &keyring_error))
+        {
+          g_warning ("Failed to store guest room password: %s",
+                     keyring_error ? keyring_error->message : "unknown error");
+          g_clear_error (&keyring_error);
+        }
+    }
 
   /* Start guest session via SessionManager */
   GnalkSession *session = gnalk_session_manager_start_guest_session (
-      self->session_manager, server_url, room_token, display_name,
-      (room_password && *room_password) ? room_password : NULL);
+      self->session_manager, account, effective_password);
 
   if (session)
     gnalk_session_manager_set_active_session (self->session_manager, session);

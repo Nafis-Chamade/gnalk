@@ -428,6 +428,17 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
                 "ALTER TABLE participants ADD COLUMN actor_type TEXT DEFAULT 'users';",
                 NULL, NULL, NULL);
 
+  /* Migration: Add guest session persistence columns to accounts */
+  sqlite3_exec (self->db,
+                "ALTER TABLE accounts ADD COLUMN is_guest INTEGER DEFAULT 0;",
+                NULL, NULL, NULL);
+  sqlite3_exec (self->db,
+                "ALTER TABLE accounts ADD COLUMN room_token TEXT;",
+                NULL, NULL, NULL);
+  sqlite3_exec (self->db,
+                "ALTER TABLE accounts ADD COLUMN last_room_token TEXT;",
+                NULL, NULL, NULL);
+
   g_debug ("Database opened: %s", self->db_path);
   return TRUE;
 }
@@ -1516,7 +1527,8 @@ gnalk_database_load_all_accounts (GnalkDatabase *self)
 
   const char *sql =
     "SELECT id, server_url, user_id, user_name, avatar_url, "
-    "COALESCE(enabled, 1), COALESCE(autologin, 0), goa_account_id "
+    "COALESCE(enabled, 1), COALESCE(autologin, 0), goa_account_id, "
+    "COALESCE(is_guest, 0), room_token, last_room_token "
     "FROM accounts ORDER BY id";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
@@ -1531,11 +1543,16 @@ gnalk_database_load_all_accounts (GnalkDatabase *self)
           gboolean enabled = sqlite3_column_int (stmt, 5) != 0;
           gboolean autologin = sqlite3_column_int (stmt, 6) != 0;
           const char *goa_account_id = (const char *) sqlite3_column_text (stmt, 7);
+          gboolean is_guest = sqlite3_column_int (stmt, 8) != 0;
+          const char *room_token = (const char *) sqlite3_column_text (stmt, 9);
+          const char *last_room_token = (const char *) sqlite3_column_text (stmt, 10);
 
           GnalkAccount *account = gnalk_account_new_full (id, server_url, user_id,
                                                              display_name, avatar_url,
                                                              enabled, autologin,
-                                                             goa_account_id);
+                                                             goa_account_id,
+                                                             is_guest, room_token,
+                                                             last_room_token);
           g_list_store_append (store, account);
           g_object_unref (account);
         }
@@ -1600,14 +1617,10 @@ gnalk_database_save_account (GnalkDatabase *self,
   g_return_if_fail (self->db != NULL);
   g_return_if_fail (GNALK_IS_ACCOUNT (account));
 
-  /* Don't persist guest accounts (id=-1) */
-  if (gnalk_account_get_id (account) < 0)
-    return;
-
   sqlite3_stmt *stmt;
   const char *sql =
     "UPDATE accounts SET user_name = ?, avatar_url = ?, enabled = ?, autologin = ?, "
-    "goa_account_id = ? WHERE id = ?";
+    "goa_account_id = ?, is_guest = ?, room_token = ?, last_room_token = ? WHERE id = ?";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -1616,7 +1629,10 @@ gnalk_database_save_account (GnalkDatabase *self,
       sqlite3_bind_int (stmt, 3, gnalk_account_get_enabled (account) ? 1 : 0);
       sqlite3_bind_int (stmt, 4, gnalk_account_get_autologin (account) ? 1 : 0);
       sqlite3_bind_text (stmt, 5, gnalk_account_get_goa_account_id (account), -1, SQLITE_STATIC);
-      sqlite3_bind_int64 (stmt, 6, gnalk_account_get_id (account));
+      sqlite3_bind_int (stmt, 6, gnalk_account_get_is_guest (account) ? 1 : 0);
+      sqlite3_bind_text (stmt, 7, gnalk_account_get_room_token (account), -1, SQLITE_STATIC);
+      sqlite3_bind_text (stmt, 8, gnalk_account_get_last_room_token (account), -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 9, gnalk_account_get_id (account));
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
     }
@@ -1815,6 +1831,26 @@ gnalk_database_reset_participants_status (GnalkDatabase *self,
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
       sqlite3_bind_int64 (stmt, 1, account_id);
+      sqlite3_step (stmt);
+      sqlite3_finalize (stmt);
+    }
+}
+
+void
+gnalk_database_update_last_room_token (GnalkDatabase *self,
+                                       gint64          account_id,
+                                       const char     *token)
+{
+  g_return_if_fail (GNALK_IS_DATABASE (self));
+  g_return_if_fail (self->db != NULL);
+
+  sqlite3_stmt *stmt;
+  const char *sql = "UPDATE accounts SET last_room_token = ? WHERE id = ?";
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_text (stmt, 1, token, -1, SQLITE_STATIC);
+      sqlite3_bind_int64 (stmt, 2, account_id);
       sqlite3_step (stmt);
       sqlite3_finalize (stmt);
     }

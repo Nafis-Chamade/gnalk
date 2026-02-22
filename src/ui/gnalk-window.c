@@ -348,9 +348,13 @@ gnalk_window_on_session_state_changed (GnalkSession *session,
                   }
               }
 
-            const char *room_token = gnalk_application_get_guest_room_token (app);
-            if (room_token)
-              gnalk_window_open_conversation_by_token (self, room_token);
+            if (gnalk_session_is_guest (session))
+              {
+                GnalkAccount *guest_account = gnalk_session_get_account (session);
+                const char *room_token = gnalk_account_get_room_token (guest_account);
+                if (room_token)
+                  gnalk_window_open_conversation_by_token (self, room_token);
+              }
           }
 
         /* Refresh participants now that we're online (may have been empty from offline start) */
@@ -616,15 +620,6 @@ gnalk_window_on_sign_out_requested (GnalkAccountSwitcher *switcher G_GNUC_UNUSED
                                      GnalkWindow          *self)
 {
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-
-  /* Guest sign-out: just stop the guest session */
-  if (account_id == -1)
-    {
-      gnalk_application_set_guest_mode (app, FALSE, NULL);
-      gnalk_session_manager_stop_guest_session (self->session_manager);
-      return;
-    }
-
   GnalkAccountManager *account_manager = gnalk_application_get_account_manager (app);
 
   /* Get account info before removing */
@@ -639,12 +634,20 @@ gnalk_window_on_sign_out_requested (GnalkAccountSwitcher *switcher G_GNUC_UNUSED
   if (server_url && user_id)
     gnalk_keyring_delete_password (server_url, user_id, NULL, NULL);
 
-  /* Disable autologin for this account */
-  gnalk_account_set_autologin (account, FALSE);
-  gnalk_account_manager_save_account (account_manager, account);
-
   /* Stop the session */
   gnalk_session_manager_stop_session (self->session_manager, account_id);
+
+  if (gnalk_account_get_is_guest (account))
+    {
+      /* Guest sign-out: delete the account entirely from DB */
+      gnalk_account_manager_remove_account (account_manager, account_id);
+    }
+  else
+    {
+      /* Normal sign-out: disable autologin but keep account */
+      gnalk_account_set_autologin (account, FALSE);
+      gnalk_account_manager_save_account (account_manager, account);
+    }
 
   /* If no sessions left, show login view */
   guint session_count = gnalk_session_manager_get_session_count (self->session_manager);

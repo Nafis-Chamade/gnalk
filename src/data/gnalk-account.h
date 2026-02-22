@@ -35,7 +35,10 @@ GnalkAccount *gnalk_account_new_full (gint64      id,
                                           const char *avatar_url,
                                           gboolean    enabled,
                                           gboolean    autologin,
-                                          const char *goa_account_id);
+                                          const char *goa_account_id,
+                                          gboolean    is_guest,
+                                          const char *room_token,
+                                          const char *last_room_token);
 
 /* Getters */
 gint64      gnalk_account_get_id             (GnalkAccount *self);
@@ -59,7 +62,7 @@ void gnalk_account_set_autologin      (GnalkAccount *self,
 void gnalk_account_set_goa_account_id (GnalkAccount *self,
                                          const char    *goa_account_id);
 
-/* Guest account constructor (not persisted) */
+/* Guest account constructor (creates unpersisted account with id=-1) */
 GnalkAccount *gnalk_account_new_guest (const char *server_url,
                                          const char *room_token,
                                          const char *display_name);
@@ -67,6 +70,15 @@ GnalkAccount *gnalk_account_new_guest (const char *server_url,
 /* Guest-specific getters */
 gboolean    gnalk_account_get_is_guest   (GnalkAccount *self);
 const char *gnalk_account_get_room_token (GnalkAccount *self);
+
+/* Per-account last room token */
+const char *gnalk_account_get_last_room_token (GnalkAccount *self);
+void        gnalk_account_set_last_room_token (GnalkAccount *self,
+                                               const char   *token);
+
+/* Set account ID (used when persisting a guest account) */
+void gnalk_account_set_id (GnalkAccount *self,
+                           gint64        id);
 
 /**
  * gnalk_account_get_unique_key:
