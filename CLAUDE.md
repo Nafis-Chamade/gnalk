@@ -80,7 +80,9 @@ src/
 
 **Cache-first**: Window loads from DB immediately, controllers sync in background, emit signals only when data changed.
 
-**Session facade**: Each Session owns its controllers (MC, CC, PC) and relays their signals. Window connects to ~11 Session signals + controller signals via getters. At account switch, only Session signals need reconnection. Session parses `spreed.config.federation.outgoing-enabled` from capabilities to gate federated features.
+**Session facade**: Each Session owns its controllers (MC, CC, PC) and relays their signals. Window connects to ~11 Session signals + controller signals via getters. At account switch, only Session signals need reconnection. Session parses `spreed.config.federation.outgoing-enabled` from capabilities to gate federated features. SyncCoordinator is skipped for guest sessions (GET /rooms fails without auth).
+
+**Single conversation data flow**: Session saves conversations to DB → `DataRepository::data-changed` → Window reloads from DB. No in-memory GListStore in Session or AppState. Guest conversations follow the same path.
 
 **MessageProcessor**: Owns message store manipulation (insert, update, sort). Pre-computes display flags (show_date_header, show_timestamp, show_avatar). Maintains hash table indexes for O(1) lookups (msg_index by ID, ref_index by reference_id).
 
