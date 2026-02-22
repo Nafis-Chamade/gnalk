@@ -436,16 +436,30 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
     }
   else
     {
-      /* Conversation not in our list - minimal UI setup */
+      /* Conversation not in our list - minimal UI setup (e.g. guest room not yet synced) */
+      gnalk_window_show_messages_view (self);
+
       gnalk_conversation_header_set_room (self->conversation_header, token, token, NULL, 0);
       gnalk_conversation_header_set_visible (self->conversation_header, TRUE);
 
       if (self->avatar_cache)
         gnalk_avatar_cache_get_room_avatar (self->avatar_cache, token, on_room_avatar_loaded, self);
 
-      /* Start message polling from scratch for unknown rooms */
-      if (self->message_controller)
-        gnalk_message_controller_start_polling (self->message_controller, 0);
+      gnalk_window_update_call_button_state (self);
+
+      /* If tab has no messages yet, load from DB */
+      guint tab_msg_count = g_list_model_get_n_items (G_LIST_MODEL (self->current_room->messages_store));
+      if (!self->current_room->initial_load_done || tab_msg_count == 0)
+        {
+          if (self->current_room->initial_load_done && tab_msg_count == 0)
+            self->current_room->initial_load_done = FALSE;
+          gnalk_window_load_messages_from_db (self, token);
+        }
+
+      adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+
+      /* Load participants */
+      gnalk_window_load_participants (self, token);
 
       /* DataRepository::data-changed will reload conversation list when sync saves this room */
     }
