@@ -146,7 +146,7 @@ gnalk_quote_widget_set_quote (GnalkQuoteWidget *self,
 {
   g_return_if_fail (GNALK_IS_QUOTE_WIDGET (self));
 
-  if (!author_name || !*author_name || !message || !*message)
+  if (!author_name || !*author_name)
     {
       gtk_widget_set_visible (GTK_WIDGET (self), FALSE);
       return;
@@ -159,10 +159,12 @@ gnalk_quote_widget_set_quote (GnalkQuoteWidget *self,
     {
       g_autofree char *markup = gnalk_markdown_to_pango (message, NULL);
       gtk_label_set_markup (GTK_LABEL (self->message_label), markup);
+      gtk_widget_set_visible (self->message_label, TRUE);
     }
   else
     {
       gtk_label_set_text (GTK_LABEL (self->message_label), "");
+      gtk_widget_set_visible (self->message_label, FALSE);
     }
   gtk_widget_set_visible (self->file_preview, FALSE);
 

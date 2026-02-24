@@ -165,6 +165,34 @@ on_bound_data_notify (GObject    *data_obj,
       gtk_widget_remove_css_class (self->message_label, "message-emoji-only");
       if (!self->is_system && is_single_emoji (display_message))
         gtk_widget_add_css_class (self->message_label, "message-emoji-only");
+
+      /* When server response arrives with file parameters, update file_preview
+       * for click handling (gallery vs external viewer) and hide bubble if media-only */
+      if (params && json_object_has_member (params, "file"))
+        {
+          JsonNode *file_node = json_object_get_member (params, "file");
+          if (file_node && JSON_NODE_HOLDS_OBJECT (file_node))
+            {
+              JsonObject *file = json_node_get_object (file_node);
+              const char *file_id = json_object_get_string_member_with_default (file, "id", NULL);
+
+              if (file_id && *file_id && !gnalk_file_preview_get_file_id (self->file_preview))
+                {
+                  const char *file_name = json_object_get_string_member_with_default (file, "name", "");
+                  const char *mimetype = json_object_get_string_member_with_default (file, "mimetype", "");
+                  const char *file_link = json_object_get_string_member_with_default (file, "link", "");
+                  const char *file_path = json_object_get_string_member_with_default (file, "path", "");
+
+                  /* Store file info (NULL avatar_cache = no preview load, upload_preview still shows image) */
+                  gnalk_file_preview_set_file (self->file_preview, file_id, file_name, mimetype,
+                                                file_link, file_path, NULL);
+                }
+
+              /* Hide bubble for media-only file messages */
+              if (g_strcmp0 (message_text, "{file}") == 0)
+                gtk_widget_set_visible (self->message_bubble, FALSE);
+            }
+        }
     }
   else if (g_strcmp0 (name, "status") == 0)
     {
@@ -210,6 +238,11 @@ on_bound_data_notify (GObject    *data_obj,
     }
   else if (g_strcmp0 (name, "file-cached") == 0)
     {
+      /* Skip cache overlay for inline images - no need for green icon on visible images */
+      const char *mimetype = gnalk_file_preview_get_file_mimetype (self->file_preview);
+      if (mimetype && g_str_has_prefix (mimetype, "image/"))
+        return;
+
       gboolean cached = gnalk_message_data_get_file_cached (data);
       gnalk_file_preview_set_cached (self->file_preview, cached);
     }
@@ -1244,8 +1277,11 @@ gnalk_message_row_set_data (GnalkMessageRow  *self,
               if (*parent_actor && *parent_message)
                 {
                   self->parent_message_id = parent_id;
+
+                  /* Hide text for media-only quoted messages */
+                  const char *quote_text = g_strcmp0 (parent_message, "{file}") == 0 ? "" : parent_message;
                   gnalk_quote_widget_set_quote (self->quote_widget, parent_id, parent_actor_id,
-                                                 parent_actor, parent_message, avatar_cache);
+                                                 parent_actor, quote_text, avatar_cache);
 
                   /* Load quote file preview if parent has a file */
                   if (avatar_cache && json_object_has_member (parent, "messageParameters"))
@@ -1377,6 +1413,13 @@ gnalk_message_row_set_data (GnalkMessageRow  *self,
             }
         }
     }
+
+  /* Hide message bubble for media-only file messages (message is just "{file}") */
+  gboolean has_inline_media = gtk_widget_get_visible (self->audio_player)
+                               || gtk_widget_get_visible (GTK_WIDGET (self->file_preview))
+                               || gtk_widget_get_visible (self->video_thumbnail);
+  if (has_inline_media && g_strcmp0 (message_text, "{file}") == 0)
+    gtk_widget_set_visible (self->message_bubble, FALSE);
 }
 
 gint64
@@ -1941,8 +1984,11 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       if (*parent_actor && *parent_message)
         {
           self->parent_message_id = parent_id;
+
+          /* Hide text for media-only quoted messages */
+          const char *quote_text = g_strcmp0 (parent_message, "{file}") == 0 ? "" : parent_message;
           gnalk_quote_widget_set_quote (self->quote_widget, parent_id, parent_actor_id,
-                                         parent_actor, parent_message, avatar_cache);
+                                         parent_actor, quote_text, avatar_cache);
 
           /* Load quote file preview if parent has a file */
           if (avatar_cache && json_object_has_member (parent, "messageParameters"))
@@ -2097,7 +2143,11 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
   else
     {
       gnalk_upload_preview_reset (self->upload_preview);
-      gtk_widget_set_visible (self->message_bubble, TRUE);
+
+      /* Hide message bubble for media-only file messages (message is just "{file}") */
+      const char *raw_msg = gnalk_message_data_get_message (data);
+      gboolean is_file_only = has_server_file_info && raw_msg && g_strcmp0 (raw_msg, "{file}") == 0;
+      gtk_widget_set_visible (self->message_bubble, !is_file_only);
     }
 
   /* Thread entry: show only on thread_created system messages.
@@ -2266,6 +2316,11 @@ gnalk_message_row_set_file_cached (GnalkMessageRow *self,
                                      gboolean          cached)
 {
   g_return_if_fail (GNALK_IS_MESSAGE_ROW (self));
+
+  /* Skip cache overlay for inline images */
+  const char *mimetype = gnalk_file_preview_get_file_mimetype (self->file_preview);
+  if (mimetype && g_str_has_prefix (mimetype, "image/"))
+    return;
 
   gnalk_file_preview_set_cached (self->file_preview, cached);
 }

@@ -358,7 +358,29 @@ gnalk_window_on_quote_requested (GnalkMessageRow *row,
 
   self->current_room->reply_to_message_id = message_id;
 
-  gnalk_conversation_actions_set_reply (self->conversation_actions, message_id, author_name, message_text);
+  /* Check if this is a media-only message and set reply text accordingly */
+  const char *reply_text = message_text;
+  if (self->messages_store)
+    {
+      guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
+      for (guint i = 0; i < n_items; i++)
+        {
+          GnalkMessageData *msg_data = g_list_model_get_item (G_LIST_MODEL (self->messages_store), i);
+          if (msg_data && gnalk_message_data_get_id (msg_data) == message_id)
+            {
+              const char *raw_msg = gnalk_message_data_get_message (msg_data);
+              if (raw_msg && g_strcmp0 (raw_msg, "{file}") == 0)
+                reply_text = "";
+              g_object_unref (msg_data);
+              break;
+            }
+          if (msg_data)
+            g_object_unref (msg_data);
+        }
+    }
+
+  /* set_reply resets image visibility, so must be called before loading file preview */
+  gnalk_conversation_actions_set_reply (self->conversation_actions, message_id, author_name, reply_text);
 
   /* Look up the message in the store to check for file preview */
   if (self->messages_store && self->avatar_cache)
