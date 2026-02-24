@@ -37,6 +37,7 @@ static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 static void do_fetch (GnalkParticipantController *self);
+static void stop_polling (GnalkParticipantController *self);
 
 /* Callback data structure */
 typedef struct {
@@ -249,8 +250,18 @@ on_fetch_response (GnalkHttpClient *client G_GNUC_UNUSED,
 
   if (error)
     {
-      g_warning ("ParticipantController: Fetch failed for %s: %s", room_token, error->message);
-      g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
+      /* 422 = not in room (session expired server-side). Stop polling until
+       * the next POST /participants/active re-establishes the session. */
+      if (strstr (error->message, "422"))
+        {
+          g_debug ("ParticipantController: Not in room %s (422), stopping poll", room_token);
+          stop_polling (self);
+        }
+      else
+        {
+          g_warning ("ParticipantController: Fetch failed for %s: %s", room_token, error->message);
+          g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
+        }
       g_free (room_token);
       return;
     }
@@ -574,9 +585,10 @@ gnalk_participant_controller_set_session_ready (GnalkParticipantController *self
   g_return_if_fail (GNALK_IS_PARTICIPANT_CONTROLLER (self));
 
   self->session_ready = ready;
-  if (ready && self->fetch_deferred)
+  if (ready && self->active_room_token)
     {
-      self->fetch_deferred = FALSE;
       do_fetch (self);
+      start_polling (self);  /* restart if stopped by 422 */
+      self->fetch_deferred = FALSE;
     }
 }
