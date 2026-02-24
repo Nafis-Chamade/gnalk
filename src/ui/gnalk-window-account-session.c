@@ -423,11 +423,11 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       break;
     }
 
-  /* Reload conversations only on reconnect (sync may have updated DB while
-   * offline) — not on every state change since the initial load already has
-   * the data and the SyncCoordinator's batch save emits data-changed when
-   * something actually differs. */
-  if (state == GNALK_SESSION_STATE_ONLINE && self->had_connection_error)
+  /* Load conversations from DB when attaching to an already-online session.
+   * The store was just cleared above, so we always need to populate it.
+   * (For CONNECTING sessions, the load will happen via data-changed when
+   * the Session's on_conversations_response saves to DB.) */
+  if (state == GNALK_SESSION_STATE_ONLINE)
     gnalk_window_load_conversations_from_db (self);
 }
 
