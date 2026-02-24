@@ -423,8 +423,12 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
       break;
     }
 
-  /* Session state changed - reload conversations from DB for single code path */
-  gnalk_window_load_conversations_from_db (self);
+  /* Reload conversations only on reconnect (sync may have updated DB while
+   * offline) — not on every state change since the initial load already has
+   * the data and the SyncCoordinator's batch save emits data-changed when
+   * something actually differs. */
+  if (state == GNALK_SESSION_STATE_ONLINE && self->had_connection_error)
+    gnalk_window_load_conversations_from_db (self);
 }
 
 /* ============ Session Manager Signal Handlers ============ */

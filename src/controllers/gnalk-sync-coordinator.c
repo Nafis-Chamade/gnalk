@@ -522,13 +522,28 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
 
           if (server_last_id > db_last_id)
             {
-              g_message ("[%s] SyncCoordinator: room %s has new messages (server: %ld, db: %ld)",
-                         fetch_data->user_id, token, server_last_id, db_last_id);
+              if (db_last_id == 0)
+                {
+                  /* First sync for this room — just set the watermark so we
+                   * don't re-fetch old messages later.  Actual messages will
+                   * be loaded on-demand when the room is opened. */
+                  g_debug ("[%s] SyncCoordinator: room %s initial watermark → %ld",
+                           fetch_data->user_id, token, server_last_id);
+                  gnalk_data_repository_set_last_known_message_id (
+                      self->repository, account_id, token, server_last_id);
+                  gnalk_data_repository_set_last_notified_message_id (
+                      self->repository, account_id, token, server_last_id);
+                }
+              else
+                {
+                  g_message ("[%s] SyncCoordinator: room %s has new messages (server: %ld, db: %ld)",
+                             fetch_data->user_id, token, server_last_id, db_last_id);
 
-              /* Sync messages for this room */
-              sync_room_messages (self, http_client, account_id,
-                                  fetch_data->user_id, token, display_name, db_last_id,
-                                  notification_level);
+                  /* Sync messages for this room */
+                  sync_room_messages (self, http_client, account_id,
+                                      fetch_data->user_id, token, display_name, db_last_id,
+                                      notification_level);
+                }
             }
         }
     }

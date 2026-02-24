@@ -1000,7 +1000,7 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
               JsonArray *data = json_object_get_array_member (ocs, "data");
               guint len = json_array_get_length (data);
 
-              GPtrArray *valid_tokens = g_ptr_array_new ();
+              GPtrArray *valid_tokens = g_ptr_array_new_with_free_func (g_free);
               self->total_unread = 0;
 
               for (guint i = 0; i < len; i++)
@@ -1019,7 +1019,7 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                                         gnalk_account_get_id (self->account),
                                                         conv);
                       self->total_unread += gnalk_conversation_data_get_unread_messages (conv);
-                      g_ptr_array_add (valid_tokens, (gpointer) gnalk_conversation_data_get_token (conv));
+                      g_ptr_array_add (valid_tokens, g_strdup (gnalk_conversation_data_get_token (conv)));
                       g_object_unref (conv);
                     }
                 }

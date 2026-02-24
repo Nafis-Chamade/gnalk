@@ -684,8 +684,8 @@ gnalk_data_repository_save_conversation (GnalkDataRepository   *self,
   g_return_if_fail (self->is_open);
   g_return_if_fail (GNALK_IS_CONVERSATION_DATA (conversation));
 
-  gnalk_database_save_conversation (self->database, account_id, conversation);
-  g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
+  if (gnalk_database_save_conversation (self->database, account_id, conversation))
+    g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
 }
 
 void
@@ -697,14 +697,19 @@ gnalk_data_repository_save_conversations (GnalkDataRepository *self,
   g_return_if_fail (self->is_open);
   g_return_if_fail (conversations != NULL);
 
+  gboolean any_changed = FALSE;
+
   for (guint i = 0; i < conversations->len; i++)
     {
       GnalkConversationData *conv = g_ptr_array_index (conversations, i);
       if (GNALK_IS_CONVERSATION_DATA (conv))
-        gnalk_database_save_conversation (self->database, account_id, conv);
+        {
+          if (gnalk_database_save_conversation (self->database, account_id, conv))
+            any_changed = TRUE;
+        }
     }
 
-  if (conversations->len > 0)
+  if (any_changed)
     g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
 }
 

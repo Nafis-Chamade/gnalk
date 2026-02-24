@@ -41,9 +41,9 @@ void gnalk_database_update_last_room_token (GnalkDatabase *self,
                                             const char     *token);
 
 /* Conversations */
-void gnalk_database_save_conversation (GnalkDatabase *self,
-                                         gint64 account_id,
-                                         GnalkConversationData *data);
+gboolean gnalk_database_save_conversation (GnalkDatabase *self,
+                                            gint64 account_id,
+                                            GnalkConversationData *data);
 void gnalk_database_delete_conversation (GnalkDatabase *self,
                                            gint64 account_id,
                                            const char *token);
