@@ -398,20 +398,21 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
           gnalk_session_fetch_federation_signaling (self->active_session, token);
         }
 
-      /* Show participants toggle for group conversations */
-      {
-        GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
-        GSettings *settings = gnalk_application_get_settings (app);
-        gboolean is_group = (room_type != 1) && !self->is_guest_mode;
-        gtk_widget_set_visible (self->participants_toggle_button, is_group);
-        if (is_group)
-          {
-            gboolean show_participants = g_settings_get_boolean (settings, "show-participants");
-            gnalk_window_block_participants_toggle (self);
-            gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->participants_toggle_button), show_participants);
-            gnalk_window_unblock_participants_toggle (self);
-          }
-      }
+      /* Show participants toggle for group conversations (hidden in guest mode by setup_guest_mode) */
+      if (!self->is_guest_mode)
+        {
+          GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
+          GSettings *settings = gnalk_application_get_settings (app);
+          gboolean is_group = (room_type != 1);
+          gtk_widget_set_visible (self->participants_toggle_button, is_group);
+          if (is_group)
+            {
+              gboolean show_participants = g_settings_get_boolean (settings, "show-participants");
+              gnalk_window_block_participants_toggle (self);
+              gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (self->participants_toggle_button), show_participants);
+              gnalk_window_unblock_participants_toggle (self);
+            }
+        }
 
       /* If tab has no messages yet, load from DB */
       guint tab_msg_count = g_list_model_get_n_items (G_LIST_MODEL (self->current_room->messages_store));
@@ -665,9 +666,9 @@ update_open_room_info (GnalkWindow *self)
           if (self->avatar_cache)
             gnalk_avatar_cache_get_room_avatar (self->avatar_cache, token, on_room_avatar_loaded, self);
 
-          /* Show participants toggle for group conversations (not in guest mode) */
-          gboolean is_group = (room_type != 1) && !self->is_guest_mode;
-          gtk_widget_set_visible (self->participants_toggle_button, is_group);
+          /* Show participants toggle for group conversations (hidden in guest mode by setup_guest_mode) */
+          if (!self->is_guest_mode)
+            gtk_widget_set_visible (self->participants_toggle_button, room_type != 1);
 
           /* Load participants only if not already loaded for this room */
           const char *active_room = self->participant_controller

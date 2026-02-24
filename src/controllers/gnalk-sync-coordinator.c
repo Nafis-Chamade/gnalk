@@ -527,7 +527,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
                   /* First sync for this room — just set the watermark so we
                    * don't re-fetch old messages later.  Actual messages will
                    * be loaded on-demand when the room is opened. */
-                  g_debug ("[%s] SyncCoordinator: room %s initial watermark → %ld",
+                  g_debug ("[%s] SyncCoordinator: room %s initial watermark -> %ld",
                            fetch_data->user_id, token, server_last_id);
                   gnalk_data_repository_set_last_known_message_id (
                       self->repository, account_id, token, server_last_id);

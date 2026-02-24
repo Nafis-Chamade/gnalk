@@ -628,6 +628,20 @@ guest_reparent_to_sidebar (GnalkWindow *self)
   self->guest_widgets_reparented = FALSE;
 }
 
+/* Enter wide guest layout: reparent widgets to content header, hide sidebar.
+ * Temporarily hides split_view to suppress the collapse transition.
+ * set_collapsed(TRUE) is idempotent when already collapsed (breakpoint). */
+static void
+guest_enter_wide_layout (GnalkWindow *self)
+{
+  gtk_widget_set_visible (self->split_view, FALSE);
+  guest_reparent_to_content (self);
+  adw_navigation_split_view_set_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+  adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+  adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), FALSE);
+  gtk_widget_set_visible (self->split_view, TRUE);
+}
+
 static void
 on_narrow_breakpoint_apply (AdwBreakpoint *breakpoint G_GNUC_UNUSED,
                             GnalkWindow   *self)
@@ -649,12 +663,7 @@ on_narrow_breakpoint_unapply (AdwBreakpoint *breakpoint G_GNUC_UNUSED,
 {
   if (self->is_guest_mode)
     {
-      /* Entering wide while guest: reparent to content header, hide sidebar */
-      gtk_widget_set_visible (self->split_view, FALSE);
-      guest_reparent_to_content (self);
-      adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
-      adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), FALSE);
-      gtk_widget_set_visible (self->split_view, TRUE);
+      guest_enter_wide_layout (self);
 
       /* Room was closed by on_content_page_hiding when user navigated back.
        * Reopen it so messages are displayed again. */
@@ -688,19 +697,15 @@ gnalk_window_setup_guest_mode (GnalkWindow *self)
 
   self->is_guest_mode = TRUE;
 
+  /* Hide participants toggle — guests never see it */
+  gtk_widget_set_visible (self->participants_toggle_button, FALSE);
+
   gboolean is_collapsed = adw_navigation_split_view_get_collapsed (
       ADW_NAVIGATION_SPLIT_VIEW (self->split_view));
 
   if (!is_collapsed)
     {
-      /* Wide mode: reparent widgets to content header, hide sidebar.
-       * Temporarily hide split_view to suppress the collapse transition. */
-      gtk_widget_set_visible (self->split_view, FALSE);
-      guest_reparent_to_content (self);
-      adw_navigation_split_view_set_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
-      adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
-      adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), FALSE);
-      gtk_widget_set_visible (self->split_view, TRUE);
+      guest_enter_wide_layout (self);
     }
   else
     {
@@ -2379,10 +2384,10 @@ gnalk_window_init (GnalkWindow *self)
   {
     AdwBreakpoint *bp = adw_breakpoint_new (
         adw_breakpoint_condition_parse ("max-width: 600sp"));
-    g_signal_connect (bp, "apply",
-                      G_CALLBACK (on_narrow_breakpoint_apply), self);
-    g_signal_connect (bp, "unapply",
-                      G_CALLBACK (on_narrow_breakpoint_unapply), self);
+    g_signal_connect_object (bp, "apply",
+                            G_CALLBACK (on_narrow_breakpoint_apply), self, 0);
+    g_signal_connect_object (bp, "unapply",
+                            G_CALLBACK (on_narrow_breakpoint_unapply), self, 0);
     adw_application_window_add_breakpoint (ADW_APPLICATION_WINDOW (self), bp);
   }
 
@@ -2630,8 +2635,10 @@ gnalk_window_init (GnalkWindow *self)
   /* Set up breakpoint for responsive message display (wide vs narrow layout) */
   AdwBreakpoint *wide_breakpoint = adw_breakpoint_new (
     adw_breakpoint_condition_parse ("min-width: 1100px"));
-  g_signal_connect (wide_breakpoint, "apply", G_CALLBACK (on_wide_breakpoint_applied), self);
-  g_signal_connect (wide_breakpoint, "unapply", G_CALLBACK (on_wide_breakpoint_unapplied), self);
+  g_signal_connect_object (wide_breakpoint, "apply",
+                          G_CALLBACK (on_wide_breakpoint_applied), self, 0);
+  g_signal_connect_object (wide_breakpoint, "unapply",
+                          G_CALLBACK (on_wide_breakpoint_unapplied), self, 0);
   adw_application_window_add_breakpoint (ADW_APPLICATION_WINDOW (self), wide_breakpoint);
 
   /* Connect login view signals */

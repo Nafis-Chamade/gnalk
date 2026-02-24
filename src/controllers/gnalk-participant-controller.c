@@ -17,10 +17,9 @@ struct _GnalkParticipantController
   /* Generation counter for stale response detection */
   guint generation;
 
-  /* Session-ready gate: defer fetch until POST /participants/active
+  /* Session-ready gate: block fetch until POST /participants/active
    * has completed (cookies established). Prevents PHP session race. */
   gboolean session_ready;
-  gboolean fetch_deferred;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkParticipantController, gnalk_participant_controller, G_TYPE_OBJECT)
@@ -252,7 +251,7 @@ on_fetch_response (GnalkHttpClient *client G_GNUC_UNUSED,
     {
       /* 422 = not in room (session expired server-side). Stop polling until
        * the next POST /participants/active re-establishes the session. */
-      if (strstr (error->message, "422"))
+      if (strstr (error->message, "HTTP error 422"))
         {
           g_debug ("ParticipantController: Not in room %s (422), stopping poll", room_token);
           stop_polling (self);
@@ -304,10 +303,7 @@ do_fetch (GnalkParticipantController *self)
     return;
 
   if (!self->session_ready)
-    {
-      self->fetch_deferred = TRUE;
-      return;
-    }
+    return;
 
   FetchCallbackData *cb_data = g_slice_new0 (FetchCallbackData);
   cb_data->controller = self;
@@ -384,7 +380,6 @@ gnalk_participant_controller_set_active_room (GnalkParticipantController *self,
   g_free (self->active_room_token);
   self->active_room_token = g_strdup (room_token);
   self->active_room_type = room_type;
-  self->fetch_deferred = FALSE;
 
   if (!room_token)
     {
@@ -588,7 +583,10 @@ gnalk_participant_controller_set_session_ready (GnalkParticipantController *self
   if (ready && self->active_room_token)
     {
       do_fetch (self);
-      start_polling (self);  /* restart if stopped by 422 */
-      self->fetch_deferred = FALSE;
+      start_polling (self);
+    }
+  else if (!ready)
+    {
+      stop_polling (self);
     }
 }

@@ -1000,7 +1000,9 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
               JsonArray *data = json_object_get_array_member (ocs, "data");
               guint len = json_array_get_length (data);
 
+              GPtrArray *conversations = g_ptr_array_new_with_free_func (g_object_unref);
               GPtrArray *valid_tokens = g_ptr_array_new_with_free_func (g_free);
+              gint64 account_id = gnalk_account_get_id (self->account);
               self->total_unread = 0;
 
               for (guint i = 0; i < len; i++)
@@ -1011,23 +1013,21 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
                   if (!token || !*token)
                     continue;
 
-                  /* Create a temporary ConversationData to save to DB */
                   GnalkConversationData *conv = gnalk_conversation_data_new_from_json (conv_obj, self);
                   if (conv)
                     {
-                      gnalk_database_save_conversation (self->database,
-                                                        gnalk_account_get_id (self->account),
-                                                        conv);
                       self->total_unread += gnalk_conversation_data_get_unread_messages (conv);
-                      g_ptr_array_add (valid_tokens, g_strdup (gnalk_conversation_data_get_token (conv)));
-                      g_object_unref (conv);
+                      g_ptr_array_add (valid_tokens, g_strdup (token));
+                      g_ptr_array_add (conversations, conv);  /* transfers ownership */
                     }
                 }
 
-              /* Delete stale conversations from database */
-              gnalk_database_delete_stale_conversations (self->database,
-                                                         gnalk_account_get_id (self->account),
-                                                         valid_tokens);
+              /* Save through DataRepository (emits data-changed if anything changed) */
+              gnalk_data_repository_save_conversations (self->data_repository,
+                                                        account_id, conversations);
+              gnalk_data_repository_delete_stale_conversations (self->data_repository,
+                                                                account_id, valid_tokens);
+              g_ptr_array_unref (conversations);
               g_ptr_array_unref (valid_tokens);
 
               g_signal_emit (self, signals[SIGNAL_UNREAD_COUNT_CHANGED], 0, self->total_unread);
