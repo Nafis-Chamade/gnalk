@@ -88,6 +88,8 @@ struct _GnalkWindow
   char      *login_room_token;  /* For guest mode */
 
   GtkWidget *split_view;
+  GtkWidget *content_header;  /* Content pane's AdwHeaderBar (template child) */
+  GtkWidget *sidebar_header;  /* Sidebar's AdwHeaderBar (captured in init) */
   GnalkConversationSidebar *conversation_sidebar;
   GnalkMessageView *message_view;
   GtkWidget *content_page;
@@ -166,6 +168,8 @@ struct _GnalkWindow
   gboolean initial_auth_done;        /* First auth attempt completed */
   gboolean initial_conversations_loaded;  /* First conversation list load done */
   gboolean was_active;               /* Previous window active state (to detect app switch vs popover) */
+  gboolean is_guest_mode;            /* Current session is a guest (sidebar hidden) */
+  gboolean guest_widgets_reparented; /* Avatar+switcher moved to content header (wide guest) */
 
   GnalkCallWindow *active_call_window;  /* Currently active call window, if any */
   gint pending_call_with_video;  /* -1=none, 0=audio, 1=video */
@@ -439,6 +443,10 @@ void gnalk_window_on_conv_favorite_toggled     (GnalkConversationRow *row, const
 
 /* Session disconnect helper for dispose */
 void gnalk_window_disconnect_active_session (GnalkWindow *self);
+
+/* Guest mode: hide sidebar, reparent account switcher to content header */
+void gnalk_window_setup_guest_mode    (GnalkWindow *self);
+void gnalk_window_teardown_guest_mode (GnalkWindow *self);
 
 /* Sync coordinator handlers removed - Session relays sync signals */
 

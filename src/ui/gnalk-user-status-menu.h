@@ -22,4 +22,7 @@ void gnalk_user_status_menu_set_user (GnalkUserStatusMenu *self,
 void gnalk_user_status_menu_set_visible (GnalkUserStatusMenu *self,
                                            gboolean              visible);
 
+void gnalk_user_status_menu_set_interactive (GnalkUserStatusMenu *self,
+                                               gboolean              interactive);
+
 G_END_DECLS

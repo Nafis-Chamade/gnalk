@@ -402,7 +402,7 @@ gnalk_window_on_room_controller_room_opened (GnalkRoomController   *ctrl,
       {
         GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
         GSettings *settings = gnalk_application_get_settings (app);
-        gboolean is_group = (room_type != 1);
+        gboolean is_group = (room_type != 1) && !self->is_guest_mode;
         gtk_widget_set_visible (self->participants_toggle_button, is_group);
         if (is_group)
           {
@@ -665,8 +665,8 @@ update_open_room_info (GnalkWindow *self)
           if (self->avatar_cache)
             gnalk_avatar_cache_get_room_avatar (self->avatar_cache, token, on_room_avatar_loaded, self);
 
-          /* Show participants toggle for group conversations */
-          gboolean is_group = (room_type != 1);
+          /* Show participants toggle for group conversations (not in guest mode) */
+          gboolean is_group = (room_type != 1) && !self->is_guest_mode;
           gtk_widget_set_visible (self->participants_toggle_button, is_group);
 
           /* Load participants only if not already loaded for this room */

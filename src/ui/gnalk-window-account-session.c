@@ -304,7 +304,13 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
   /* Configure guest/non-guest UI regardless of session state */
   {
     gboolean is_guest = gnalk_session_is_guest (session);
+
+    /* Teardown previous guest mode if switching away */
+    if (self->is_guest_mode && !is_guest)
+      gnalk_window_teardown_guest_mode (self);
+
     gtk_widget_set_visible (GTK_WIDGET (self->user_status_menu), TRUE);
+    gnalk_user_status_menu_set_interactive (self->user_status_menu, !is_guest);
 
     /* Hide message search for guests (Unified Search requires a Nextcloud user) */
     gtk_widget_set_visible (self->message_search_button, !is_guest);
@@ -314,6 +320,7 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
         /* Show generic avatar for guests (no user_id → fallback icon) */
         gnalk_user_status_menu_set_user (self->user_status_menu, NULL, NULL);
         gnalk_user_status_menu_set_status (self->user_status_menu, NULL);
+        gnalk_window_setup_guest_mode (self);
       }
     else
       {
@@ -363,14 +370,9 @@ gnalk_window_switch_to_session (GnalkWindow  *self,
             gnalk_user_status_menu_set_status (self->user_status_menu, "online");
           }
 
-        /* Configure UI for guest mode */
+        /* Auto-select the guest room */
         if (is_guest)
           {
-            /* Show content pane but keep sidebar navigable for account switching */
-            adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
-
-            /* Auto-select the guest room.  The conversation is saved to DB
-             * by the session and loaded via data-changed. */
             GnalkAccount *guest_account = gnalk_session_get_account (session);
             const char *room_token = gnalk_account_get_room_token (guest_account);
             if (room_token)

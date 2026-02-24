@@ -558,6 +558,177 @@ on_invitation_decline_clicked (GnalkWindow *self)
                                                      self->pending_invitation_id);
 }
 
+/* ============ Responsive Breakpoint + Guest Mode ============ */
+
+/* Move avatar + account switcher from sidebar header to content header,
+ * placing them before the conversation_header (which is temporarily
+ * removed and re-added to maintain left-to-right order). */
+static void
+guest_reparent_to_content (GnalkWindow *self)
+{
+  if (self->guest_widgets_reparented)
+    return;
+
+  AdwHeaderBar *sh = ADW_HEADER_BAR (self->sidebar_header);
+  AdwHeaderBar *ch = ADW_HEADER_BAR (self->content_header);
+
+  /* Remove conversation_header so we can insert before it */
+  g_object_ref (self->conversation_header);
+  adw_header_bar_remove (ch, GTK_WIDGET (self->conversation_header));
+
+  /* Move user_status_menu (avatar) */
+  g_object_ref (self->user_status_menu);
+  adw_header_bar_remove (sh, GTK_WIDGET (self->user_status_menu));
+  adw_header_bar_pack_start (ch, GTK_WIDGET (self->user_status_menu));
+  g_object_unref (self->user_status_menu);
+
+  /* Move account_switcher */
+  g_object_ref (self->account_switcher);
+  adw_header_bar_remove (sh, GTK_WIDGET (self->account_switcher));
+  gtk_widget_set_hexpand (GTK_WIDGET (self->account_switcher), FALSE);
+  adw_header_bar_pack_start (ch, GTK_WIDGET (self->account_switcher));
+  g_object_unref (self->account_switcher);
+
+  /* Re-add conversation_header (now after avatar + switcher) */
+  adw_header_bar_pack_start (ch, GTK_WIDGET (self->conversation_header));
+  g_object_unref (self->conversation_header);
+
+  self->guest_widgets_reparented = TRUE;
+}
+
+/* Move avatar + account switcher back from content header to sidebar header. */
+static void
+guest_reparent_to_sidebar (GnalkWindow *self)
+{
+  if (!self->guest_widgets_reparented)
+    return;
+
+  AdwHeaderBar *sh = ADW_HEADER_BAR (self->sidebar_header);
+  AdwHeaderBar *ch = ADW_HEADER_BAR (self->content_header);
+
+  /* Move user_status_menu back to sidebar header */
+  g_object_ref (self->user_status_menu);
+  adw_header_bar_remove (ch, GTK_WIDGET (self->user_status_menu));
+  adw_header_bar_pack_start (sh, GTK_WIDGET (self->user_status_menu));
+  g_object_unref (self->user_status_menu);
+
+  /* Move account_switcher back to sidebar header */
+  g_object_ref (self->account_switcher);
+  adw_header_bar_remove (ch, GTK_WIDGET (self->account_switcher));
+  gtk_widget_set_hexpand (GTK_WIDGET (self->account_switcher), TRUE);
+  adw_header_bar_pack_start (sh, GTK_WIDGET (self->account_switcher));
+  g_object_unref (self->account_switcher);
+
+  /* Reposition conversation_header as first start child */
+  g_object_ref (self->conversation_header);
+  adw_header_bar_remove (ch, GTK_WIDGET (self->conversation_header));
+  adw_header_bar_pack_start (ch, GTK_WIDGET (self->conversation_header));
+  g_object_unref (self->conversation_header);
+
+  self->guest_widgets_reparented = FALSE;
+}
+
+static void
+on_narrow_breakpoint_apply (AdwBreakpoint *breakpoint G_GNUC_UNUSED,
+                            GnalkWindow   *self)
+{
+  adw_navigation_split_view_set_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+
+  if (self->is_guest_mode && self->guest_widgets_reparented)
+    {
+      /* Entering narrow while guest: move widgets back to sidebar,
+       * allow back navigation for mobile-style layout */
+      guest_reparent_to_sidebar (self);
+      adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), TRUE);
+    }
+}
+
+static void
+on_narrow_breakpoint_unapply (AdwBreakpoint *breakpoint G_GNUC_UNUSED,
+                              GnalkWindow   *self)
+{
+  if (self->is_guest_mode)
+    {
+      /* Entering wide while guest: reparent to content header, hide sidebar */
+      gtk_widget_set_visible (self->split_view, FALSE);
+      guest_reparent_to_content (self);
+      adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+      adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), FALSE);
+      gtk_widget_set_visible (self->split_view, TRUE);
+
+      /* Room was closed by on_content_page_hiding when user navigated back.
+       * Reopen it so messages are displayed again. */
+      if (!self->current_room)
+        {
+          guint n = g_list_model_get_n_items (G_LIST_MODEL (self->conversations_store));
+          for (guint i = 0; i < n; i++)
+            {
+              g_autoptr(GnalkConversationData) c = g_list_model_get_item (
+                  G_LIST_MODEL (self->conversations_store), i);
+              const char *token = gnalk_conversation_data_get_token (c);
+              if (token)
+                {
+                  gnalk_room_controller_open_room (self->room_controller, token);
+                  break;
+                }
+            }
+        }
+    }
+  else
+    {
+      adw_navigation_split_view_set_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), FALSE);
+    }
+}
+
+void
+gnalk_window_setup_guest_mode (GnalkWindow *self)
+{
+  if (self->is_guest_mode)
+    return;
+
+  self->is_guest_mode = TRUE;
+
+  gboolean is_collapsed = adw_navigation_split_view_get_collapsed (
+      ADW_NAVIGATION_SPLIT_VIEW (self->split_view));
+
+  if (!is_collapsed)
+    {
+      /* Wide mode: reparent widgets to content header, hide sidebar.
+       * Temporarily hide split_view to suppress the collapse transition. */
+      gtk_widget_set_visible (self->split_view, FALSE);
+      guest_reparent_to_content (self);
+      adw_navigation_split_view_set_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+      adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+      adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), FALSE);
+      gtk_widget_set_visible (self->split_view, TRUE);
+    }
+  else
+    {
+      /* Narrow/collapsed: sidebar accessible via back button */
+      adw_navigation_split_view_set_show_content (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), TRUE);
+    }
+}
+
+void
+gnalk_window_teardown_guest_mode (GnalkWindow *self)
+{
+  if (!self->is_guest_mode)
+    return;
+
+  gboolean was_wide = self->guest_widgets_reparented;
+
+  if (self->guest_widgets_reparented)
+    guest_reparent_to_sidebar (self);
+
+  self->is_guest_mode = FALSE;
+
+  if (was_wide)
+    adw_navigation_split_view_set_collapsed (ADW_NAVIGATION_SPLIT_VIEW (self->split_view), FALSE);
+  /* If was narrow, collapsed stays TRUE from breakpoint — correct */
+
+  adw_navigation_page_set_can_pop (ADW_NAVIGATION_PAGE (self->content_page), TRUE);
+}
+
 static void
 on_preferences_action (GSimpleAction *action,
                        GVariant      *parameter,
@@ -1074,7 +1245,7 @@ apply_message_display_mode (GnalkWindow *self)
     {
       GnalkMessageRow *row = GNALK_MESSAGE_ROW (key);
       gnalk_message_row_set_display_mode (row, self->message_display_mode);
-      gnalk_message_row_set_one_to_one (row, self->current_room->room_type == 1);
+      gnalk_message_row_set_one_to_one (row, self->current_room && self->current_room->room_type == 1);
     }
 }
 
@@ -1146,7 +1317,7 @@ on_msg_list_item_bind (GtkListItemFactory *factory,
   /* Set all state before display mode (which calls apply_layout) */
   gnalk_message_row_set_show_avatar (row, show_avatar);
   gnalk_message_row_set_show_timestamp (row, show_timestamp);
-  gnalk_message_row_set_one_to_one (row, self->current_room->room_type == 1);
+  gnalk_message_row_set_one_to_one (row, self->current_room && self->current_room->room_type == 1);
 
   /* Set display mode last - this calls apply_layout with all state set */
   gnalk_message_row_set_display_mode (row, self->message_display_mode);
@@ -2097,6 +2268,7 @@ gnalk_window_class_init (GnalkWindowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, toast_overlay);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, connecting_spinner);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, split_view);
+  gtk_widget_class_bind_template_child (widget_class, GnalkWindow, content_header);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, conversation_sidebar);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, message_view);
   gtk_widget_class_bind_template_child (widget_class, GnalkWindow, account_switcher);
@@ -2196,6 +2368,23 @@ gnalk_window_init (GnalkWindow *self)
   };
 
   gtk_widget_init_template (GTK_WIDGET (self));
+
+  /* Capture sidebar header bar (anonymous in UI template, needed for guest reparenting) */
+  self->sidebar_header = gtk_widget_get_ancestor (GTK_WIDGET (self->account_switcher),
+                                                    ADW_TYPE_HEADER_BAR);
+
+  /* Responsive breakpoint: collapse split view on narrow windows.
+   * Created in code (not UI template) so guest mode can override without
+   * fighting the breakpoint setter's save/restore mechanism. */
+  {
+    AdwBreakpoint *bp = adw_breakpoint_new (
+        adw_breakpoint_condition_parse ("max-width: 600sp"));
+    g_signal_connect (bp, "apply",
+                      G_CALLBACK (on_narrow_breakpoint_apply), self);
+    g_signal_connect (bp, "unapply",
+                      G_CALLBACK (on_narrow_breakpoint_unapply), self);
+    adw_application_window_add_breakpoint (ADW_APPLICATION_WINDOW (self), bp);
+  }
 
   g_action_map_add_action_entries (G_ACTION_MAP (self), win_actions, G_N_ELEMENTS (win_actions), self);
 

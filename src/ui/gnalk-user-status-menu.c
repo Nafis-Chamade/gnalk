@@ -15,6 +15,7 @@ struct _GnalkUserStatusMenu
   GtkWidget *status_offline_button;
 
   char *user_status;
+  gboolean popover_detached;  /* TRUE when popover is detached (non-interactive) */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkUserStatusMenu, gnalk_user_status_menu, GTK_TYPE_BOX)
@@ -121,6 +122,9 @@ gnalk_user_status_menu_finalize (GObject *object)
 
   g_free (self->user_status);
 
+  if (self->popover_detached)
+    g_object_unref (self->status_popover);
+
   G_OBJECT_CLASS (gnalk_user_status_menu_parent_class)->finalize (object);
 }
 
@@ -222,5 +226,26 @@ gnalk_user_status_menu_set_visible (GnalkUserStatusMenu *self,
   g_return_if_fail (GNALK_IS_USER_STATUS_MENU (self));
 
   gtk_widget_set_visible (self->menu_button, visible);
+}
+
+void
+gnalk_user_status_menu_set_interactive (GnalkUserStatusMenu *self,
+                                        gboolean              interactive)
+{
+  g_return_if_fail (GNALK_IS_USER_STATUS_MENU (self));
+
+  if (interactive && self->popover_detached)
+    {
+      gtk_menu_button_set_popover (GTK_MENU_BUTTON (self->menu_button),
+                                  self->status_popover);
+      g_object_unref (self->status_popover);  /* menu_button now owns it */
+      self->popover_detached = FALSE;
+    }
+  else if (!interactive && !self->popover_detached)
+    {
+      g_object_ref (self->status_popover);    /* keep alive while detached */
+      gtk_menu_button_set_popover (GTK_MENU_BUTTON (self->menu_button), NULL);
+      self->popover_detached = TRUE;
+    }
 }
 
