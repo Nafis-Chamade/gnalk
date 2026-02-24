@@ -233,6 +233,18 @@ gnalk_window_on_message_controller_messages_loaded (GnalkMessageController *cont
       return;
     }
 
+  /* Non-initial loads in normal mode (e.g. chat relay refresh via HPB):
+   * process incrementally like a poll response — no trim, no scroll reset. */
+  if (!is_initial)
+    {
+      gnalk_message_processor_process_json (self->message_processor, messages, FALSE,
+                                              gnalk_message_view_is_at_bottom (self->message_view));
+      guint len = json_array_get_length (messages);
+      if (len > 0)
+        gnalk_message_processor_save_to_db (self->message_processor);
+      return;
+    }
+
   gnalk_message_processor_process_json (self->message_processor, messages, TRUE,
                                           gnalk_message_view_is_at_bottom (self->message_view));
 

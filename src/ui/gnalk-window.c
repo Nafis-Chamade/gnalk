@@ -1184,16 +1184,6 @@ on_participant_clicked (GnalkParticipantsList *list G_GNUC_UNUSED,
   adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (self));
 }
 
-static gint
-compare_messages_by_id_for_store (gconstpointer a,
-                                  gconstpointer b,
-                                  gpointer      user_data)
-{
-  gint64 id_a = gnalk_message_data_get_id ((GnalkMessageData *)a);
-  gint64 id_b = gnalk_message_data_get_id ((GnalkMessageData *)b);
-  return (id_a > id_b) - (id_a < id_b);
-}
-
 /* Conversation context menu signal handlers - exported for gnalk-window-conversation-list.c */
 void
 gnalk_window_on_conv_leave_requested (GnalkConversationRow *row G_GNUC_UNUSED,
@@ -1270,6 +1260,22 @@ on_wide_breakpoint_unapplied (AdwBreakpoint *breakpoint G_GNUC_UNUSED,
 {
   self->message_display_mode = GNALK_MESSAGE_DISPLAY_BUBBLES;
   apply_message_display_mode (self);
+}
+
+/* notify::status handler — propagates data status changes to the bound row */
+static void
+on_msg_data_status_notify (GnalkMessageData *data,
+                           GParamSpec       *pspec G_GNUC_UNUSED,
+                           GnalkMessageRow  *row)
+{
+  GnalkMessageDataStatus status = gnalk_message_data_get_status (data);
+  gint64 msg_id = gnalk_message_data_get_id (data);
+  gint64 timestamp = gnalk_message_data_get_timestamp (data);
+
+  if (status == GNALK_MESSAGE_DATA_STATUS_SENT && msg_id > 0)
+    gnalk_message_row_confirm_sent (row, msg_id, timestamp);
+  else if (status == GNALK_MESSAGE_DATA_STATUS_FAILED)
+    gnalk_message_row_set_status (row, GNALK_MESSAGE_STATUS_FAILED);
 }
 
 /* Message list factory callbacks - proper data/widget separation */
@@ -1368,6 +1374,10 @@ on_msg_list_item_bind (GtkListItemFactory *factory,
       gnalk_window_track_bound_unread_row (self, msg_id, GTK_WIDGET (row));
     }
 
+  /* Live-update row when data status changes (e.g. pending → sent) */
+  g_signal_connect (data, "notify::status",
+                    G_CALLBACK (on_msg_data_status_notify), row);
+
   /* Track this bound row for display mode updates */
   g_hash_table_add (self->bound_message_rows, row);
 }
@@ -1380,6 +1390,10 @@ on_msg_list_item_unbind (GtkListItemFactory *factory,
   GnalkWindow *self = GNALK_WINDOW (user_data);
   GnalkMessageData *data = GNALK_MESSAGE_DATA (gtk_list_item_get_item (item));
   GnalkMessageRow *row = GNALK_MESSAGE_ROW (gtk_list_item_get_child (item));
+
+  /* Disconnect data notify handler */
+  if (data && row)
+    g_signal_handlers_disconnect_by_func (data, on_msg_data_status_notify, row);
 
   /* Remove from bound unread tracking if it was unread */
   if (data && gnalk_message_data_get_is_unread (data))
@@ -1778,27 +1792,6 @@ gnalk_window_on_message_controller_sent (GnalkMessageController *controller G_GN
             }
 
           g_object_unref (msg_data);
-
-          /* Check if any pending messages remain - if not, re-sort the list */
-          gboolean has_pending = FALSE;
-          guint n = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
-          for (guint k = 0; k < n; k++)
-            {
-              GnalkMessageData *m = g_list_model_get_item (G_LIST_MODEL (self->messages_store), k);
-              if (gnalk_message_data_get_id (m) == 0 || gnalk_message_data_get_is_uploading (m))
-                {
-                  has_pending = TRUE;
-                  g_object_unref (m);
-                  break;
-                }
-              g_object_unref (m);
-            }
-
-          if (!has_pending)
-            {
-              /* All messages confirmed - re-sort by ID to fix any ordering issues */
-              g_list_store_sort (self->messages_store, compare_messages_by_id_for_store, NULL);
-            }
 
           break;
         }

@@ -1287,26 +1287,6 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
                   g_hash_table_insert (self->msg_index, key, g_object_ref (existing));
                 }
 
-              /* Check if any pending messages remain - if not, re-sort the list */
-              {
-                gboolean has_pending = FALSE;
-                guint n = g_list_model_get_n_items (G_LIST_MODEL (store));
-                for (guint k = 0; k < n; k++)
-                  {
-                    GnalkMessageData *m = g_list_model_get_item (G_LIST_MODEL (store), k);
-                    if (gnalk_message_data_get_id (m) == 0 || gnalk_message_data_get_is_uploading (m))
-                      {
-                        has_pending = TRUE;
-                        g_object_unref (m);
-                        break;
-                      }
-                    g_object_unref (m);
-                  }
-
-                if (!has_pending)
-                  g_list_store_sort (store, gnalk_message_processor_compare_by_id, NULL);
-              }
-
               found_pending = TRUE;
             }
         }
