@@ -353,6 +353,11 @@
   border-radius: 4px;
 }
 
+/* Context menu items: match GtkPopoverMenu appearance */
+.context-menu button {
+  font-weight: normal;
+}
+
 .reaction-picker {
   padding: 4px;
 }
