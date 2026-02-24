@@ -55,12 +55,6 @@
                 </style>
               </object>
             </child>
-        <!-- Quote/reply preview -->
-        <child>
-          <object class="GnalkQuoteWidget" id="quote_widget">
-            <property name="visible">false</property>
-          </object>
-        </child>
         <!-- Upload preview (shown during/after file upload) -->
         <child>
           <object class="GnalkUploadPreview" id="upload_preview">
@@ -90,9 +84,16 @@
         <child>
           <object class="GtkBox" id="message_bubble">
             <property name="orientation">vertical</property>
+            <property name="spacing">4</property>
             <style>
               <class name="message-bubble"/>
             </style>
+            <!-- Quote/reply preview (inside bubble) -->
+            <child>
+              <object class="GnalkQuoteWidget" id="quote_widget">
+                <property name="visible">false</property>
+              </object>
+            </child>
             <child>
               <object class="GtkLabel" id="message_label">
                 <property name="halign">start</property>

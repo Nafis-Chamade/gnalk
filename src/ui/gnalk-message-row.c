@@ -188,9 +188,13 @@ on_bound_data_notify (GObject    *data_obj,
                                                 file_link, file_path, NULL);
                 }
 
-              /* Hide bubble for media-only file messages */
+              /* Hide message label for media-only file messages */
               if (g_strcmp0 (message_text, "{file}") == 0)
-                gtk_widget_set_visible (self->message_bubble, FALSE);
+                {
+                  gboolean has_quote = gtk_widget_get_visible (GTK_WIDGET (self->quote_widget));
+                  gtk_widget_set_visible (self->message_label, FALSE);
+                  gtk_widget_set_visible (self->message_bubble, has_quote);
+                }
             }
         }
     }
@@ -289,7 +293,6 @@ set_content_alignment (GnalkMessageRow *self, GtkAlign align)
 {
   gtk_widget_set_halign (self->content_box, align == GTK_ALIGN_END ? GTK_ALIGN_END : GTK_ALIGN_FILL);
   gtk_widget_set_halign (self->message_bubble, align);
-  gtk_widget_set_halign (GTK_WIDGET (self->quote_widget), align);
   gtk_widget_set_halign (GTK_WIDGET (self->file_preview), align);
   gtk_widget_set_halign (GTK_WIDGET (self->upload_preview), align);
   gtk_widget_set_halign (self->audio_player, align);
@@ -1414,12 +1417,16 @@ gnalk_message_row_set_data (GnalkMessageRow  *self,
         }
     }
 
-  /* Hide message bubble for media-only file messages (message is just "{file}") */
+  /* Hide message label for media-only file messages (message is just "{file}") */
   gboolean has_inline_media = gtk_widget_get_visible (self->audio_player)
                                || gtk_widget_get_visible (GTK_WIDGET (self->file_preview))
                                || gtk_widget_get_visible (self->video_thumbnail);
   if (has_inline_media && g_strcmp0 (message_text, "{file}") == 0)
-    gtk_widget_set_visible (self->message_bubble, FALSE);
+    {
+      gboolean has_quote = gtk_widget_get_visible (GTK_WIDGET (self->quote_widget));
+      gtk_widget_set_visible (self->message_label, FALSE);
+      gtk_widget_set_visible (self->message_bubble, has_quote);
+    }
 }
 
 gint64
@@ -2136,18 +2143,23 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       gnalk_upload_preview_set_file (self->upload_preview, upload_file_path,
                                       upload_file_name, upload_mime_type, is_uploading);
 
-      /* Show message bubble only if there's a caption */
+      /* Hide message label if no caption; bubble stays visible for quote */
       const char *msg_text = gnalk_message_data_get_message (data);
-      gtk_widget_set_visible (self->message_bubble, msg_text && *msg_text);
+      gboolean has_caption = msg_text && *msg_text;
+      gboolean has_quote = gtk_widget_get_visible (GTK_WIDGET (self->quote_widget));
+      gtk_widget_set_visible (self->message_label, has_caption);
+      gtk_widget_set_visible (self->message_bubble, has_caption || has_quote);
     }
   else
     {
       gnalk_upload_preview_reset (self->upload_preview);
 
-      /* Hide message bubble for media-only file messages (message is just "{file}") */
+      /* Hide message label for media-only file messages (message is just "{file}") */
       const char *raw_msg = gnalk_message_data_get_message (data);
       gboolean is_file_only = has_server_file_info && raw_msg && g_strcmp0 (raw_msg, "{file}") == 0;
-      gtk_widget_set_visible (self->message_bubble, !is_file_only);
+      gboolean has_quote = gtk_widget_get_visible (GTK_WIDGET (self->quote_widget));
+      gtk_widget_set_visible (self->message_label, !is_file_only);
+      gtk_widget_set_visible (self->message_bubble, !is_file_only || has_quote);
     }
 
   /* Thread entry: show only on thread_created system messages.
@@ -2276,6 +2288,8 @@ gnalk_message_row_reset (GnalkMessageRow *self)
   gtk_widget_set_visible (self->reactions_label, FALSE);
   gtk_widget_set_visible (self->edited_label, FALSE);
   gnalk_quote_widget_reset (self->quote_widget);
+  gtk_widget_set_visible (self->message_label, TRUE);
+  gtk_widget_set_visible (self->message_bubble, TRUE);
   gtk_widget_set_visible (GTK_WIDGET (self->date_separator), FALSE);
   gtk_widget_set_visible (self->status_icon, FALSE);
 
