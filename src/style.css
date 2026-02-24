@@ -408,6 +408,29 @@
   border-top: 1px solid alpha(@borders, 0.5);
 }
 
+.message-text-scroll {
+  min-height: 0;
+  border-radius: 8px;
+  border: 1px solid alpha(@borders, 0.5);
+  background-color: @view_bg_color;
+}
+
+.message-text-view {
+  background: transparent;
+}
+
+.message-text-view:focus {
+  outline: none;
+}
+
+.message-text-scroll:focus-within {
+  border-color: @accent_color;
+}
+
+.message-placeholder {
+  color: alpha(@window_fg_color, 0.4);
+}
+
 /* Call dialog */
 .call-video {
   background-color: #000;
