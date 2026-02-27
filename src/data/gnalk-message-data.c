@@ -687,8 +687,8 @@ gnalk_message_data_new_pending_file (const char *caption,
 
   self->id = 0;
   self->timestamp = g_get_real_time () / G_USEC_PER_SEC;
-  /* Use caption if provided, otherwise show filename */
-  self->message = g_strdup ((caption && *caption) ? caption : (file_name ? file_name : ""));
+  /* Use caption if provided, otherwise NULL (filename shown by upload preview) */
+  self->message = (caption && *caption) ? g_strdup (caption) : NULL;
   self->author_id = g_strdup (author_id ? author_id : "");
   self->author_name = g_strdup (author_name ? author_name : "");
   self->reference_id = (reference_id && *reference_id) ? g_strdup (reference_id) : NULL;
