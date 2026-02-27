@@ -344,9 +344,9 @@
   padding: 0;
 }
 
-/* Caption text inside media bubble gets its own padding */
+/* Caption text inside media bubble */
 .message-media-bubble .message-content {
-  padding: 4px 14px 8px;
+  margin: 2px 10px 2px;
 }
 
 /* Quote inside media bubble */

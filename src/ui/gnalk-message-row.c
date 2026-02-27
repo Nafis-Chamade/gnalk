@@ -1469,7 +1469,10 @@ gnalk_message_row_set_data (GnalkMessageRow  *self,
     }
   /* Zero-padding on bubble when it contains media (not audio — audio is outside) */
   if (has_visual_file)
-    gtk_widget_add_css_class (self->message_bubble, "message-media-bubble");
+    {
+      gtk_widget_add_css_class (self->message_bubble, "message-media-bubble");
+      gtk_box_set_spacing (GTK_BOX (self->message_bubble), 0);
+    }
 }
 
 gint64
@@ -2159,6 +2162,7 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       /* Bubble must be visible — the flow box is inside it; zero-padding for media */
       gtk_widget_set_visible (self->message_bubble, TRUE);
       gtk_widget_add_css_class (self->message_bubble, "message-media-bubble");
+      gtk_box_set_spacing (GTK_BOX (self->message_bubble), 0);
 
       /* Caption: check if the last member has text (not "{file}") */
       GnalkMessageData *last_member = g_ptr_array_index (group_files, group_files->len - 1);
@@ -2338,7 +2342,10 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       gtk_widget_set_visible (self->message_bubble, has_server_file_info || !is_file_only || has_quote);
       /* Zero-padding on bubble when it contains media (not audio — audio is outside) */
       if (has_visual_file)
-        gtk_widget_add_css_class (self->message_bubble, "message-media-bubble");
+        {
+          gtk_widget_add_css_class (self->message_bubble, "message-media-bubble");
+          gtk_box_set_spacing (GTK_BOX (self->message_bubble), 0);
+        }
     }
   else
     {
@@ -2468,6 +2475,7 @@ gnalk_message_row_reset (GnalkMessageRow *self)
   gtk_widget_remove_css_class (GTK_WIDGET (self), "thread-created-row");
   gtk_widget_remove_css_class (self->message_label, "message-emoji-only");
   gtk_widget_remove_css_class (self->message_bubble, "message-media-bubble");
+  gtk_box_set_spacing (GTK_BOX (self->message_bubble), 4);
 
   /* Reset timestamp visibility */
   gtk_widget_set_visible (self->timestamp_label, TRUE);
