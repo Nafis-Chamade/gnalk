@@ -31,6 +31,19 @@ gnalk_window_on_attachment_closed (GnalkConversationActions *actions,
   gnalk_window_clear_attachments (self);
 }
 
+void
+gnalk_window_on_attachment_item_closed (GnalkConversationActions *actions,
+                                        guint                      index,
+                                        GnalkWindow              *self)
+{
+  (void) actions;
+
+  if (!self->attachments || index >= self->attachments->len)
+    return;
+
+  g_ptr_array_remove_index (self->attachments, index);
+}
+
 static const char *
 get_icon_name_for_mime_type (const char *mime_type)
 {
@@ -140,9 +153,6 @@ on_file_dialog_response (GObject      *source,
       return;
     }
 
-  /* Clear any previous attachments */
-  gnalk_window_clear_attachments (self);
-
   guint n_files = g_list_model_get_n_items (files);
   for (guint i = 0; i < n_files; i++)
     {
@@ -192,8 +202,6 @@ on_clipboard_file_list_read (GObject      *source,
   if (!file_list)
     return;
 
-  gnalk_window_clear_attachments (self);
-
   for (GSList *l = file_list; l; l = l->next)
     {
       GFile *file = l->data;
@@ -221,8 +229,6 @@ on_clipboard_texture_read (GObject      *source,
 
   if (!self->current_room)
     return;
-
-  gnalk_window_clear_attachments (self);
 
   /* Convert texture to PNG bytes */
   g_autoptr(GBytes) png_bytes = gdk_texture_save_to_png_bytes (texture);
@@ -311,8 +317,6 @@ on_content_drop (GtkDropTarget *target G_GNUC_UNUSED,
   if (!file_list)
     return FALSE;
 
-  gnalk_window_clear_attachments (self);
-
   for (GSList *l = file_list; l; l = l->next)
     {
       GFile *file = l->data;
@@ -345,8 +349,6 @@ gnalk_window_on_drop_attachments (GnalkMessageInput *input G_GNUC_UNUSED,
   GSList *file_list = g_value_get_boxed (value);
   if (!file_list)
     return;
-
-  gnalk_window_clear_attachments (self);
 
   for (GSList *l = file_list; l; l = l->next)
     {

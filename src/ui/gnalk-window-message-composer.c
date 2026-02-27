@@ -114,6 +114,9 @@ process_upload_queue (GnalkWindow *self)
 
   self->upload_in_progress = TRUE;
 
+  g_debug ("Upload queue: starting upload for '%s' (queue remaining: %u)",
+           item->attachment->file_name, g_queue_get_length (self->upload_queue));
+
   /* Start the actual upload (message already added to store when queued) */
   start_file_upload (self, item->attachment, item->caption,
                      item->reply_to, item->reference_id);

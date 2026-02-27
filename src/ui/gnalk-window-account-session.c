@@ -111,6 +111,8 @@ connect_controller_signals (GnalkWindow  *self,
                         G_CALLBACK (gnalk_window_on_message_controller_deleted), self);
       g_signal_connect (mc, "reaction-added",
                         G_CALLBACK (gnalk_window_on_message_controller_reaction_added), self);
+      g_signal_connect (mc, "upload-put-done",
+                        G_CALLBACK (gnalk_window_on_message_controller_upload_put_done), self);
       g_signal_connect (mc, "upload-completed",
                         G_CALLBACK (gnalk_window_on_message_controller_upload_completed), self);
       g_signal_connect (mc, "upload-failed",

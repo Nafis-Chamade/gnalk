@@ -72,6 +72,8 @@ void gnalk_message_controller_start_polling (GnalkMessageController *self,
                                                gint64                   last_known_id);
 void gnalk_message_controller_stop_polling (GnalkMessageController *self);
 gboolean gnalk_message_controller_is_polling (GnalkMessageController *self);
+void gnalk_message_controller_pause_polling (GnalkMessageController *self);
+void gnalk_message_controller_resume_polling (GnalkMessageController *self);
 
 /* Send message */
 void gnalk_message_controller_send_message (GnalkMessageController *self,

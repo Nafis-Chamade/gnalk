@@ -50,6 +50,7 @@ enum {
   SIGNAL_REACTION_ADDED,
   SIGNAL_REACTION_FAILED,
   SIGNAL_UPLOAD_STARTED,
+  SIGNAL_UPLOAD_PUT_DONE,
   SIGNAL_UPLOAD_COMPLETED,
   SIGNAL_UPLOAD_FAILED,
   SIGNAL_READ_STATUS_UPDATED,
@@ -233,6 +234,17 @@ gnalk_message_controller_class_init (GnalkMessageControllerClass *klass)
 
   signals[SIGNAL_UPLOAD_STARTED] =
     g_signal_new ("upload-started",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1,
+                  G_TYPE_STRING);    /* reference_id */
+
+  /* Emitted after the PUT (WebDAV upload) completes — tells the upload queue
+   * to advance to the next file without waiting for the share POST response
+   * (which can take 30+ seconds server-side). */
+  signals[SIGNAL_UPLOAD_PUT_DONE] =
+    g_signal_new ("upload-put-done",
                   G_TYPE_FROM_CLASS (klass),
                   G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL,
@@ -947,6 +959,45 @@ gnalk_message_controller_is_polling (GnalkMessageController *self)
   return self->polling;
 }
 
+void
+gnalk_message_controller_pause_polling (GnalkMessageController *self)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+
+  if (!self->polling)
+    return;
+
+  self->polling = FALSE;
+
+  /* Cancel in-flight long-poll to release the server-side PHP session lock */
+  if (self->http_client)
+    gnalk_http_client_cancel_room_requests (self->http_client);
+}
+
+void
+gnalk_message_controller_resume_polling (GnalkMessageController *self)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_CONTROLLER (self));
+
+  if (self->polling)
+    return;
+
+  if (!self->http_client || !self->room_token || self->last_known_message_id <= 0)
+    return;
+
+  self->polling = TRUE;
+
+  GnalkAsyncOp *op = gnalk_async_op_new (G_OBJECT (self), &self->generation, NULL, 0);
+
+  gnalk_http_client_get_messages (self->http_client,
+                                    self->room_token,
+                                    self->last_known_message_id,
+                                    TRUE,  /* long poll */
+                                    30,
+                                    on_poll_response,
+                                    op);
+}
+
 /* ============ Send Message ============ */
 
 static void
@@ -1280,7 +1331,7 @@ on_file_share_response (GnalkHttpClient *client G_GNUC_UNUSED,
     }
   else
     {
-      g_debug ("File shared successfully to conversation");
+      g_debug ("MC: file shared successfully ref=%.12s…", data->reference_id);
       g_signal_emit (self, signals[SIGNAL_UPLOAD_COMPLETED], 0, data->reference_id);
     }
 
@@ -1314,6 +1365,8 @@ on_file_upload_response (GnalkHttpClient *client,
   if (error || !success)
     {
       g_warning ("Failed to upload file: %s", error ? error->message : "Unknown error");
+      /* Signal queue to advance even on failure */
+      g_signal_emit (self, signals[SIGNAL_UPLOAD_PUT_DONE], 0, data->reference_id);
       g_signal_emit (self, signals[SIGNAL_UPLOAD_FAILED], 0,
                      data->reference_id, error ? error->message : "Upload failed");
       g_object_unref (self);
@@ -1321,7 +1374,11 @@ on_file_upload_response (GnalkHttpClient *client,
       return;
     }
 
-  g_debug ("File uploaded successfully, now sharing to conversation");
+  g_debug ("MC: PUT done, sharing to conversation '%s' ref=%.12s…", data->room_token, data->reference_id);
+
+  /* Signal upload queue to advance immediately — the share POST can take 30+
+   * seconds server-side, so don't block subsequent uploads on it. */
+  g_signal_emit (self, signals[SIGNAL_UPLOAD_PUT_DONE], 0, data->reference_id);
 
   /* Unref self before continuing - the next callback will re-acquire it */
   g_object_unref (self);
@@ -1363,6 +1420,7 @@ on_file_exists_response (GnalkHttpClient *client G_GNUC_UNUSED,
   if (error)
     {
       g_warning ("Failed to check file existence: %s", error->message);
+      g_signal_emit (self, signals[SIGNAL_UPLOAD_PUT_DONE], 0, data->reference_id);
       g_signal_emit (self, signals[SIGNAL_UPLOAD_FAILED], 0,
                      data->reference_id, error->message);
       g_object_unref (self);
@@ -1398,7 +1456,7 @@ on_file_exists_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  g_debug ("Uploading file to %s", data->remote_path);
+  g_debug ("MC: check_exists done, uploading to %s", data->remote_path);
 
   /* Unref before starting upload - the next callback will re-acquire it */
   GnalkHttpClient *http_client = self->http_client;
@@ -1459,6 +1517,14 @@ gnalk_message_controller_upload_file (GnalkMessageController *self,
   data->reference_id = g_strdup (reference_id);
   data->message_type = NULL;  /* Regular file upload */
   data->collision_count = 1;
+
+  g_debug ("MC: upload_file starting for '%s' ref=%.12s…", filename, reference_id);
+
+  /* Pause long-polling to avoid PHP session lock contention on the server.
+   * The server's long-poll holds the PHP session lock for up to 30 seconds,
+   * which blocks the share POST. Window resumes polling after all uploads complete. */
+  if (self->polling)
+    gnalk_message_controller_pause_polling (self);
 
   g_signal_emit (self, signals[SIGNAL_UPLOAD_STARTED], 0, reference_id);
 

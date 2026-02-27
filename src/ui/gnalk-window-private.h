@@ -479,6 +479,7 @@ void gnalk_window_on_message_controller_send_failed   (GnalkMessageController *c
 void gnalk_window_on_message_controller_edited        (GnalkMessageController *controller, gint64 message_id, GnalkWindow *self);
 void gnalk_window_on_message_controller_deleted       (GnalkMessageController *controller, gint64 message_id, GnalkWindow *self);
 void gnalk_window_on_message_controller_reaction_added(GnalkMessageController *controller, gint64 message_id, const char *emoji, GnalkWindow *self);
+void gnalk_window_on_message_controller_upload_put_done (GnalkMessageController *controller, const char *reference_id, GnalkWindow *self);
 void gnalk_window_on_message_controller_upload_completed(GnalkMessageController *controller, const char *reference_id, GnalkWindow *self);
 void gnalk_window_on_message_controller_upload_failed (GnalkMessageController *controller, const char *reference_id, const char *error, GnalkWindow *self);
 
@@ -522,6 +523,7 @@ void gnalk_window_on_voice_message_recorded     (GnalkMessageInput *input, GByte
                                                    gdouble duration, GnalkWindow *self);
 void gnalk_window_on_camera_clicked             (GnalkMessageInput *input, GnalkWindow *self);
 void gnalk_window_on_attachment_closed          (GnalkConversationActions *actions, GnalkWindow *self);
+void gnalk_window_on_attachment_item_closed    (GnalkConversationActions *actions, guint index, GnalkWindow *self);
 void gnalk_window_on_file_clicked               (GnalkMessageRow *row, const char *file_id,
                                                    const char *file_mimetype, const char *file_link,
                                                    const char *file_name, const char *file_path,

@@ -30,6 +30,7 @@ G_DEFINE_FINAL_TYPE (GnalkConversationActions, gnalk_conversation_actions, GTK_T
 enum {
   SIGNAL_QUOTE_CLOSED,
   SIGNAL_ATTACHMENT_CLOSED,
+  SIGNAL_ATTACHMENT_ITEM_CLOSED,
   SIGNAL_SCROLL_TO_MESSAGE_REQUESTED,
   N_SIGNALS
 };
@@ -62,6 +63,35 @@ on_quote_close_clicked (GtkButton                 *button,
 }
 
 static void
+on_attachment_item_close_clicked (GnalkConversationActions *self,
+                                  GtkButton                 *button)
+{
+  /* The button's parent is the GtkOverlay wrapping the item */
+  GtkWidget *overlay = gtk_widget_get_parent (GTK_WIDGET (button));
+  if (!overlay)
+    return;
+
+  /* Find the index by iterating siblings in attachment_items_box */
+  guint index = 0;
+  for (GtkWidget *child = gtk_widget_get_first_child (self->attachment_items_box);
+       child != NULL;
+       child = gtk_widget_get_next_sibling (child), index++)
+    {
+      if (child == overlay)
+        {
+          gtk_box_remove (GTK_BOX (self->attachment_items_box), overlay);
+          self->attachment_count--;
+
+          if (self->attachment_count == 0)
+            gtk_widget_set_visible (self->attachment_preview_box, FALSE);
+
+          g_signal_emit (self, signals[SIGNAL_ATTACHMENT_ITEM_CLOSED], 0, index);
+          return;
+        }
+    }
+}
+
+static void
 on_attachment_close_clicked (GtkButton                 *button,
                              GnalkConversationActions *self)
 {
@@ -87,6 +117,13 @@ gnalk_conversation_actions_class_init (GnalkConversationActionsClass *klass)
                   G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL,
                   G_TYPE_NONE, 0);
+
+  signals[SIGNAL_ATTACHMENT_ITEM_CLOSED] =
+    g_signal_new ("attachment-item-closed",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1, G_TYPE_UINT);
 
   signals[SIGNAL_SCROLL_TO_MESSAGE_REQUESTED] =
     g_signal_new ("scroll-to-message-requested",
@@ -269,7 +306,21 @@ gnalk_conversation_actions_add_attachment (GnalkConversationActions *self,
   gtk_widget_add_css_class (label, "attachment-item-name");
   gtk_box_append (GTK_BOX (item_box), label);
 
-  gtk_box_append (GTK_BOX (self->attachment_items_box), item_box);
+  /* Wrap in overlay with per-item close button */
+  GtkWidget *overlay = gtk_overlay_new ();
+  gtk_overlay_set_child (GTK_OVERLAY (overlay), item_box);
+
+  GtkWidget *close_btn = gtk_button_new_from_icon_name ("window-close-symbolic");
+  gtk_widget_add_css_class (close_btn, "attachment-item-close");
+  gtk_widget_set_halign (close_btn, GTK_ALIGN_END);
+  gtk_widget_set_valign (close_btn, GTK_ALIGN_START);
+  gtk_overlay_add_overlay (GTK_OVERLAY (overlay), close_btn);
+
+  g_signal_connect_object (close_btn, "clicked",
+                           G_CALLBACK (on_attachment_item_close_clicked),
+                           self, G_CONNECT_SWAPPED);
+
+  gtk_box_append (GTK_BOX (self->attachment_items_box), overlay);
 
   gtk_widget_set_visible (self->attachment_preview_box, TRUE);
 }

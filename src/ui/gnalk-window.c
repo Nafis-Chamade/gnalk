@@ -1898,10 +1898,26 @@ gnalk_window_on_message_controller_reaction_added (GnalkMessageController *contr
     }
 }
 
+/* Called after the WebDAV PUT completes (success or failure).
+ * Advances the upload queue immediately — the share POST runs in background. */
+void
+gnalk_window_on_message_controller_upload_put_done (GnalkMessageController *controller G_GNUC_UNUSED,
+                                                    const char              *reference_id G_GNUC_UNUSED,
+                                                    GnalkWindow            *self)
+{
+  self->upload_in_progress = FALSE;
+  gnalk_window_process_upload_queue (self);
+
+  /* Resume polling if no more uploads queued */
+  if (!self->upload_in_progress && self->message_controller)
+    gnalk_message_controller_resume_polling (self->message_controller);
+}
+
+/* Called after the share POST succeeds — file is now visible in the conversation. */
 void
 gnalk_window_on_message_controller_upload_completed (GnalkMessageController *controller G_GNUC_UNUSED,
-                                        const char              *reference_id,
-                                        GnalkWindow            *self)
+                                                     const char              *reference_id,
+                                                     GnalkWindow            *self)
 {
   /* Find the pending message by reference_id and mark it as sent */
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
@@ -1912,29 +1928,21 @@ gnalk_window_on_message_controller_upload_completed (GnalkMessageController *con
 
       if (ref && g_strcmp0 (ref, reference_id) == 0)
         {
-          /* UI update happens via notify (is-uploading + status) */
           gnalk_message_data_set_is_uploading (msg, FALSE);
           gnalk_message_data_set_status (msg, GNALK_MESSAGE_DATA_STATUS_SENT);
-
           g_object_unref (msg);
           break;
         }
       g_object_unref (msg);
     }
-
-  /* Process next queued upload */
-  self->upload_in_progress = FALSE;
-  gnalk_window_process_upload_queue (self);
-
-  /* Clear attachment UI */
-  gnalk_window_clear_attachments (self);
 }
 
+/* Called when either the PUT or share POST fails. */
 void
 gnalk_window_on_message_controller_upload_failed (GnalkMessageController *controller G_GNUC_UNUSED,
-                                     const char              *reference_id,
-                                     const char              *error G_GNUC_UNUSED,
-                                     GnalkWindow            *self)
+                                                  const char              *reference_id,
+                                                  const char              *error G_GNUC_UNUSED,
+                                                  GnalkWindow            *self)
 {
   /* Find the pending message by reference_id and mark it as failed */
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
@@ -1945,22 +1953,13 @@ gnalk_window_on_message_controller_upload_failed (GnalkMessageController *contro
 
       if (ref && g_strcmp0 (ref, reference_id) == 0)
         {
-          /* UI update happens via notify (is-uploading + status) */
           gnalk_message_data_set_is_uploading (msg, FALSE);
           gnalk_message_data_set_status (msg, GNALK_MESSAGE_DATA_STATUS_FAILED);
-
           g_object_unref (msg);
           break;
         }
       g_object_unref (msg);
     }
-
-  /* Process next queued upload even on failure */
-  self->upload_in_progress = FALSE;
-  gnalk_window_process_upload_queue (self);
-
-  /* Clear attachment UI */
-  gnalk_window_clear_attachments (self);
 }
 
 static void
@@ -2593,6 +2592,7 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect (self->participants_list, "participant-clicked", G_CALLBACK (on_participant_clicked), self);
   g_signal_connect (self->conversation_actions, "quote-closed", G_CALLBACK (gnalk_window_on_quote_closed), self);
   g_signal_connect (self->conversation_actions, "attachment-closed", G_CALLBACK (gnalk_window_on_attachment_closed), self);
+  g_signal_connect (self->conversation_actions, "attachment-item-closed", G_CALLBACK (gnalk_window_on_attachment_item_closed), self);
   g_signal_connect (self->conversation_actions, "scroll-to-message-requested", G_CALLBACK (gnalk_window_on_quote_preview_scroll_requested), self);
   g_signal_connect (self->user_status_menu, "status-changed", G_CALLBACK (on_user_status_changed), self);
   /* Signaling handlers are connected in switch_to_session after getting signaling from session */
