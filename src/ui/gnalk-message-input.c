@@ -60,6 +60,7 @@ enum {
   SIGNAL_VOICE_MESSAGE_RECORDED,
   SIGNAL_CAMERA_CLICKED,
   SIGNAL_PASTE_ATTACHMENTS,
+  SIGNAL_DROP_ATTACHMENTS,
   N_SIGNALS
 };
 
@@ -304,6 +305,22 @@ on_recording_send_requested (GnalkRecordingOverlay *overlay G_GNUC_UNUSED,
   g_signal_emit (self, signals[SIGNAL_VOICE_MESSAGE_RECORDED], 0, audio_data, duration);
 }
 
+static gboolean
+on_text_view_drop (GtkDropTarget *target G_GNUC_UNUSED,
+                   const GValue  *value,
+                   double         x G_GNUC_UNUSED,
+                   double         y G_GNUC_UNUSED,
+                   gpointer       user_data)
+{
+  GnalkMessageInput *self = GNALK_MESSAGE_INPUT (user_data);
+
+  if (!G_VALUE_HOLDS (value, GDK_TYPE_FILE_LIST))
+    return FALSE;
+
+  g_signal_emit (self, signals[SIGNAL_DROP_ATTACHMENTS], 0, value);
+  return TRUE;
+}
+
 static void
 gnalk_message_input_dispose (GObject *object)
 {
@@ -366,6 +383,13 @@ gnalk_message_input_class_init (GnalkMessageInputClass *klass)
                   0, NULL, NULL, NULL,
                   G_TYPE_NONE, 1, GDK_TYPE_CLIPBOARD);
 
+  signals[SIGNAL_DROP_ATTACHMENTS] =
+    g_signal_new ("drop-attachments",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1, G_TYPE_VALUE);
+
   gtk_widget_class_set_template_from_resource (widget_class,
                                                 "/net/skilpa/gnalk/gnalk-message-input.ui");
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageInput, media_button);
@@ -415,6 +439,13 @@ gnalk_message_input_init (GnalkMessageInput *self)
   key_ctrl = gtk_event_controller_key_new ();
   g_signal_connect (key_ctrl, "key-pressed", G_CALLBACK (on_key_pressed), self);
   gtk_widget_add_controller (self->message_entry, key_ctrl);
+
+  /* Drop target for files on text view (intercepts default URI-to-text drop) */
+  {
+    GtkDropTarget *drop = gtk_drop_target_new (GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+    g_signal_connect (drop, "drop", G_CALLBACK (on_text_view_drop), self);
+    gtk_widget_add_controller (self->message_entry, GTK_EVENT_CONTROLLER (drop));
+  }
 
   /* Buffer changed for placeholder, text-changed signal, and auto-grow */
   buffer = get_buffer (self);

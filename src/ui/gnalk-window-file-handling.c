@@ -331,6 +331,31 @@ gnalk_window_setup_drop_target (GnalkWindow *self)
   gtk_widget_add_controller (self->content_page, GTK_EVENT_CONTROLLER (drop));
 }
 
+void
+gnalk_window_on_drop_attachments (GnalkMessageInput *input G_GNUC_UNUSED,
+                                    const GValue       *value,
+                                    GnalkWindow       *self)
+{
+  if (!self->current_room)
+    return;
+
+  if (!G_VALUE_HOLDS (value, GDK_TYPE_FILE_LIST))
+    return;
+
+  GSList *file_list = g_value_get_boxed (value);
+  if (!file_list)
+    return;
+
+  gnalk_window_clear_attachments (self);
+
+  for (GSList *l = file_list; l; l = l->next)
+    {
+      GFile *file = l->data;
+      if (file)
+        add_file_as_attachment (self, file);
+    }
+}
+
 /* ============ Media Capture Functions ============ */
 
 void

@@ -514,6 +514,9 @@ void gnalk_window_on_attach_clicked             (GtkButton *button, GnalkWindow 
 void gnalk_window_on_paste_attachments          (GnalkMessageInput *input,
                                                    GdkClipboard *clipboard,
                                                    GnalkWindow *self);
+void gnalk_window_on_drop_attachments           (GnalkMessageInput *input,
+                                                   const GValue *value,
+                                                   GnalkWindow *self);
 void gnalk_window_setup_drop_target             (GnalkWindow *self);
 void gnalk_window_on_voice_message_recorded     (GnalkMessageInput *input, GBytes *audio_data,
                                                    gdouble duration, GnalkWindow *self);

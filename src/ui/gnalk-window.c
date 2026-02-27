@@ -2581,6 +2581,7 @@ gnalk_window_init (GnalkWindow *self)
   g_signal_connect (self->message_input, "voice-message-recorded", G_CALLBACK (gnalk_window_on_voice_message_recorded), self);
   g_signal_connect (self->message_input, "camera-clicked", G_CALLBACK (gnalk_window_on_camera_clicked), self);
   g_signal_connect (self->message_input, "paste-attachments", G_CALLBACK (gnalk_window_on_paste_attachments), self);
+  g_signal_connect (self->message_input, "drop-attachments", G_CALLBACK (gnalk_window_on_drop_attachments), self);
   g_signal_connect (self->conversation_header, "info-requested", G_CALLBACK (on_conversation_info_requested), self);
   g_signal_connect (self->video_call_button, "clicked", G_CALLBACK (on_video_call_clicked), self);
   g_signal_connect (self->audio_call_button, "clicked", G_CALLBACK (on_audio_call_clicked), self);
