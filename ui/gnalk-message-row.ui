@@ -61,30 +61,18 @@
             <property name="visible">false</property>
           </object>
         </child>
-        <!-- File preview (for received files) -->
-        <child>
-          <object class="GnalkFilePreview" id="file_preview">
-            <property name="visible">false</property>
-          </object>
-        </child>
-        <!-- Audio player (for audio files) -->
+        <!-- Audio player (for audio files, outside bubble with own styling) -->
         <child>
           <object class="GnalkAudioPlayer" id="audio_player">
             <property name="visible">false</property>
           </object>
         </child>
-        <!-- Video thumbnail (for video files) -->
-        <child>
-          <object class="GnalkVideoThumbnail" id="video_thumbnail">
-            <property name="visible">false</property>
-            <property name="halign">start</property>
-          </object>
-        </child>
-        <!-- Message bubble -->
+        <!-- Message bubble (contains files, text, quote) -->
         <child>
           <object class="GtkBox" id="message_bubble">
             <property name="orientation">vertical</property>
             <property name="spacing">4</property>
+            <property name="overflow">hidden</property>
             <style>
               <class name="message-bubble"/>
             </style>
@@ -92,6 +80,35 @@
             <child>
               <object class="GnalkQuoteWidget" id="quote_widget">
                 <property name="visible">false</property>
+              </object>
+            </child>
+            <!-- Grouped file previews (multiple attachments side by side) -->
+            <child>
+              <object class="GtkFlowBox" id="file_group_flow">
+                <property name="visible">false</property>
+                <property name="homogeneous">true</property>
+                <property name="min-children-per-line">2</property>
+                <property name="max-children-per-line">4</property>
+                <property name="selection-mode">none</property>
+                <property name="row-spacing">4</property>
+                <property name="column-spacing">4</property>
+                <property name="halign">start</property>
+                <style>
+                  <class name="file-group-flow"/>
+                </style>
+              </object>
+            </child>
+            <!-- File preview (for received image files, inside bubble) -->
+            <child>
+              <object class="GnalkFilePreview" id="file_preview">
+                <property name="visible">false</property>
+              </object>
+            </child>
+            <!-- Video thumbnail (for video files, inside bubble) -->
+            <child>
+              <object class="GnalkVideoThumbnail" id="video_thumbnail">
+                <property name="visible">false</property>
+                <property name="halign">start</property>
               </object>
             </child>
             <child>

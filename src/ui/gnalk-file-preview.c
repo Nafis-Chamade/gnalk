@@ -21,6 +21,11 @@ struct _GnalkFilePreview
   char *file_mimetype;
   char *file_link;
   char *file_path;
+
+  guint preview_generation;  /* Incremented in set_file, checked in callback */
+
+  int max_natural_width;     /* Cap natural size to prevent huge images blowing up layout */
+  int max_natural_height;
 };
 
 G_DEFINE_FINAL_TYPE (GnalkFilePreview, gnalk_file_preview, GTK_TYPE_WIDGET)
@@ -36,6 +41,7 @@ static guint signals[N_SIGNALS];
 typedef struct
 {
   GWeakRef weak_ref;
+  guint    generation;
 } PreviewCallbackData;
 
 static PreviewCallbackData *
@@ -43,6 +49,7 @@ preview_callback_data_new (GnalkFilePreview *self)
 {
   PreviewCallbackData *data = g_new0 (PreviewCallbackData, 1);
   g_weak_ref_init (&data->weak_ref, self);
+  data->generation = self->preview_generation;
   return data;
 }
 
@@ -56,18 +63,22 @@ on_preview_loaded (GnalkAvatarCache *cache G_GNUC_UNUSED,
 
   if (self)
     {
-      if (texture)
+      /* Ignore stale callbacks from a previous set_file() call */
+      if (data->generation == self->preview_generation)
         {
-          gtk_picture_set_paintable (GTK_PICTURE (self->picture), GDK_PAINTABLE (texture));
-          gtk_widget_set_visible (GTK_WIDGET (self), TRUE);
+          if (texture)
+            {
+              gtk_picture_set_paintable (GTK_PICTURE (self->picture), GDK_PAINTABLE (texture));
+              gtk_widget_set_visible (GTK_WIDGET (self), TRUE);
 
-          /* Hide loading spinner */
-          gtk_spinner_stop (GTK_SPINNER (self->download_spinner));
-          gtk_widget_set_visible (self->download_spinner, FALSE);
-        }
-      else
-        {
-          gtk_widget_set_visible (GTK_WIDGET (self), FALSE);
+              /* Hide loading spinner */
+              gtk_spinner_stop (GTK_SPINNER (self->download_spinner));
+              gtk_widget_set_visible (self->download_spinner, FALSE);
+            }
+          else
+            {
+              gtk_widget_set_visible (GTK_WIDGET (self), FALSE);
+            }
         }
       g_object_unref (self);
     }
@@ -116,6 +127,41 @@ gnalk_file_preview_finalize (GObject *object)
   G_OBJECT_CLASS (gnalk_file_preview_parent_class)->finalize (object);
 }
 
+/* Custom measure: delegates to overlay child, then caps natural size.
+ * NOTE: gtk_widget_measure() bypasses widget_class->measure when a
+ * layout manager is set, so we must NOT use GtkBinLayout here. */
+static void
+gnalk_file_preview_measure (GtkWidget      *widget,
+                            GtkOrientation  orientation,
+                            int             for_size,
+                            int            *minimum,
+                            int            *natural,
+                            int            *minimum_baseline,
+                            int            *natural_baseline)
+{
+  GnalkFilePreview *self = GNALK_FILE_PREVIEW (widget);
+
+  gtk_widget_measure (self->overlay, orientation, for_size,
+                      minimum, natural, minimum_baseline, natural_baseline);
+
+  /* Cap natural size so huge images don't blow up bubble/flow-box layout */
+  if (orientation == GTK_ORIENTATION_HORIZONTAL && self->max_natural_width > 0)
+    *natural = MIN (*natural, self->max_natural_width);
+  else if (orientation == GTK_ORIENTATION_VERTICAL && self->max_natural_height > 0)
+    *natural = MIN (*natural, self->max_natural_height);
+}
+
+/* Custom size_allocate: pass full allocation to overlay child (replaces GtkBinLayout) */
+static void
+gnalk_file_preview_size_allocate (GtkWidget *widget,
+                                  int        width,
+                                  int        height,
+                                  int        baseline)
+{
+  GnalkFilePreview *self = GNALK_FILE_PREVIEW (widget);
+  gtk_widget_allocate (self->overlay, width, height, baseline, NULL);
+}
+
 static void
 gnalk_file_preview_class_init (GnalkFilePreviewClass *klass)
 {
@@ -125,7 +171,10 @@ gnalk_file_preview_class_init (GnalkFilePreviewClass *klass)
   object_class->dispose = gnalk_file_preview_dispose;
   object_class->finalize = gnalk_file_preview_finalize;
 
-  gtk_widget_class_set_layout_manager_type (widget_class, GTK_TYPE_BIN_LAYOUT);
+  widget_class->measure = gnalk_file_preview_measure;
+  widget_class->size_allocate = gnalk_file_preview_size_allocate;
+  /* No layout manager — measure/size_allocate handle layout manually,
+   * which lets us cap natural sizes (layout managers bypass measure vfunc) */
 
   /* Signal emitted when user clicks on the preview */
   signals[SIGNAL_CLICKED] =
@@ -139,6 +188,10 @@ gnalk_file_preview_class_init (GnalkFilePreviewClass *klass)
 static void
 gnalk_file_preview_init (GnalkFilePreview *self)
 {
+  /* Cap natural size at picture size_request by default */
+  self->max_natural_width = 200;
+  self->max_natural_height = 150;
+
   /* Create the overlay container */
   self->overlay = gtk_overlay_new ();
   gtk_widget_set_parent (self->overlay, GTK_WIDGET (self));
@@ -170,12 +223,9 @@ gnalk_file_preview_init (GnalkFilePreview *self)
   gtk_widget_set_visible (self->cached_icon, FALSE);
   gtk_overlay_add_overlay (GTK_OVERLAY (self->overlay), self->cached_icon);
 
-  /* Not cached overlay (dimmed box) */
+  /* Not cached overlay (dimmed box) — overlay children fill via measure_overlay,
+   * no hexpand/vexpand needed (would propagate and blow up parent layout) */
   self->not_cached_overlay = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  gtk_widget_set_halign (self->not_cached_overlay, GTK_ALIGN_FILL);
-  gtk_widget_set_valign (self->not_cached_overlay, GTK_ALIGN_FILL);
-  gtk_widget_set_hexpand (self->not_cached_overlay, TRUE);
-  gtk_widget_set_vexpand (self->not_cached_overlay, TRUE);
   gtk_widget_add_css_class (self->not_cached_overlay, "file-not-cached-overlay");
   gtk_widget_set_visible (self->not_cached_overlay, TRUE);
   gtk_overlay_add_overlay (GTK_OVERLAY (self->overlay), self->not_cached_overlay);
@@ -212,6 +262,9 @@ gnalk_file_preview_set_file (GnalkFilePreview *self,
                               GnalkAvatarCache *avatar_cache)
 {
   g_return_if_fail (GNALK_IS_FILE_PREVIEW (self));
+
+  /* Invalidate any pending async callbacks from previous set_file() */
+  self->preview_generation++;
 
   /* Store file info */
   g_free (self->file_id);
@@ -312,9 +365,22 @@ gnalk_file_preview_get_file_path (GnalkFilePreview *self)
 }
 
 void
+gnalk_file_preview_set_thumbnail_size (GnalkFilePreview *self,
+                                         int                width,
+                                         int                height)
+{
+  g_return_if_fail (GNALK_IS_FILE_PREVIEW (self));
+  gtk_widget_set_size_request (self->picture, width, height);
+  self->max_natural_width = width;
+  self->max_natural_height = height;
+}
+
+void
 gnalk_file_preview_reset (GnalkFilePreview *self)
 {
   g_return_if_fail (GNALK_IS_FILE_PREVIEW (self));
+
+  self->preview_generation++;
 
   g_clear_pointer (&self->file_id, g_free);
   g_clear_pointer (&self->file_name, g_free);

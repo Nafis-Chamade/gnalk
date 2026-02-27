@@ -286,6 +286,98 @@ gnalk_message_processor_index_message (GnalkMessageProcessor *self,
   msg_index_add (self, data);
 }
 
+/* ============ Attachment group helpers ============ */
+
+static gboolean
+msg_has_audio_mimetype (GnalkMessageData *msg)
+{
+  JsonObject *params = gnalk_message_data_get_message_parameters (msg);
+  if (!params || !json_object_has_member (params, "file"))
+    return FALSE;
+  JsonNode *file_node = json_object_get_member (params, "file");
+  if (!file_node || !JSON_NODE_HOLDS_OBJECT (file_node))
+    return FALSE;
+  JsonObject *file = json_node_get_object (file_node);
+  const char *mimetype = json_object_get_string_member_with_default (file, "mimetype", "");
+  return g_str_has_prefix (mimetype, "audio/");
+}
+
+static gboolean
+msg_has_reactions (GnalkMessageData *msg)
+{
+  JsonObject *reactions = gnalk_message_data_get_reactions (msg);
+  return reactions && json_object_get_size (reactions) > 0;
+}
+
+/* Finalize an attachment group: if >= 2 members, mark leader and set files array.
+ * Recalculate leader's show_timestamp based on the last member vs the message after it. */
+static void
+finalize_attachment_group (GListModel       *model,
+                           guint              n_items,
+                           GnalkMessageData *group_leader,
+                           GPtrArray        *group_members)
+{
+  if (!group_leader || !group_members)
+    return;
+
+  if (group_members->len >= 2)
+    {
+      gnalk_message_data_set_is_attachment_group_leader (group_leader, TRUE);
+      gnalk_message_data_set_attachment_group_files (group_leader, group_members);
+
+      /* Recalculate leader's show_timestamp: compare last member vs message after it.
+       * The leader visually represents the whole group, so its timestamp reflects
+       * the last member's time. */
+      GnalkMessageData *last_member = g_ptr_array_index (group_members, group_members->len - 1);
+      gint64 last_id = gnalk_message_data_get_id (last_member);
+
+      /* Find position of last member in store */
+      guint last_pos = 0;
+      for (guint k = 0; k < n_items; k++)
+        {
+          GnalkMessageData *item = g_list_model_get_item (model, k);
+          gint64 item_id = gnalk_message_data_get_id (item);
+          g_object_unref (item);
+          if (item_id == last_id)
+            {
+              last_pos = k;
+              break;
+            }
+        }
+
+      gboolean show_ts = TRUE;
+      if (last_pos + 1 < n_items)
+        {
+          GnalkMessageData *after = g_list_model_get_item (model, last_pos + 1);
+          if (after)
+            {
+              const char *last_author = gnalk_message_data_get_author_id (last_member);
+              const char *after_author = gnalk_message_data_get_author_id (after);
+              const char *after_system = gnalk_message_data_get_system_message (after);
+              gint64 last_ts = gnalk_message_data_get_timestamp (last_member);
+              gint64 after_ts = gnalk_message_data_get_timestamp (after);
+
+              gboolean same_author = g_strcmp0 (last_author, after_author) == 0;
+              gboolean after_not_system = !after_system || !*after_system;
+              gboolean same_minute = (last_ts / 60) == (after_ts / 60);
+
+              if (same_author && after_not_system && same_minute)
+                show_ts = FALSE;
+
+              g_object_unref (after);
+            }
+        }
+      gnalk_message_data_set_show_timestamp (group_leader, show_ts);
+    }
+  else
+    {
+      /* Single-member group — not a real group, restore normal flags */
+      gnalk_message_data_set_is_attachment_group_leader (group_leader, FALSE);
+      gnalk_message_data_set_is_attachment_group_hidden (group_leader, FALSE);
+      gnalk_message_data_set_attachment_group_files (group_leader, NULL);
+    }
+}
+
 /* ============ Date separators and timestamps ============ */
 
 void
@@ -360,6 +452,93 @@ gnalk_message_processor_update_separators (GnalkMessageProcessor *self)
       prev_month = month;
       prev_day = day;
       g_object_unref (msg_data);
+    }
+
+  /* === Second pass: attachment grouping === */
+
+  /* Reset all grouping flags first */
+  for (guint j = 0; j < n_items; j++)
+    {
+      GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (store), j);
+      gnalk_message_data_set_is_attachment_group_leader (msg, FALSE);
+      gnalk_message_data_set_is_attachment_group_hidden (msg, FALSE);
+      gnalk_message_data_set_attachment_group_files (msg, NULL);
+      g_object_unref (msg);
+    }
+
+  GnalkMessageData *group_leader = NULL;
+  g_autoptr(GPtrArray) group_members = NULL;
+  const char *group_author = NULL;
+  int leader_year = 0, leader_month = 0, leader_day = 0;
+
+  for (guint j = 0; j < n_items; j++)
+    {
+      GnalkMessageData *msg = g_list_model_get_item (G_LIST_MODEL (store), j);
+
+      gboolean has_file = gnalk_message_data_has_file (msg)
+                          && !msg_has_audio_mimetype (msg)
+                          && !msg_has_reactions (msg);
+      gboolean is_file_only = has_file && gnalk_message_data_is_file_only (msg);
+
+      const char *curr_author = gnalk_message_data_get_author_id (msg);
+      gboolean same_author = group_leader && g_strcmp0 (curr_author, group_author) == 0;
+
+      int msg_year, msg_month, msg_day;
+      gnalk_message_data_get_date (msg, &msg_year, &msg_month, &msg_day);
+      gboolean same_day = group_leader
+                          && msg_year == leader_year
+                          && msg_month == leader_month
+                          && msg_day == leader_day;
+
+      if (is_file_only && group_leader != NULL && same_author && same_day)
+        {
+          /* Continue the group */
+          gnalk_message_data_set_is_attachment_group_hidden (msg, TRUE);
+          g_ptr_array_add (group_members, msg);
+        }
+      else if (has_file && !is_file_only && group_leader != NULL && same_author && same_day)
+        {
+          /* Text+file: joins group as terminal member and closes it */
+          gnalk_message_data_set_is_attachment_group_hidden (msg, TRUE);
+          g_ptr_array_add (group_members, msg);
+          finalize_attachment_group (G_LIST_MODEL (store), n_items, group_leader, group_members);
+          group_leader = NULL;
+          g_clear_pointer (&group_members, g_ptr_array_unref);
+          group_author = NULL;
+        }
+      else
+        {
+          /* Finalize any pending group */
+          if (group_leader)
+            {
+              finalize_attachment_group (G_LIST_MODEL (store), n_items, group_leader, group_members);
+              group_leader = NULL;
+              g_clear_pointer (&group_members, g_ptr_array_unref);
+              group_author = NULL;
+            }
+
+          if (is_file_only)
+            {
+              /* Start new group */
+              group_leader = msg;
+              group_members = g_ptr_array_new ();  /* unowned refs */
+              g_ptr_array_add (group_members, msg);
+              group_author = curr_author;
+              leader_year = msg_year;
+              leader_month = msg_month;
+              leader_day = msg_day;
+            }
+        }
+
+      g_object_unref (msg);
+    }
+
+  /* Finalize last pending group */
+  if (group_leader)
+    {
+      finalize_attachment_group (G_LIST_MODEL (store), n_items, group_leader, group_members);
+      group_leader = NULL;
+      g_clear_pointer (&group_members, g_ptr_array_unref);
     }
 }
 

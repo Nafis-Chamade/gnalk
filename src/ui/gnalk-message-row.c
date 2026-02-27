@@ -42,6 +42,10 @@ struct _GnalkMessageRow
   /* File preview widget */
   GnalkFilePreview *file_preview;
 
+  /* Grouped file previews */
+  GtkWidget        *file_group_flow;                 /* GtkFlowBox from template */
+  GnalkFilePreview *group_file_pool[12];             /* Pre-created compact previews */
+
   /* Audio player */
   GtkWidget *audio_player;
 
@@ -188,12 +192,11 @@ on_bound_data_notify (GObject    *data_obj,
                                                 file_link, file_path, NULL);
                 }
 
-              /* Hide message label for media-only file messages */
+              /* Hide message label for media-only file messages (bubble stays visible for file inside it) */
               if (g_strcmp0 (message_text, "{file}") == 0)
                 {
-                  gboolean has_quote = gtk_widget_get_visible (GTK_WIDGET (self->quote_widget));
                   gtk_widget_set_visible (self->message_label, FALSE);
-                  gtk_widget_set_visible (self->message_bubble, has_quote);
+                  gtk_widget_set_visible (self->message_bubble, TRUE);
                 }
             }
         }
@@ -293,10 +296,8 @@ set_content_alignment (GnalkMessageRow *self, GtkAlign align)
 {
   gtk_widget_set_halign (self->content_box, align == GTK_ALIGN_END ? GTK_ALIGN_END : GTK_ALIGN_FILL);
   gtk_widget_set_halign (self->message_bubble, align);
-  gtk_widget_set_halign (GTK_WIDGET (self->file_preview), align);
   gtk_widget_set_halign (GTK_WIDGET (self->upload_preview), align);
   gtk_widget_set_halign (self->audio_player, align);
-  gtk_widget_set_halign (self->video_thumbnail, align);
   gtk_widget_set_halign (self->footer_box, align);
   gtk_widget_set_halign (self->thread_box, align);
 }
@@ -515,6 +516,7 @@ gnalk_message_row_class_init (GnalkMessageRowClass *klass)
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, quote_widget);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, upload_preview);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, file_preview);
+  gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, file_group_flow);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, audio_player);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, video_thumbnail);
   gtk_widget_class_bind_template_child (widget_class, GnalkMessageRow, date_separator);
@@ -821,6 +823,25 @@ on_video_thumbnail_clicked (GnalkVideoThumbnail *thumbnail G_GNUC_UNUSED,
     }
 }
 
+/* Called when a grouped file preview is clicked */
+static void
+on_group_file_clicked (GnalkFilePreview *widget,
+                       gpointer           user_data)
+{
+  GnalkMessageRow *self = GNALK_MESSAGE_ROW (user_data);
+
+  const char *file_id = gnalk_file_preview_get_file_id (widget);
+  if (file_id)
+    {
+      g_signal_emit (self, signals[SIGNAL_FILE_CLICKED], 0,
+                     file_id,
+                     gnalk_file_preview_get_file_mimetype (widget),
+                     gnalk_file_preview_get_file_link (widget),
+                     gnalk_file_preview_get_file_name (widget),
+                     gnalk_file_preview_get_file_path (widget));
+    }
+}
+
 /* Called when upload preview widget is clicked */
 static void
 on_upload_preview_clicked (GnalkUploadPreview *widget,
@@ -960,6 +981,20 @@ gnalk_message_row_init (GnalkMessageRow *self)
   /* Connect video thumbnail clicked signal to trigger file download/playback */
   g_signal_connect (self->video_thumbnail, "clicked",
                     G_CALLBACK (on_video_thumbnail_clicked), self);
+
+  /* Create pre-allocated pool of 12 compact file previews for grouped rendering */
+  for (int i = 0; i < 12; i++)
+    {
+      self->group_file_pool[i] = gnalk_file_preview_new ();
+      gnalk_file_preview_set_thumbnail_size (self->group_file_pool[i], 130, 100);
+      gtk_widget_add_css_class (GTK_WIDGET (self->group_file_pool[i]), "file-group-item");
+      g_signal_connect (self->group_file_pool[i], "clicked",
+                        G_CALLBACK (on_group_file_clicked), self);
+      gtk_flow_box_insert (GTK_FLOW_BOX (self->file_group_flow),
+                           GTK_WIDGET (self->group_file_pool[i]), -1);
+      /* Hide the GtkFlowBoxChild wrapper (not just the inner widget) */
+      gtk_widget_set_visible (gtk_widget_get_parent (GTK_WIDGET (self->group_file_pool[i])), FALSE);
+    }
 }
 
 GnalkMessageRow *
@@ -1417,16 +1452,24 @@ gnalk_message_row_set_data (GnalkMessageRow  *self,
         }
     }
 
-  /* Hide message label for media-only file messages (message is just "{file}") */
+  /* Hide message label for media-only file messages (message is just "{file}"),
+   * but keep bubble visible since file_preview/video_thumbnail are inside it */
   gboolean has_inline_media = gtk_widget_get_visible (self->audio_player)
                                || gtk_widget_get_visible (GTK_WIDGET (self->file_preview))
                                || gtk_widget_get_visible (self->video_thumbnail);
+  gboolean has_visual_file = gtk_widget_get_visible (GTK_WIDGET (self->file_preview))
+                              || gtk_widget_get_visible (self->video_thumbnail);
   if (has_inline_media && g_strcmp0 (message_text, "{file}") == 0)
     {
-      gboolean has_quote = gtk_widget_get_visible (GTK_WIDGET (self->quote_widget));
       gtk_widget_set_visible (self->message_label, FALSE);
-      gtk_widget_set_visible (self->message_bubble, has_quote);
+      /* Bubble stays visible — file/video are inside it; audio is outside but bubble still has quote/file */
+      gtk_widget_set_visible (self->message_bubble,
+                              has_visual_file
+                              || gtk_widget_get_visible (GTK_WIDGET (self->quote_widget)));
     }
+  /* Zero-padding on bubble when it contains media (not audio — audio is outside) */
+  if (has_visual_file)
+    gtk_widget_add_css_class (self->message_bubble, "message-media-bubble");
 }
 
 gint64
@@ -1851,6 +1894,23 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
   if (self->message_id == new_message_id && new_message_id != 0)
     return;
 
+  /* Hidden group member: hide the entire row and return immediately */
+  if (gnalk_message_data_get_is_attachment_group_hidden (data))
+    {
+      self->message_id = new_message_id;
+      gtk_widget_set_visible (GTK_WIDGET (self), FALSE);
+      /* Still connect for live updates so recompute can change hidden state */
+      if (self->bound_data)
+        {
+          g_signal_handler_disconnect (self->bound_data, self->unread_handler_id);
+          g_clear_object (&self->bound_data);
+        }
+      self->bound_data = g_object_ref (data);
+      self->unread_handler_id = g_signal_connect (data, "notify",
+                                                   G_CALLBACK (on_bound_data_notify), self);
+      return;
+    }
+
   self->message_id = new_message_id;
   self->message_timestamp = gnalk_message_data_get_timestamp (data);
 
@@ -2039,10 +2099,123 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
   gnalk_file_preview_reset (self->file_preview);
   gtk_widget_set_visible (self->audio_player, FALSE);
   gtk_widget_set_visible (self->video_thumbnail, FALSE);
+  gtk_widget_set_visible (self->file_group_flow, FALSE);
 
   gboolean has_server_file_info = FALSE;
 
-  if (!self->is_system)
+  /* === Attachment group leader: show all member files in a flow box === */
+  GPtrArray *group_files = gnalk_message_data_get_attachment_group_files (data);
+  if (gnalk_message_data_get_is_attachment_group_leader (data) && group_files && group_files->len >= 2)
+    {
+      has_server_file_info = TRUE;
+
+      /* Hide single-file widgets */
+      gtk_widget_set_visible (GTK_WIDGET (self->file_preview), FALSE);
+      gtk_widget_set_visible (self->audio_player, FALSE);
+      gtk_widget_set_visible (self->video_thumbnail, FALSE);
+
+      /* Show the flow box — set max-children-per-line to actual count
+       * so natural width matches content (not the template's default of 4) */
+      guint n_files = MIN (group_files->len, 12);
+      gtk_flow_box_set_max_children_per_line (GTK_FLOW_BOX (self->file_group_flow),
+                                               CLAMP (n_files, 1, 4));
+      gtk_widget_set_visible (self->file_group_flow, TRUE);
+      for (guint i = 0; i < n_files; i++)
+        {
+          GnalkMessageData *member = g_ptr_array_index (group_files, i);
+          JsonObject *member_params = gnalk_message_data_get_message_parameters (member);
+          if (!member_params || !json_object_has_member (member_params, "file"))
+            continue;
+
+          JsonNode *member_file_node = json_object_get_member (member_params, "file");
+          if (!member_file_node || !JSON_NODE_HOLDS_OBJECT (member_file_node))
+            continue;
+
+          JsonObject *member_file = json_node_get_object (member_file_node);
+          const char *m_file_id = json_object_get_string_member_with_default (member_file, "id", NULL);
+          const char *m_file_name = json_object_get_string_member_with_default (member_file, "name", "");
+          const char *m_mimetype = json_object_get_string_member_with_default (member_file, "mimetype", "");
+          const char *m_file_link = json_object_get_string_member_with_default (member_file, "link", "");
+          const char *m_file_path = json_object_get_string_member_with_default (member_file, "path", "");
+          const char *m_preview = json_object_get_string_member_with_default (member_file, "preview-available", "no");
+
+          GnalkFilePreview *pool_item = self->group_file_pool[i];
+
+          /* For videos, load preview without playing; for images with preview, load normally */
+          if (m_file_id && g_strcmp0 (m_preview, "yes") == 0 && avatar_cache)
+            gnalk_file_preview_set_file (pool_item, m_file_id, m_file_name, m_mimetype,
+                                          m_file_link, m_file_path, avatar_cache);
+          else if (m_file_id)
+            gnalk_file_preview_set_file (pool_item, m_file_id, m_file_name, m_mimetype,
+                                          m_file_link, m_file_path, NULL);
+
+          gtk_widget_set_visible (gtk_widget_get_parent (GTK_WIDGET (pool_item)), TRUE);
+        }
+
+      /* Hide unused pool items (hide the GtkFlowBoxChild wrapper) */
+      for (guint i = n_files; i < 12; i++)
+        gtk_widget_set_visible (gtk_widget_get_parent (GTK_WIDGET (self->group_file_pool[i])), FALSE);
+
+      /* Bubble must be visible — the flow box is inside it; zero-padding for media */
+      gtk_widget_set_visible (self->message_bubble, TRUE);
+      gtk_widget_add_css_class (self->message_bubble, "message-media-bubble");
+
+      /* Caption: check if the last member has text (not "{file}") */
+      GnalkMessageData *last_member = g_ptr_array_index (group_files, group_files->len - 1);
+      const char *last_msg = gnalk_message_data_get_message (last_member);
+      gboolean has_caption = last_msg && g_strcmp0 (last_msg, "{file}") != 0 && *last_msg;
+
+      if (has_caption)
+        {
+          /* Show the caption text below the images */
+          JsonObject *last_params = gnalk_message_data_get_message_parameters (last_member);
+          g_autofree char *caption_display = gnalk_message_utils_replace_parameters (last_msg, last_params, NULL);
+          gboolean render_md = gnalk_message_data_get_render_markdown (last_member);
+          if (render_md && caption_display && *caption_display)
+            {
+              g_autofree char *markup = gnalk_markdown_to_pango (caption_display, last_params);
+              gtk_label_set_markup (GTK_LABEL (self->message_label), markup);
+            }
+          else
+            {
+              g_autofree char *escaped = gnalk_markdown_escape_pango (caption_display ? caption_display : "");
+              gtk_label_set_markup (GTK_LABEL (self->message_label), escaped);
+            }
+          gtk_widget_set_visible (self->message_label, TRUE);
+        }
+      else
+        {
+          /* No caption — just images in the bubble */
+          gtk_widget_set_visible (self->message_label, FALSE);
+        }
+
+      /* Timestamp: show the last member's timestamp */
+      gint64 last_ts = gnalk_message_data_get_timestamp (last_member);
+      g_autofree char *last_ts_str = format_timestamp (last_ts);
+      gtk_label_set_text (GTK_LABEL (self->timestamp_label), last_ts_str);
+
+      /* Store the leader's own file info for click handling (first file) */
+      {
+        JsonObject *leader_params = gnalk_message_data_get_message_parameters (data);
+        if (leader_params && json_object_has_member (leader_params, "file"))
+          {
+            JsonNode *fn = json_object_get_member (leader_params, "file");
+            if (fn && JSON_NODE_HOLDS_OBJECT (fn))
+              {
+                JsonObject *f = json_node_get_object (fn);
+                gnalk_file_preview_set_file (self->file_preview,
+                    json_object_get_string_member_with_default (f, "id", NULL),
+                    json_object_get_string_member_with_default (f, "name", ""),
+                    json_object_get_string_member_with_default (f, "mimetype", ""),
+                    json_object_get_string_member_with_default (f, "link", ""),
+                    json_object_get_string_member_with_default (f, "path", ""),
+                    NULL);
+              }
+          }
+      }
+    }
+  /* === Normal single-file rendering === */
+  else if (!self->is_system)
     {
       JsonObject *params = gnalk_message_data_get_message_parameters (data);
       if (params && json_object_has_member (params, "file"))
@@ -2150,7 +2323,7 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       gtk_widget_set_visible (self->message_label, has_caption);
       gtk_widget_set_visible (self->message_bubble, has_caption || has_quote);
     }
-  else
+  else if (!gnalk_message_data_get_is_attachment_group_leader (data))
     {
       gnalk_upload_preview_reset (self->upload_preview);
 
@@ -2158,8 +2331,18 @@ gnalk_message_row_set_from_data (GnalkMessageRow  *self,
       const char *raw_msg = gnalk_message_data_get_message (data);
       gboolean is_file_only = has_server_file_info && raw_msg && g_strcmp0 (raw_msg, "{file}") == 0;
       gboolean has_quote = gtk_widget_get_visible (GTK_WIDGET (self->quote_widget));
+      gboolean has_visual_file = gtk_widget_get_visible (GTK_WIDGET (self->file_preview))
+                                  || gtk_widget_get_visible (self->video_thumbnail);
       gtk_widget_set_visible (self->message_label, !is_file_only);
-      gtk_widget_set_visible (self->message_bubble, !is_file_only || has_quote);
+      /* Bubble always visible when file present (file_preview/video_thumbnail are inside it) */
+      gtk_widget_set_visible (self->message_bubble, has_server_file_info || !is_file_only || has_quote);
+      /* Zero-padding on bubble when it contains media (not audio — audio is outside) */
+      if (has_visual_file)
+        gtk_widget_add_css_class (self->message_bubble, "message-media-bubble");
+    }
+  else
+    {
+      gnalk_upload_preview_reset (self->upload_preview);
     }
 
   /* Thread entry: show only on thread_created system messages.
@@ -2251,6 +2434,9 @@ gnalk_message_row_reset (GnalkMessageRow *self)
       self->unread_handler_id = 0;
     }
 
+  /* Restore visibility (may have been hidden as attachment group member) */
+  gtk_widget_set_visible (GTK_WIDGET (self), TRUE);
+
   /* Clear unread CSS classes */
   gtk_widget_remove_css_class (GTK_WIDGET (self), "message-unread");
   gtk_widget_remove_css_class (GTK_WIDGET (self), "message-marking-read");
@@ -2281,6 +2467,7 @@ gnalk_message_row_reset (GnalkMessageRow *self)
   gtk_widget_remove_css_class (GTK_WIDGET (self), "message-grouped");
   gtk_widget_remove_css_class (GTK_WIDGET (self), "thread-created-row");
   gtk_widget_remove_css_class (self->message_label, "message-emoji-only");
+  gtk_widget_remove_css_class (self->message_bubble, "message-media-bubble");
 
   /* Reset timestamp visibility */
   gtk_widget_set_visible (self->timestamp_label, TRUE);
@@ -2300,6 +2487,14 @@ gnalk_message_row_reset (GnalkMessageRow *self)
 
   /* Reset file preview widget */
   gnalk_file_preview_reset (self->file_preview);
+
+  /* Reset grouped file flow box and pool items */
+  gtk_widget_set_visible (self->file_group_flow, FALSE);
+  for (int i = 0; i < 12; i++)
+    {
+      gnalk_file_preview_reset (self->group_file_pool[i]);
+      gtk_widget_set_visible (gtk_widget_get_parent (GTK_WIDGET (self->group_file_pool[i])), FALSE);
+    }
 
   /* Reset audio player */
   gnalk_audio_player_stop (GNALK_AUDIO_PLAYER (self->audio_player));

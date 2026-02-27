@@ -47,6 +47,11 @@ struct _GnalkMessageData
   gint     thread_replies;  /* reply count (meaningful when is_thread) */
   char    *thread_title;    /* Server-provided thread title (when is_thread) */
   char    *thread_first_message; /* First message text (on thread_created system msgs) */
+
+  /* Attachment group support (pre-computed by MessageProcessor) */
+  gboolean    is_attachment_group_leader;   /* First message of a file group */
+  gboolean    is_attachment_group_hidden;   /* Non-leader member (hidden in list) */
+  GPtrArray  *attachment_group_files;       /* GnalkMessageData* (unowned) — leader only */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkMessageData, gnalk_message_data, G_TYPE_OBJECT)
@@ -149,6 +154,8 @@ gnalk_message_data_finalize (GObject *object)
     json_object_unref (self->parent);
   if (self->message_parameters)
     json_object_unref (self->message_parameters);
+
+  g_clear_pointer (&self->attachment_group_files, g_ptr_array_unref);
 
   G_OBJECT_CLASS (gnalk_message_data_parent_class)->finalize (object);
 }
@@ -853,6 +860,84 @@ gnalk_message_data_get_upload_mime_type (GnalkMessageData *self)
 {
   g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), NULL);
   return self->upload_mime_type;
+}
+
+/* Attachment group support */
+
+gboolean
+gnalk_message_data_is_file_only (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
+
+  /* TRUE if message=="{file}" && messageParameters.file && !system && !parent */
+  if (self->system_message && *self->system_message)
+    return FALSE;
+  if (self->parent)
+    return FALSE;
+  if (!self->message || g_strcmp0 (self->message, "{file}") != 0)
+    return FALSE;
+  if (!self->message_parameters || !json_object_has_member (self->message_parameters, "file"))
+    return FALSE;
+  return TRUE;
+}
+
+gboolean
+gnalk_message_data_has_file (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
+
+  /* TRUE if messageParameters.file present && !system */
+  if (self->system_message && *self->system_message)
+    return FALSE;
+  if (!self->message_parameters || !json_object_has_member (self->message_parameters, "file"))
+    return FALSE;
+  return TRUE;
+}
+
+gboolean
+gnalk_message_data_get_is_attachment_group_leader (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
+  return self->is_attachment_group_leader;
+}
+
+void
+gnalk_message_data_set_is_attachment_group_leader (GnalkMessageData *self,
+                                                      gboolean           leader)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  self->is_attachment_group_leader = leader;
+}
+
+gboolean
+gnalk_message_data_get_is_attachment_group_hidden (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), FALSE);
+  return self->is_attachment_group_hidden;
+}
+
+void
+gnalk_message_data_set_is_attachment_group_hidden (GnalkMessageData *self,
+                                                      gboolean           hidden)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  self->is_attachment_group_hidden = hidden;
+}
+
+GPtrArray *
+gnalk_message_data_get_attachment_group_files (GnalkMessageData *self)
+{
+  g_return_val_if_fail (GNALK_IS_MESSAGE_DATA (self), NULL);
+  return self->attachment_group_files;
+}
+
+void
+gnalk_message_data_set_attachment_group_files (GnalkMessageData *self,
+                                                  GPtrArray         *files)
+{
+  g_return_if_fail (GNALK_IS_MESSAGE_DATA (self));
+  g_clear_pointer (&self->attachment_group_files, g_ptr_array_unref);
+  self->attachment_group_files = files ? g_ptr_array_ref (files) : NULL;
 }
 
 /* Database serialization */

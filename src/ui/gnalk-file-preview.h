@@ -97,6 +97,18 @@ const char *gnalk_file_preview_get_file_link (GnalkFilePreview *self);
 const char *gnalk_file_preview_get_file_path (GnalkFilePreview *self);
 
 /**
+ * gnalk_file_preview_set_thumbnail_size:
+ * @self: the file preview widget
+ * @width: requested width (-1 for default)
+ * @height: requested height (-1 for default)
+ *
+ * Sets the size request for the preview picture (for grouped thumbnails).
+ */
+void gnalk_file_preview_set_thumbnail_size (GnalkFilePreview *self,
+                                              int                width,
+                                              int                height);
+
+/**
  * gnalk_file_preview_reset:
  * @self: the file preview widget
  *

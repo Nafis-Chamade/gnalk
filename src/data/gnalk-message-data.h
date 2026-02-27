@@ -142,6 +142,19 @@ gboolean     gnalk_message_data_get_file_cached     (GnalkMessageData *self);
 void         gnalk_message_data_set_file_cached     (GnalkMessageData *self,
                                                         gboolean           cached);
 
+/* Attachment group support (pre-computed by MessageProcessor) */
+gboolean     gnalk_message_data_is_file_only        (GnalkMessageData *self);
+gboolean     gnalk_message_data_has_file             (GnalkMessageData *self);
+gboolean     gnalk_message_data_get_is_attachment_group_leader (GnalkMessageData *self);
+void         gnalk_message_data_set_is_attachment_group_leader (GnalkMessageData *self,
+                                                                   gboolean           leader);
+gboolean     gnalk_message_data_get_is_attachment_group_hidden (GnalkMessageData *self);
+void         gnalk_message_data_set_is_attachment_group_hidden (GnalkMessageData *self,
+                                                                   gboolean           hidden);
+GPtrArray   *gnalk_message_data_get_attachment_group_files     (GnalkMessageData *self);
+void         gnalk_message_data_set_attachment_group_files     (GnalkMessageData *self,
+                                                                   GPtrArray         *files);
+
 /* Thread support */
 gint64       gnalk_message_data_get_thread_id       (GnalkMessageData *self);
 gboolean     gnalk_message_data_get_is_thread       (GnalkMessageData *self);

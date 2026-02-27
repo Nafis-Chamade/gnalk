@@ -1311,6 +1311,17 @@ on_msg_list_item_bind (GtkListItemFactory *factory,
   GnalkMessageData *data = GNALK_MESSAGE_DATA (gtk_list_item_get_item (item));
   GnalkMessageRow *row = GNALK_MESSAGE_ROW (gtk_list_item_get_child (item));
 
+  /* Hidden group member: set_from_data hides the row, skip tracking */
+  if (gnalk_message_data_get_is_attachment_group_hidden (data))
+    {
+      gnalk_message_row_set_from_data (row, data, self->avatar_cache,
+                                         self->current_room ? self->current_room->room_token : NULL);
+      /* Still connect status notify for live updates */
+      g_signal_connect (data, "notify::status",
+                        G_CALLBACK (on_msg_data_status_notify), row);
+      return;
+    }
+
   /* Set edit/delete timeouts and thread support from cached capabilities */
   gnalk_message_row_set_edit_timeout (row, self->cached_edit_timeout);
   gnalk_message_row_set_delete_timeout (row, self->cached_delete_timeout);
@@ -1361,6 +1372,40 @@ on_msg_list_item_bind (GtkListItemFactory *factory,
             gnalk_message_data_set_file_cached (data, TRUE);
         }
       gnalk_message_row_set_file_cached (row, cached);
+    }
+
+  /* For group leaders, check file cache for each member */
+  GPtrArray *group_files = gnalk_message_data_get_attachment_group_files (data);
+  if (gnalk_message_data_get_is_attachment_group_leader (data) && group_files)
+    {
+      for (guint gi = 0; gi < group_files->len; gi++)
+        {
+          GnalkMessageData *member = g_ptr_array_index (group_files, gi);
+          gboolean member_cached = gnalk_message_data_get_file_cached (member);
+          if (!member_cached)
+            {
+              JsonObject *mp = gnalk_message_data_get_message_parameters (member);
+              if (mp && json_object_has_member (mp, "file"))
+                {
+                  JsonNode *fn = json_object_get_member (mp, "file");
+                  if (fn && JSON_NODE_HOLDS_OBJECT (fn))
+                    {
+                      JsonObject *f = json_node_get_object (fn);
+                      const char *fid = json_object_get_string_member_with_default (f, "id", NULL);
+                      const char *fname = json_object_get_string_member_with_default (f, "name", "");
+                      if (fid && *fid)
+                        {
+                          g_autofree char *cd = g_build_filename (g_get_user_cache_dir (), "gnalk", NULL);
+                          const char *n = (fname && *fname) ? fname : "download";
+                          g_autofree char *sn = g_strdup_printf ("%s_%s", fid, n);
+                          g_autofree char *cp = g_build_filename (cd, sn, NULL);
+                          if (g_file_test (cp, G_FILE_TEST_EXISTS))
+                            gnalk_message_data_set_file_cached (member, TRUE);
+                        }
+                    }
+                }
+            }
+        }
     }
 
   /* Apply unread visual state */
