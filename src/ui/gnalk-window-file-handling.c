@@ -65,6 +65,63 @@ get_icon_name_for_mime_type (const char *mime_type)
   return "text-x-generic-symbolic";
 }
 
+/* Shared helper: add a single GFile as an attachment (reads content, creates preview) */
+static gboolean
+add_file_as_attachment (GnalkWindow *self,
+                        GFile        *file)
+{
+  g_autofree char *path = g_file_get_path (file);
+  g_autofree char *basename = g_file_get_basename (file);
+  g_autofree char *content_type = NULL;
+
+  g_autoptr(GFileInfo) info = g_file_query_info (file,
+                                                   G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+                                                   G_FILE_QUERY_INFO_NONE,
+                                                   NULL, NULL);
+  if (info)
+    content_type = g_strdup (g_file_info_get_content_type (info));
+
+  /* Read file contents */
+  gchar *contents = NULL;
+  gsize length = 0;
+  g_autoptr(GError) read_error = NULL;
+
+  if (!g_file_get_contents (path, &contents, &length, &read_error))
+    {
+      g_warning ("Failed to read file %s: %s", path, read_error->message);
+      return FALSE;
+    }
+
+  /* Ensure array exists */
+  if (!self->attachments)
+    self->attachments = g_ptr_array_new_with_free_func ((GDestroyNotify) attachment_info_free);
+
+  /* Create attachment info */
+  AttachmentInfo *att = g_new0 (AttachmentInfo, 1);
+  att->file_path = g_strdup (path);
+  att->file_bytes = g_bytes_new_take (contents, length);
+  att->content_type = g_strdup (content_type);
+  att->file_name = g_strdup (basename);
+
+  g_ptr_array_add (self->attachments, att);
+
+  /* Prepare preview texture for images */
+  GdkTexture *preview_texture = NULL;
+  if (content_type && g_str_has_prefix (content_type, "image/"))
+    preview_texture = gdk_texture_new_from_file (file, NULL);
+
+  const char *icon_name = get_icon_name_for_mime_type (content_type);
+
+  /* Add to UI preview */
+  gnalk_conversation_actions_add_attachment (self->conversation_actions,
+                                               basename, icon_name, preview_texture);
+
+  if (preview_texture)
+    g_object_unref (preview_texture);
+
+  return TRUE;
+}
+
 static void
 on_file_dialog_response (GObject      *source,
                          GAsyncResult *result,
@@ -86,62 +143,12 @@ on_file_dialog_response (GObject      *source,
   /* Clear any previous attachments */
   gnalk_window_clear_attachments (self);
 
-  /* Ensure array exists */
-  if (!self->attachments)
-    self->attachments = g_ptr_array_new_with_free_func ((GDestroyNotify) attachment_info_free);
-
   guint n_files = g_list_model_get_n_items (files);
-
   for (guint i = 0; i < n_files; i++)
     {
       g_autoptr(GFile) file = g_list_model_get_item (files, i);
-      if (!file)
-        continue;
-
-      g_autofree char *path = g_file_get_path (file);
-      g_autofree char *basename = g_file_get_basename (file);
-      g_autofree char *content_type = NULL;
-
-      g_autoptr(GFileInfo) info = g_file_query_info (file,
-                                                       G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
-                                                       G_FILE_QUERY_INFO_NONE,
-                                                       NULL, NULL);
-      if (info)
-        content_type = g_strdup (g_file_info_get_content_type (info));
-
-      /* Read file contents */
-      gchar *contents = NULL;
-      gsize length = 0;
-      g_autoptr(GError) read_error = NULL;
-
-      if (!g_file_get_contents (path, &contents, &length, &read_error))
-        {
-          g_warning ("Failed to read file %s: %s", path, read_error->message);
-          continue;
-        }
-
-      /* Create attachment info */
-      AttachmentInfo *att = g_new0 (AttachmentInfo, 1);
-      att->file_path = g_strdup (path);
-      att->file_bytes = g_bytes_new_take (contents, length);
-      att->content_type = g_strdup (content_type);
-      att->file_name = g_strdup (basename);
-
-      g_ptr_array_add (self->attachments, att);
-
-      /* Prepare preview texture for images */
-      GdkTexture *preview_texture = NULL;
-      if (content_type && g_str_has_prefix (content_type, "image/"))
-        preview_texture = gdk_texture_new_from_file (file, NULL);
-
-      const char *icon_name = get_icon_name_for_mime_type (content_type);
-
-      /* Add to UI preview */
-      gnalk_conversation_actions_add_attachment (self->conversation_actions,
-                                                   basename, icon_name, preview_texture);
-
-      if (preview_texture)
-        g_object_unref (preview_texture);
+      if (file)
+        add_file_as_attachment (self, file);
     }
 }
 
@@ -158,6 +165,170 @@ gnalk_window_on_attach_clicked (GtkButton    *button,
   gtk_file_dialog_open_multiple (dialog, GTK_WINDOW (self), NULL,
                                   on_file_dialog_response, self);
   g_object_unref (dialog);
+}
+
+/* ============ Clipboard Paste Handlers ============ */
+
+static void
+on_clipboard_file_list_read (GObject      *source,
+                              GAsyncResult *result,
+                              gpointer      user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+  g_autoptr(GError) error = NULL;
+
+  const GValue *value = gdk_clipboard_read_value_finish (GDK_CLIPBOARD (source), result, &error);
+  if (!value)
+    {
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        g_warning ("Clipboard file list read failed: %s", error->message);
+      return;
+    }
+
+  if (!self->current_room)
+    return;
+
+  GSList *file_list = g_value_get_boxed (value);
+  if (!file_list)
+    return;
+
+  gnalk_window_clear_attachments (self);
+
+  for (GSList *l = file_list; l; l = l->next)
+    {
+      GFile *file = l->data;
+      if (file)
+        add_file_as_attachment (self, file);
+    }
+}
+
+static void
+on_clipboard_texture_read (GObject      *source,
+                            GAsyncResult *result,
+                            gpointer      user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+  g_autoptr(GError) error = NULL;
+
+  g_autoptr(GdkTexture) texture = gdk_clipboard_read_texture_finish (GDK_CLIPBOARD (source),
+                                                                       result, &error);
+  if (!texture)
+    {
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        g_warning ("Clipboard texture read failed: %s", error->message);
+      return;
+    }
+
+  if (!self->current_room)
+    return;
+
+  gnalk_window_clear_attachments (self);
+
+  /* Convert texture to PNG bytes */
+  g_autoptr(GBytes) png_bytes = gdk_texture_save_to_png_bytes (texture);
+  if (!png_bytes)
+    {
+      g_warning ("Failed to convert pasted texture to PNG");
+      return;
+    }
+
+  /* Generate filename with timestamp */
+  g_autoptr(GDateTime) now = g_date_time_new_now_local ();
+  g_autofree char *file_name = g_date_time_format (now, "Pasted image %Y-%m-%d %H-%M-%S.png");
+
+  /* Save to temp file so the upload pipeline can copy it to cache later */
+  g_autofree char *cache_dir = g_build_filename (g_get_user_cache_dir (), "gnalk", NULL);
+  g_mkdir_with_parents (cache_dir, 0700);
+  g_autofree char *tmp_path = g_build_filename (cache_dir, file_name, NULL);
+
+  gsize size;
+  gconstpointer data = g_bytes_get_data (png_bytes, &size);
+  g_autoptr(GError) write_error = NULL;
+  if (!g_file_set_contents (tmp_path, data, size, &write_error))
+    {
+      g_warning ("Failed to save pasted image: %s", write_error->message);
+      return;
+    }
+
+  /* Ensure array exists */
+  if (!self->attachments)
+    self->attachments = g_ptr_array_new_with_free_func ((GDestroyNotify) attachment_info_free);
+
+  AttachmentInfo *att = g_new0 (AttachmentInfo, 1);
+  att->file_path = g_strdup (tmp_path);
+  att->file_bytes = g_bytes_ref (png_bytes);
+  att->content_type = g_strdup ("image/png");
+  att->file_name = g_strdup (file_name);
+
+  g_ptr_array_add (self->attachments, att);
+
+  /* Add preview using the texture we already have */
+  gnalk_conversation_actions_add_attachment (self->conversation_actions,
+                                               file_name, "image-x-generic-symbolic",
+                                               texture);
+}
+
+void
+gnalk_window_on_paste_attachments (GnalkMessageInput *input G_GNUC_UNUSED,
+                                    GdkClipboard       *clipboard,
+                                    GnalkWindow        *self)
+{
+  if (!self->current_room)
+    return;
+
+  GdkContentFormats *formats = gdk_clipboard_get_formats (clipboard);
+  /* Prefer file list (preserves original filename/format) over texture */
+  if (gdk_content_formats_contain_gtype (formats, GDK_TYPE_FILE_LIST))
+    {
+      gdk_clipboard_read_value_async (clipboard, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT,
+                                        NULL, on_clipboard_file_list_read, self);
+      return;
+    }
+
+  if (gdk_content_formats_contain_gtype (formats, GDK_TYPE_TEXTURE))
+    {
+      gdk_clipboard_read_texture_async (clipboard, NULL,
+                                          on_clipboard_texture_read, self);
+      return;
+    }
+}
+
+/* ============ Drag and Drop Handler ============ */
+
+static gboolean
+on_content_drop (GtkDropTarget *target G_GNUC_UNUSED,
+                  const GValue   *value,
+                  double          x G_GNUC_UNUSED,
+                  double          y G_GNUC_UNUSED,
+                  gpointer        user_data)
+{
+  GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  if (!self->current_room)
+    return FALSE;
+
+  GSList *file_list = g_value_get_boxed (value);
+  if (!file_list)
+    return FALSE;
+
+  gnalk_window_clear_attachments (self);
+
+  for (GSList *l = file_list; l; l = l->next)
+    {
+      GFile *file = l->data;
+      if (file)
+        add_file_as_attachment (self, file);
+    }
+
+  return TRUE;
+}
+
+void
+gnalk_window_setup_drop_target (GnalkWindow *self)
+{
+  GtkDropTarget *drop = gtk_drop_target_new (GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+  g_signal_connect (drop, "drop", G_CALLBACK (on_content_drop), self);
+  gtk_widget_add_controller (self->content_page, GTK_EVENT_CONTROLLER (drop));
 }
 
 /* ============ Media Capture Functions ============ */

@@ -511,6 +511,10 @@ void gnalk_window_on_quote_closed                    (GnalkConversationActions *
 /* ============ File handling functions (gnalk-window-file-handling.c) ============ */
 
 void gnalk_window_on_attach_clicked             (GtkButton *button, GnalkWindow *self);
+void gnalk_window_on_paste_attachments          (GnalkMessageInput *input,
+                                                   GdkClipboard *clipboard,
+                                                   GnalkWindow *self);
+void gnalk_window_setup_drop_target             (GnalkWindow *self);
 void gnalk_window_on_voice_message_recorded     (GnalkMessageInput *input, GBytes *audio_data,
                                                    gdouble duration, GnalkWindow *self);
 void gnalk_window_on_camera_clicked             (GnalkMessageInput *input, GnalkWindow *self);

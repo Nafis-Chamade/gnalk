@@ -143,18 +143,16 @@ gnalk_upload_preview_set_file (GnalkUploadPreview *self,
           gtk_widget_set_visible (self->image_overlay, TRUE);
           gtk_widget_set_visible (self->file_box, FALSE);
 
-          /* Show spinner while uploading, checkmark when complete */
+          /* Show spinner while uploading */
           if (is_uploading)
             {
               gtk_spinner_start (GTK_SPINNER (self->upload_spinner));
               gtk_widget_set_visible (self->upload_spinner, TRUE);
-              gtk_widget_set_visible (self->complete_icon, FALSE);
             }
           else
             {
               gtk_spinner_stop (GTK_SPINNER (self->upload_spinner));
               gtk_widget_set_visible (self->upload_spinner, FALSE);
-              gtk_widget_set_visible (self->complete_icon, TRUE);
             }
 
           gtk_widget_set_visible (GTK_WIDGET (self), TRUE);
@@ -188,10 +186,9 @@ gnalk_upload_preview_set_complete (GnalkUploadPreview *self)
 
   self->is_uploading = FALSE;
 
-  /* Stop spinners and show complete icon */
+  /* Stop spinners */
   gtk_spinner_stop (GTK_SPINNER (self->upload_spinner));
   gtk_widget_set_visible (self->upload_spinner, FALSE);
-  gtk_widget_set_visible (self->complete_icon, TRUE);
 
   gtk_spinner_stop (GTK_SPINNER (self->file_spinner));
   gtk_widget_set_visible (self->file_spinner, FALSE);

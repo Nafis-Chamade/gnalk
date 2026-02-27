@@ -59,6 +59,7 @@ enum {
   SIGNAL_ATTACH_CLICKED,
   SIGNAL_VOICE_MESSAGE_RECORDED,
   SIGNAL_CAMERA_CLICKED,
+  SIGNAL_PASTE_ATTACHMENTS,
   N_SIGNALS
 };
 
@@ -200,6 +201,22 @@ on_key_pressed (GtkEventControllerKey *controller G_GNUC_UNUSED,
                 GdkModifierType        state,
                 gpointer               user_data)
 {
+  /* Ctrl+V: intercept paste when clipboard has files or textures */
+  if (keyval == GDK_KEY_v && (state & GDK_CONTROL_MASK))
+    {
+      GnalkMessageInput *self = GNALK_MESSAGE_INPUT (user_data);
+      GdkClipboard *clipboard = gtk_widget_get_clipboard (GTK_WIDGET (self));
+      GdkContentFormats *formats = gdk_clipboard_get_formats (clipboard);
+
+      if (gdk_content_formats_contain_gtype (formats, GDK_TYPE_FILE_LIST) ||
+          gdk_content_formats_contain_gtype (formats, GDK_TYPE_TEXTURE))
+        {
+          g_signal_emit (self, signals[SIGNAL_PASTE_ATTACHMENTS], 0, clipboard);
+          return TRUE;
+        }
+      /* Fall through → normal text paste */
+    }
+
   if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter)
     {
       if (state & GDK_SHIFT_MASK)
@@ -341,6 +358,13 @@ gnalk_message_input_class_init (GnalkMessageInputClass *klass)
                   G_SIGNAL_RUN_LAST,
                   0, NULL, NULL, NULL,
                   G_TYPE_NONE, 0);
+
+  signals[SIGNAL_PASTE_ATTACHMENTS] =
+    g_signal_new ("paste-attachments",
+                  G_TYPE_FROM_CLASS (klass),
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 1, GDK_TYPE_CLIPBOARD);
 
   gtk_widget_class_set_template_from_resource (widget_class,
                                                 "/net/skilpa/gnalk/gnalk-message-input.ui");

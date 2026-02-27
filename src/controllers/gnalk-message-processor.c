@@ -1234,6 +1234,9 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
 
               gnalk_message_data_confirm_sent (existing, msg_id, timestamp);
 
+              /* Clear uploading state (poll may arrive before upload HTTP response) */
+              gnalk_message_data_set_is_uploading (existing, FALSE);
+
               const char *server_message = json_object_get_string_member_with_default (msg, "message", NULL);
               if (server_message)
                 gnalk_message_data_set_message (existing, server_message);
@@ -1267,7 +1270,10 @@ gnalk_message_processor_process_json (GnalkMessageProcessor *self,
                               if (!g_file_copy (src, dst, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &copy_error))
                                 g_debug ("Failed to copy uploaded file to cache: %s", copy_error->message);
                               else
-                                g_debug ("Copied uploaded file to cache: %s", cache_path);
+                                {
+                                  g_debug ("Copied uploaded file to cache: %s", cache_path);
+                                  gnalk_message_data_set_file_cached (existing, TRUE);
+                                }
                             }
                         }
                     }
