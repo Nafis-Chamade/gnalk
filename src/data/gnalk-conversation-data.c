@@ -971,26 +971,30 @@ gnalk_conversation_data_set_threads (GnalkConversationData *self,
     }
   else
     {
-      /* Build hash of existing threads by ID for in-place update */
-      g_autoptr(GHashTable) existing = g_hash_table_new (g_direct_hash, g_direct_equal);
+      /* Build hash of existing threads by ID for in-place update.
+       * Thread IDs are 64-bit server IDs, so use int64 keys (heap-allocated)
+       * to avoid truncating IDs > 2^31. */
+      g_autoptr(GHashTable) existing = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, NULL);
       guint n_existing = g_list_model_get_n_items (G_LIST_MODEL (store));
       for (guint i = 0; i < n_existing; i++)
         {
           GnalkThreadData *td = g_list_model_get_item (G_LIST_MODEL (store), i);
-          g_hash_table_insert (existing,
-                               GINT_TO_POINTER ((gint) gnalk_thread_data_get_thread_id (td)),
-                               GUINT_TO_POINTER (i));
+          gint64 *key = g_new (gint64, 1);
+          *key = gnalk_thread_data_get_thread_id (td);
+          g_hash_table_insert (existing, key, GUINT_TO_POINTER (i));
           g_object_unref (td);
         }
 
-      /* Track which IDs are in the new set */
-      g_autoptr(GHashTable) new_ids = g_hash_table_new (g_direct_hash, g_direct_equal);
+      /* Track which IDs are in the new set (int64 keys, heap-allocated) */
+      g_autoptr(GHashTable) new_ids = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, NULL);
 
       for (guint i = 0; i < thread_datas->len; i++)
         {
           GnalkThreadData *new_td = g_ptr_array_index (thread_datas, i);
           gint64 tid = gnalk_thread_data_get_thread_id (new_td);
-          g_hash_table_add (new_ids, GINT_TO_POINTER ((gint) tid));
+          gint64 *new_key = g_new (gint64, 1);
+          *new_key = tid;
+          g_hash_table_add (new_ids, new_key);
 
           /* Compute unread: thread's last_message_id > conversation's last_read_message */
           gboolean unread = gnalk_thread_data_get_last_message_id (new_td) > self->last_read_message;
@@ -999,7 +1003,7 @@ gnalk_conversation_data_set_threads (GnalkConversationData *self,
             any_unread = TRUE;
 
           gpointer idx_ptr;
-          if (g_hash_table_lookup_extended (existing, GINT_TO_POINTER ((gint) tid), NULL, &idx_ptr))
+          if (g_hash_table_lookup_extended (existing, &tid, NULL, &idx_ptr))
             {
               /* Update existing in place */
               guint idx = GPOINTER_TO_UINT (idx_ptr);
@@ -1022,7 +1026,7 @@ gnalk_conversation_data_set_threads (GnalkConversationData *self,
           GnalkThreadData *td = g_list_model_get_item (G_LIST_MODEL (store), i);
           gint64 tid = gnalk_thread_data_get_thread_id (td);
           g_object_unref (td);
-          if (!g_hash_table_contains (new_ids, GINT_TO_POINTER ((gint) tid)))
+          if (!g_hash_table_contains (new_ids, &tid))
             {
               g_list_store_remove (store, i);
               changed = TRUE;

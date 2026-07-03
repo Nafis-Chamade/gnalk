@@ -19,6 +19,8 @@ static void
 call_participant_record_free (gpointer data)
 {
   CallParticipantRecord *record = data;
+  if (record->reaction_fade_timeout_id > 0)
+    g_source_remove (record->reaction_fade_timeout_id);
   g_free (record->display_name);
   g_free (record->user_id);
   if (record->tile)
@@ -136,15 +138,18 @@ on_reaction_fade_timeout (gpointer user_data)
   if (window_obj)
     {
       GnalkCallWindow *self = GNALK_CALL_WINDOW (window_obj);
-      self->reaction_fade_timeout_id = 0;
 
       CallParticipantRecord *record = g_hash_table_lookup (self->participants,
                                                             data->session_id);
-      if (record && record->tile)
-        gnalk_participant_tile_set_reaction (record->tile, NULL);
+      if (record)
+        {
+          record->reaction_fade_timeout_id = 0;
+          if (record->tile)
+            gnalk_participant_tile_set_reaction (record->tile, NULL);
+        }
     }
 
-  reaction_fade_data_free (data);
+  /* Data is freed by the GDestroyNotify registered with the timeout source. */
   return G_SOURCE_REMOVE;
 }
 
@@ -163,15 +168,20 @@ on_call_reaction (GnalkSignaling  *signaling G_GNUC_UNUSED,
 
   gnalk_participant_tile_set_reaction (record->tile, emoji);
 
-  /* Cancel previous fade timeout if any */
-  if (self->reaction_fade_timeout_id > 0)
-    g_source_remove (self->reaction_fade_timeout_id);
+  /* Cancel this participant's previous fade timeout if any. Using a per-tile
+   * timer (instead of a single shared one) means one participant reacting does
+   * not cut short another participant's reaction. The GDestroyNotify frees the
+   * data whether the timer fires or is cancelled here, so it never leaks. */
+  if (record->reaction_fade_timeout_id > 0)
+    g_source_remove (record->reaction_fade_timeout_id);
 
   ReactionFadeData *data = g_new0 (ReactionFadeData, 1);
   g_weak_ref_init (&data->window_ref, self);
   data->session_id = g_strdup (session_id);
 
-  self->reaction_fade_timeout_id = g_timeout_add_seconds (3, on_reaction_fade_timeout, data);
+  record->reaction_fade_timeout_id =
+    g_timeout_add_seconds_full (G_PRIORITY_DEFAULT, 3, on_reaction_fade_timeout,
+                                data, (GDestroyNotify) reaction_fade_data_free);
 }
 
 /* Drag gesture callbacks for preview overlay.
@@ -351,11 +361,8 @@ gnalk_call_window_finalize (GObject *object)
         }
     }
 
-  if (self->reaction_fade_timeout_id > 0)
-    {
-      g_source_remove (self->reaction_fade_timeout_id);
-      self->reaction_fade_timeout_id = 0;
-    }
+  /* Per-participant reaction fade timers are cancelled by
+   * call_participant_record_free when the participants table is cleared above. */
 
   /* Screen sharing state is cleaned up via participants hash table */
   g_clear_object (&self->screen_capture);
@@ -644,23 +651,11 @@ on_signaling_message (GnalkSignaling *signaling,
                       const char *session_id = json_object_get_string_member_with_default (participant, "sessionid", NULL);
                       const char *room_session_id = json_object_get_string_member_with_default (participant, "roomsessionid", NULL);
 
-                      /* Check if features array exists before accessing */
-                      JsonNode *features_node = json_object_get_member (participant, "features");
-                      if (features_node && JSON_NODE_HOLDS_ARRAY (features_node))
-                        {
-                          JsonArray *features = json_node_get_array (features_node);
-                          guint feat_len = json_array_get_length (features);
-                          for (guint f = 0; f < feat_len; f++)
-                            {
-                              const char *feat = json_array_get_string_element (features, f);
-                              if (g_strcmp0 (feat, "mcu") == 0)
-                                {
-                                  if (!self->has_mcu)
-                                  self->has_mcu = TRUE;
-                                  break;
-                                }
-                            }
-                        }
+                      /* NOTE: has_mcu must NOT be derived from a participant's advertised
+                       * "mcu" feature here - MCU-ness is a property of the signaling
+                       * server, taken authoritatively from the hello response via
+                       * gnalk_signaling_has_mcu(). A single participant advertising "mcu"
+                       * used to wrongly flip the whole call into MCU mode. */
 
                       if (!session_id)
                         continue;
@@ -866,8 +861,8 @@ on_signaling_message (GnalkSignaling *signaling,
                                         gnalk_webrtc_set_turn_server (self->webrtc, turn, turn_user, turn_cred);
                                     }
 
-                                  gnalk_webrtc_set_signal_callback (self->webrtc, gnalk_call_signaling_on_webrtc_signal, self);
-                                  gnalk_webrtc_set_connection_state_callback (self->webrtc, gnalk_call_signaling_on_publisher_connection_state, self);
+                                  gnalk_webrtc_set_signal_callback (self->webrtc, gnalk_call_signaling_on_webrtc_signal, self, NULL);
+                                  gnalk_webrtc_set_connection_state_callback (self->webrtc, gnalk_call_signaling_on_publisher_connection_state, self, NULL);
                                   self->offer_sent = TRUE;
 
                                   /* Stop preview pipeline to release the camera for WebRTC
@@ -1018,9 +1013,9 @@ on_signaling_message (GnalkSignaling *signaling,
                           g_weak_ref_init (&conn_cb_data->window_ref, self);
                           conn_cb_data->session_id = g_strdup (sender_session_id);
 
-                          gnalk_webrtc_set_remote_video_callback (screen_sub, gnalk_call_participant_on_screen_remote_video_frame, video_cb_data);
-                          gnalk_webrtc_set_signal_callback (screen_sub, gnalk_call_signaling_on_screen_subscriber_signal, signal_cb_data);
-                          gnalk_webrtc_set_connection_state_callback (screen_sub, gnalk_call_signaling_on_screen_subscriber_connection_state, conn_cb_data);
+                          gnalk_webrtc_set_remote_video_callback (screen_sub, gnalk_call_participant_on_screen_remote_video_frame, video_cb_data, tile_video_callback_data_free);
+                          gnalk_webrtc_set_signal_callback (screen_sub, gnalk_call_signaling_on_screen_subscriber_signal, signal_cb_data, tile_video_callback_data_free);
+                          gnalk_webrtc_set_connection_state_callback (screen_sub, gnalk_call_signaling_on_screen_subscriber_connection_state, conn_cb_data, tile_video_callback_data_free);
 
                           /* Enable continuous keyframe requests for screen share quality */
                           gnalk_webrtc_enable_continuous_pli (screen_sub, TRUE, 2000);
@@ -1318,6 +1313,11 @@ gnalk_call_window_start_call (GnalkCallWindow  *self,
                                gboolean           is_federated)
 {
   g_return_if_fail (GNALK_IS_CALL_WINDOW (self));
+
+  /* Reset the teardown guard so a call started on a reused window can end again.
+   * end_call() sets this TRUE and never cleared it, which blocked leaving a
+   * second call on the same window. */
+  self->call_ending = FALSE;
 
   g_free (self->room_token);
   self->room_token = g_strdup (room_token);

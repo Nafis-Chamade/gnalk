@@ -90,11 +90,13 @@ void gnalk_webrtc_handle_ice_candidate (GnalkWebrtc *self,
 
 void gnalk_webrtc_set_signal_callback (GnalkWebrtc               *self,
                                           GnalkWebrtcSignalCallback  callback,
-                                          gpointer                    user_data);
+                                          gpointer                    user_data,
+                                          GDestroyNotify              notify);
 
 void gnalk_webrtc_set_remote_video_callback (GnalkWebrtc                    *self,
                                                 GnalkWebrtcRemoteVideoCallback  callback,
-                                                gpointer                         user_data);
+                                                gpointer                         user_data,
+                                                GDestroyNotify                   notify);
 
 void gnalk_webrtc_set_local_video_callback (GnalkWebrtc                   *self,
                                                GnalkWebrtcLocalVideoCallback  callback,
@@ -102,11 +104,13 @@ void gnalk_webrtc_set_local_video_callback (GnalkWebrtc                   *self,
 
 void gnalk_webrtc_set_connection_state_callback (GnalkWebrtc                        *self,
                                                     GnalkWebrtcConnectionStateCallback  callback,
-                                                    gpointer                              user_data);
+                                                    gpointer                              user_data,
+                                                    GDestroyNotify                        notify);
 
 void gnalk_webrtc_set_speaking_callback (GnalkWebrtc                  *self,
                                             GnalkWebrtcSpeakingCallback   callback,
-                                            gpointer                       user_data);
+                                            gpointer                       user_data,
+                                            GDestroyNotify                 notify);
 
 #ifdef HAVE_GSTREAMER
 GstElement *gnalk_webrtc_get_video_sink (GnalkWebrtc *self);

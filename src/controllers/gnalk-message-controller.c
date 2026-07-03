@@ -984,7 +984,10 @@ gnalk_message_controller_resume_polling (GnalkMessageController *self)
   if (self->polling)
     return;
 
-  if (!self->http_client || !self->room_token || self->last_known_message_id <= 0)
+  /* Allow id 0: an empty room (e.g. just uploaded the first file) still needs
+   * live polling — get_messages with lastKnownId=0, lookIntoFuture=1 polls for
+   * everything after the start. Only a genuinely invalid (<0) id blocks. */
+  if (!self->http_client || !self->room_token || self->last_known_message_id < 0)
     return;
 
   self->polling = TRUE;

@@ -34,6 +34,7 @@ typedef struct {
   GnalkParticipantTile  *screen_tile;          /* owned (ref-sunk) */
   GnalkWebrtc           *screen_subscriber;    /* owned */
   char                  *screen_subscriber_sid; /* owned */
+  guint                  reaction_fade_timeout_id; /* per-tile reaction clear timer */
 } CallParticipantRecord;
 
 typedef enum {
@@ -140,8 +141,7 @@ struct _GnalkCallWindow
   /* Hand raise state */
   gboolean             hand_raised;       /* Our own hand state */
 
-  /* Reaction animation */
-  guint                reaction_fade_timeout_id;
+  /* Reaction animation timers are stored per-participant in CallParticipantRecord */
 
   /* Signal handler IDs for hand-raised/call-reaction */
   gulong               hand_raised_handler_id;
@@ -200,6 +200,10 @@ typedef struct {
   char *session_id;
   int frame_count;  /* Per-callback frame counter for debugging */
 } TileVideoCallbackData;
+
+/* GDestroyNotify-compatible free for TileVideoCallbackData - passed to the
+ * gnalk_webrtc_set_*_callback setters so the struct is freed on teardown. */
+void tile_video_callback_data_free (gpointer data);
 
 void gnalk_call_participant_add_tile    (GnalkCallWindow *self,
                                            const char *session_id,

@@ -21,6 +21,18 @@ tile_avatar_callback_data_free (TileAvatarCallbackData *data)
   g_free (data);
 }
 
+/* GDestroyNotify for TileVideoCallbackData - shared by all call window files. */
+void
+tile_video_callback_data_free (gpointer data)
+{
+  TileVideoCallbackData *cb_data = data;
+  if (!cb_data)
+    return;
+  g_weak_ref_clear (&cb_data->window_ref);
+  g_free (cb_data->session_id);
+  g_free (cb_data);
+}
+
 static void
 on_tile_avatar_loaded (GnalkAvatarCache *cache G_GNUC_UNUSED,
                        GdkTexture        *texture,
@@ -234,9 +246,9 @@ gnalk_call_participant_add_tile (GnalkCallWindow *self,
   g_message ("add_participant_tile: setting up subscriber=%p with video_cb session=%.30s...",
              (void *)subscriber, session_id);
 
-  gnalk_webrtc_set_remote_video_callback (subscriber, gnalk_call_participant_on_tile_remote_video_frame, video_cb_data);
-  gnalk_webrtc_set_signal_callback (subscriber, on_tile_subscriber_signal_wrapper, signal_cb_data);
-  gnalk_webrtc_set_speaking_callback (subscriber, gnalk_call_participant_on_tile_speaking, speaking_cb_data);
+  gnalk_webrtc_set_remote_video_callback (subscriber, gnalk_call_participant_on_tile_remote_video_frame, video_cb_data, tile_video_callback_data_free);
+  gnalk_webrtc_set_signal_callback (subscriber, on_tile_subscriber_signal_wrapper, signal_cb_data, tile_video_callback_data_free);
+  gnalk_webrtc_set_speaking_callback (subscriber, gnalk_call_participant_on_tile_speaking, speaking_cb_data, tile_video_callback_data_free);
 
   gnalk_participant_tile_set_webrtc (tile, subscriber);
   g_object_unref (subscriber);  /* Tile now owns it */
@@ -290,12 +302,12 @@ gnalk_call_participant_remove_tile (GnalkCallWindow *self,
     return;
 
   CallParticipantRecord *record = g_hash_table_lookup (self->participants, session_id);
-  if (!record || !record->tile)
+  if (!record)
     {
       /* Log existing keys for debugging */
       GHashTableIter iter;
       gpointer key, value;
-      g_message ("Tile not found for session: %s (participants has %u entries)",
+      g_message ("Record not found for session: %s (participants has %u entries)",
                  session_id, g_hash_table_size (self->participants));
       g_hash_table_iter_init (&iter, self->participants);
       while (g_hash_table_iter_next (&iter, &key, &value))
@@ -305,20 +317,28 @@ gnalk_call_participant_remove_tile (GnalkCallWindow *self,
 
   g_message ("Removing participant tile for session: %s", session_id);
 
-  /* End WebRTC call if active */
-  GnalkWebrtc *webrtc = gnalk_participant_tile_get_webrtc (record->tile);
-  if (webrtc)
-    gnalk_webrtc_end_call (webrtc);
+  /* Tear down the main tile's WebRTC + widget if present. Even when there is no
+   * main tile (e.g. a screen-only sharer that left abruptly), we must still fall
+   * through to tear down the screen share subscriber/tile below. */
+  if (record->tile)
+    {
+      GnalkWebrtc *webrtc = gnalk_participant_tile_get_webrtc (record->tile);
+      if (webrtc)
+        gnalk_webrtc_end_call (webrtc);
 
-  /* Remove tile from its parent container */
-  gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->tile));
+      gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->tile));
+    }
 
-  /* Also clean up any screen share from this participant */
+  /* Also clean up any screen share from this participant. The subscriber may be
+   * running even if screen_tile was never created, so end it independently. */
+  if (record->screen_subscriber)
+    {
+      g_message ("Ending screen share subscriber for session: %s", session_id);
+      gnalk_webrtc_end_call (record->screen_subscriber);
+    }
   if (record->screen_tile)
     {
       g_message ("Also removing screen share tile for session: %s", session_id);
-      if (record->screen_subscriber)
-        gnalk_webrtc_end_call (record->screen_subscriber);
       gnalk_call_layout_remove_tile_from_parent (self, GTK_WIDGET (record->screen_tile));
     }
 

@@ -95,24 +95,32 @@ struct _GnalkWebrtc
   gboolean    ignore_offer;   /* TRUE when impolite peer ignores collision */
   gboolean    polite;         /* TRUE if this peer is polite (yields to collisions) */
 
-  /* ICE candidate buffering for receive-only mode */
-  GPtrArray  *pending_ice_candidates;  /* Buffered candidates before answer created */
+  /* ICE candidate buffering.
+   * Remote candidates that arrive before webrtcbin can accept them are buffered:
+   * in receive-only mode until the answer is created (local description set),
+   * in sender mode until the remote answer is set. */
+  GPtrArray  *pending_ice_candidates;  /* Buffered candidates before we can add them */
   gboolean    answer_created;          /* TRUE after answer is created and sent */
+  gboolean    remote_answer_set;       /* TRUE after remote answer set (sender mode) */
 
   GnalkWebrtcSignalCallback signal_callback;
   gpointer                   signal_callback_data;
+  GDestroyNotify             signal_callback_notify;
 
   GnalkWebrtcRemoteVideoCallback remote_video_callback;
   gpointer                        remote_video_callback_data;
+  GDestroyNotify                  remote_video_callback_notify;
 
   GnalkWebrtcLocalVideoCallback local_video_callback;
   gpointer                       local_video_callback_data;
 
   GnalkWebrtcConnectionStateCallback connection_state_callback;
   gpointer                            connection_state_callback_data;
+  GDestroyNotify                      connection_state_callback_notify;
 
   GnalkWebrtcSpeakingCallback speaking_callback;
   gpointer                     speaking_callback_data;
+  GDestroyNotify               speaking_callback_notify;
 
   GnalkWebrtcCallStateCallback call_state_callback;
   gpointer                      call_state_callback_data;
@@ -170,7 +178,15 @@ gnalk_webrtc_init (GnalkWebrtc *self)
   self->polite = TRUE;
 
 #ifdef HAVE_GSTREAMER
-  gst_init (NULL, NULL);
+  /* gst_init() is process-global and only needs to run once. It ideally belongs
+   * in application startup, but a GnalkWebrtc is created per participant, so guard
+   * it with g_once to ensure it runs exactly once per process. */
+  static gsize gst_init_once = 0;
+  if (g_once_init_enter (&gst_init_once))
+    {
+      gst_init (NULL, NULL);
+      g_once_init_leave (&gst_init_once, 1);
+    }
 #endif
 }
 
@@ -2010,10 +2026,49 @@ gnalk_webrtc_end_call (GnalkWebrtc *self)
   self->making_offer = FALSE;
   self->ignore_offer = FALSE;
   self->answer_created = FALSE;
+  self->remote_answer_set = FALSE;
 
   /* Clear pending ICE candidates */
   if (self->pending_ice_candidates)
     g_ptr_array_set_size (self->pending_ice_candidates, 0);
+
+  /* Free callback user_data owned via GDestroyNotify to avoid leaks.
+   * Only touch callbacks that own their data (notify set) - these are the
+   * per-subscriber TileVideoCallbackData structs. Callbacks registered with a
+   * NULL notify (e.g. the publisher's callbacks using the window as user_data)
+   * are left untouched so the object stays usable across a pipeline restart.
+   * NULL-out afterwards so a later end_call/finalize does not double-free. */
+  if (self->signal_callback_notify && self->signal_callback_data)
+    {
+      self->signal_callback_notify (self->signal_callback_data);
+      self->signal_callback = NULL;
+      self->signal_callback_data = NULL;
+      self->signal_callback_notify = NULL;
+    }
+
+  if (self->remote_video_callback_notify && self->remote_video_callback_data)
+    {
+      self->remote_video_callback_notify (self->remote_video_callback_data);
+      self->remote_video_callback = NULL;
+      self->remote_video_callback_data = NULL;
+      self->remote_video_callback_notify = NULL;
+    }
+
+  if (self->connection_state_callback_notify && self->connection_state_callback_data)
+    {
+      self->connection_state_callback_notify (self->connection_state_callback_data);
+      self->connection_state_callback = NULL;
+      self->connection_state_callback_data = NULL;
+      self->connection_state_callback_notify = NULL;
+    }
+
+  if (self->speaking_callback_notify && self->speaking_callback_data)
+    {
+      self->speaking_callback_notify (self->speaking_callback_data);
+      self->speaking_callback = NULL;
+      self->speaking_callback_data = NULL;
+      self->speaking_callback_notify = NULL;
+    }
 }
 
 void
@@ -2073,7 +2128,12 @@ gnalk_webrtc_handle_offer (GnalkWebrtc *self,
 
   GstSDPMessage *sdp_msg;
   gst_sdp_message_new (&sdp_msg);
-  gst_sdp_message_parse_buffer ((guint8 *)cleaned_sdp, strlen (cleaned_sdp), sdp_msg);
+  if (gst_sdp_message_parse_buffer ((guint8 *)cleaned_sdp, strlen (cleaned_sdp), sdp_msg) != GST_SDP_OK)
+    {
+      g_warning ("handle_offer: failed to parse SDP buffer, ignoring offer");
+      gst_sdp_message_free (sdp_msg);
+      return;
+    }
 
   GstWebRTCSessionDescription *offer =
     gst_webrtc_session_description_new (GST_WEBRTC_SDP_TYPE_OFFER, sdp_msg);
@@ -2125,12 +2185,21 @@ gnalk_webrtc_handle_answer (GnalkWebrtc *self,
 
   GstSDPMessage *sdp_msg;
   gst_sdp_message_new (&sdp_msg);
-  gst_sdp_message_parse_buffer ((guint8 *)cleaned_sdp, strlen (cleaned_sdp), sdp_msg);
+  if (gst_sdp_message_parse_buffer ((guint8 *)cleaned_sdp, strlen (cleaned_sdp), sdp_msg) != GST_SDP_OK)
+    {
+      g_warning ("handle_answer: failed to parse SDP buffer, ignoring answer");
+      gst_sdp_message_free (sdp_msg);
+      return;
+    }
 
   GstWebRTCSessionDescription *answer =
     gst_webrtc_session_description_new (GST_WEBRTC_SDP_TYPE_ANSWER, sdp_msg);
 
   g_signal_emit_by_name (self->webrtcbin, "set-remote-description", answer, NULL);
+
+  /* Remote description is now set - flush any ICE candidates that arrived early. */
+  self->remote_answer_set = TRUE;
+  flush_pending_ice_candidates (self);
 
   gst_webrtc_session_description_free (answer);
 #endif
@@ -2149,12 +2218,14 @@ gnalk_webrtc_handle_ice_candidate (GnalkWebrtc *self,
   if (!self->webrtcbin)
     return;
 
-  /* In receive-only mode, buffer ICE candidates until answer is created.
-   * GStreamer webrtcbin needs the local description set before it can
-   * properly process remote ICE candidates with correct transport setup. */
-  if (self->receive_only && !self->answer_created)
+  /* Buffer remote ICE candidates until webrtcbin can process them.
+   * In receive-only mode, this is until our answer is created (local description
+   * set). In sender mode, it is until the remote answer is set - candidates that
+   * arrive before the answer would otherwise be dropped by webrtcbin. */
+  gboolean can_add = self->receive_only ? self->answer_created : self->remote_answer_set;
+  if (!can_add)
     {
-      g_message ("handle_ice_candidate: buffering candidate (answer not yet created)");
+      g_message ("handle_ice_candidate: buffering candidate (not ready to add yet)");
       PendingIceCandidate *pending = g_new (PendingIceCandidate, 1);
       pending->candidate = g_strdup (candidate);
       pending->sdp_mline_index = sdp_mline_index;
@@ -2170,23 +2241,36 @@ gnalk_webrtc_handle_ice_candidate (GnalkWebrtc *self,
 void
 gnalk_webrtc_set_signal_callback (GnalkWebrtc               *self,
                                      GnalkWebrtcSignalCallback  callback,
-                                     gpointer                    user_data)
+                                     gpointer                    user_data,
+                                     GDestroyNotify              notify)
 {
   g_return_if_fail (GNALK_IS_WEBRTC (self));
 
+  /* Free the previous user_data if it owned one */
+  if (self->signal_callback_notify && self->signal_callback_data &&
+      self->signal_callback_data != user_data)
+    self->signal_callback_notify (self->signal_callback_data);
+
   self->signal_callback = callback;
   self->signal_callback_data = user_data;
+  self->signal_callback_notify = notify;
 }
 
 void
 gnalk_webrtc_set_remote_video_callback (GnalkWebrtc                    *self,
                                            GnalkWebrtcRemoteVideoCallback  callback,
-                                           gpointer                         user_data)
+                                           gpointer                         user_data,
+                                           GDestroyNotify                   notify)
 {
   g_return_if_fail (GNALK_IS_WEBRTC (self));
 
+  if (self->remote_video_callback_notify && self->remote_video_callback_data &&
+      self->remote_video_callback_data != user_data)
+    self->remote_video_callback_notify (self->remote_video_callback_data);
+
   self->remote_video_callback = callback;
   self->remote_video_callback_data = user_data;
+  self->remote_video_callback_notify = notify;
 }
 
 void
@@ -2203,23 +2287,35 @@ gnalk_webrtc_set_local_video_callback (GnalkWebrtc                   *self,
 void
 gnalk_webrtc_set_connection_state_callback (GnalkWebrtc                        *self,
                                                GnalkWebrtcConnectionStateCallback  callback,
-                                               gpointer                              user_data)
+                                               gpointer                              user_data,
+                                               GDestroyNotify                        notify)
 {
   g_return_if_fail (GNALK_IS_WEBRTC (self));
 
+  if (self->connection_state_callback_notify && self->connection_state_callback_data &&
+      self->connection_state_callback_data != user_data)
+    self->connection_state_callback_notify (self->connection_state_callback_data);
+
   self->connection_state_callback = callback;
   self->connection_state_callback_data = user_data;
+  self->connection_state_callback_notify = notify;
 }
 
 void
 gnalk_webrtc_set_speaking_callback (GnalkWebrtc                  *self,
                                        GnalkWebrtcSpeakingCallback   callback,
-                                       gpointer                       user_data)
+                                       gpointer                       user_data,
+                                       GDestroyNotify                 notify)
 {
   g_return_if_fail (GNALK_IS_WEBRTC (self));
 
+  if (self->speaking_callback_notify && self->speaking_callback_data &&
+      self->speaking_callback_data != user_data)
+    self->speaking_callback_notify (self->speaking_callback_data);
+
   self->speaking_callback = callback;
   self->speaking_callback_data = user_data;
+  self->speaking_callback_notify = notify;
 }
 
 #ifdef HAVE_GSTREAMER

@@ -11,9 +11,31 @@ struct _GnalkSyncManager
 
   gulong network_changed_handler;
   gboolean flush_in_progress;
+  guint    flush_timer_id;   /* Backoff timer between flush passes */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkSyncManager, gnalk_sync_manager, G_TYPE_OBJECT)
+
+/* A message that has failed this many times is kept in the DB (never deleted)
+ * but no longer auto-retried — it stays for manual retry. */
+#define GNALK_SYNC_MAX_RETRIES  3
+
+/* Exponential-backoff bounds between flush passes (seconds). */
+#define SYNC_FLUSH_BASE_SEC  2
+#define SYNC_FLUSH_CAP_SEC  60
+
+/* Jittered exponential backoff (seconds): MIN(base * 2^attempt, cap) + jitter. */
+static guint
+backoff_delay_seconds (guint attempt, guint base, guint cap)
+{
+  guint delay = base;
+  for (guint i = 0; i < attempt && delay < cap; i++)
+    delay *= 2;
+  if (delay > cap)
+    delay = cap;
+  /* Up to ~25% jitter to de-synchronise retries (thundering herd). */
+  return delay + (guint) g_random_int_range (0, (gint) (delay / 4) + 1);
+}
 
 enum {
   SIGNAL_NETWORK_CHANGED,
@@ -46,6 +68,12 @@ static void
 gnalk_sync_manager_dispose (GObject *object)
 {
   GnalkSyncManager *self = GNALK_SYNC_MANAGER (object);
+
+  if (self->flush_timer_id > 0)
+    {
+      g_source_remove (self->flush_timer_id);
+      self->flush_timer_id = 0;
+    }
 
   if (self->network_monitor && self->network_changed_handler > 0)
     {
@@ -198,6 +226,7 @@ typedef struct {
   GWeakRef          manager_ref;  /* Weak ref to owner (use-after-free safe) */
   char              *reference_id;
   char              *conversation_token;
+  int               retry_count;  /* Attempts already made for this message (for backoff) */
 } PendingSendData;
 
 static void
@@ -210,6 +239,28 @@ pending_send_data_free (PendingSendData *data)
 }
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (PendingSendData, pending_send_data_free)
+
+static gboolean
+flush_retry_timeout (gpointer user_data)
+{
+  GnalkSyncManager *self = user_data;
+  self->flush_timer_id = 0;
+  flush_next_pending_message (self);
+  return G_SOURCE_REMOVE;
+}
+
+/* Wait (jittered backoff) before the next flush pass instead of hammering the
+ * server. Keeps flush_in_progress TRUE so no parallel flush starts meanwhile. */
+static void
+schedule_flush_retry (GnalkSyncManager *self, guint attempt)
+{
+  if (self->flush_timer_id != 0)
+    return;
+
+  guint delay = backoff_delay_seconds (attempt, SYNC_FLUSH_BASE_SEC, SYNC_FLUSH_CAP_SEC);
+  g_debug ("SyncManager: backing off %us before next flush pass", delay);
+  self->flush_timer_id = g_timeout_add_seconds (delay, flush_retry_timeout, self);
+}
 
 static void
 on_pending_message_sent (GnalkHttpClient *client,
@@ -240,12 +291,16 @@ on_pending_message_sent (GnalkHttpClient *client,
       return;
     }
 
+  gboolean send_failed = (error != NULL);
+  guint    failed_attempts = (guint) data->retry_count;
+
   if (error)
     {
       g_warning ("Failed to send pending message %s: %s",
                  data->reference_id, error->message);
 
-      /* Update retry count and error in DB */
+      /* Update retry count and error in DB. The message row is preserved —
+       * it is never deleted on failure, so it can be retried manually. */
       if (self->database)
         gnalk_database_update_pending_error (self->database,
                                                data->reference_id,
@@ -286,8 +341,13 @@ on_pending_message_sent (GnalkHttpClient *client,
 
   pending_send_data_free (data);
 
-  /* Continue flushing queue */
-  flush_next_pending_message (self);
+  /* Continue flushing. On failure, back off before the next pass so a server
+   * outage isn't hammered; on success, proceed immediately. */
+  if (send_failed)
+    schedule_flush_retry (self, failed_attempts);
+  else
+    flush_next_pending_message (self);
+
   g_object_unref (self);  /* balance g_weak_ref_get */
 }
 
@@ -320,20 +380,32 @@ flush_next_pending_message (GnalkSyncManager *self)
       return;
     }
 
-  /* Get first pending message */
-  GnalkPendingMessage *pm = g_ptr_array_index (pending, 0);
-
-  /* Skip if too many retries */
-  if (pm->retry_count >= 3)
+  /* Select the first message we can actually send. Messages that have exhausted
+   * their retry budget are NEVER deleted — they stay in the DB (marked with a
+   * retry count / last_error) for manual retry, and we simply skip past them.
+   * File uploads aren't supported in offline flush yet, so they are likewise
+   * left queued rather than dropped. */
+  GnalkPendingMessage *pm = NULL;
+  for (guint i = 0; i < pending->len; i++)
     {
-      g_warning ("Pending message %s exceeded retry limit, marking as failed",
-                 pm->reference_id);
-      g_signal_emit (self, signals[SIGNAL_MESSAGE_FAILED], 0,
-                     pm->reference_id, "Exceeded retry limit");
-      gnalk_database_remove_pending_message (self->database, pm->reference_id);
+      GnalkPendingMessage *cand = g_ptr_array_index (pending, i);
+
+      if (cand->retry_count >= GNALK_SYNC_MAX_RETRIES)
+        continue;  /* exhausted — keep for manual retry, don't auto-send */
+
+      if (cand->file_path && *cand->file_path)
+        continue;  /* file uploads not supported offline — keep queued */
+
+      pm = cand;
+      break;
+    }
+
+  if (!pm)
+    {
+      g_debug ("No more sendable pending messages "
+               "(failed/file messages kept for manual retry)");
+      self->flush_in_progress = FALSE;
       g_ptr_array_unref (pending);
-      /* Continue with next message */
-      flush_next_pending_message (self);
       return;
     }
 
@@ -342,34 +414,19 @@ flush_next_pending_message (GnalkSyncManager *self)
   g_weak_ref_init (&data->manager_ref, self);
   data->reference_id = g_strdup (pm->reference_id);
   data->conversation_token = g_strdup (pm->conversation_token);
+  data->retry_count = pm->retry_count;
 
-  g_debug ("Sending pending message %s to room %s",
-           pm->reference_id, pm->conversation_token);
+  g_debug ("Sending pending message %s to room %s (attempt %d)",
+           pm->reference_id, pm->conversation_token, pm->retry_count + 1);
 
-  /* Send message or file */
-  if (pm->file_path && *pm->file_path)
-    {
-      /* File uploads are complex (multi-step), skip for now and mark as failed */
-      g_warning ("Pending file uploads not yet supported, skipping %s", pm->reference_id);
-      g_signal_emit (self, signals[SIGNAL_MESSAGE_FAILED], 0,
-                     pm->reference_id, "File uploads not supported in offline mode");
-      gnalk_database_remove_pending_message (self->database, pm->reference_id);
-      pending_send_data_free (data);
-      g_ptr_array_unref (pending);
-      flush_next_pending_message (self);
-      return;
-    }
-  else
-    {
-      /* It's a text message */
-      gnalk_http_client_send_message (self->http_client,
-                                        pm->conversation_token,
-                                        pm->message,
-                                        pm->reply_to,
-                                        pm->reference_id,
-                                        on_pending_message_sent,
-                                        data);
-    }
+  /* It's a text message */
+  gnalk_http_client_send_message (self->http_client,
+                                    pm->conversation_token,
+                                    pm->message,
+                                    pm->reply_to,
+                                    pm->reference_id,
+                                    on_pending_message_sent,
+                                    data);
 
   g_ptr_array_unref (pending);
 }

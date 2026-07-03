@@ -199,8 +199,12 @@ gnalk_account_manager_add_account (GnalkAccountManager *self,
   GnalkAccount *existing = gnalk_account_manager_find_account (self, server_url, user_id);
   if (existing)
     {
+      /* Return a BORROWED ref (like the create path below via
+       * get_account_by_id) — find_account transfers full, which leaked here
+       * since callers never unref. */
+      gint64 id = gnalk_account_get_id (existing);
       g_object_unref (existing);
-      return gnalk_account_manager_find_account (self, server_url, user_id);
+      return gnalk_account_manager_get_account_by_id (self, id);
     }
 
   /* Create in database */
@@ -286,8 +290,10 @@ gnalk_account_manager_add_guest_account (GnalkAccountManager *self,
       /* Update display name if changed */
       if (display_name)
         gnalk_account_set_display_name (existing, display_name);
+      /* Return a BORROWED ref, consistent with the create path (see above). */
+      gint64 id = gnalk_account_get_id (existing);
       g_object_unref (existing);
-      return gnalk_account_manager_find_account (self, server_url, user_id);
+      return gnalk_account_manager_get_account_by_id (self, id);
     }
 
   /* Create in database */

@@ -844,85 +844,67 @@ gnalk_database_delete_stale_conversations (GnalkDatabase *self,
   if (valid_tokens->len == 0)
     return 0;
 
-  /* Build SQL with placeholders for valid tokens.
-   * Protect invitations (invitation_id > 0) from stale deletion - they are
-   * not returned by /room and would be incorrectly deleted. */
-  GString *sql = g_string_new ("DELETE FROM conversations WHERE account_id = ? AND invitation_id = 0 AND token NOT IN (");
-  for (guint i = 0; i < valid_tokens->len; i++)
-    {
-      if (i > 0)
-        g_string_append (sql, ", ");
-      g_string_append (sql, "?");
-    }
-  g_string_append (sql, ")");
-
+  /* Stage the valid tokens in a temp table rather than a giant "NOT IN (?, ?, …)"
+   * list — the latter breaks past SQLITE_MAX_VARIABLE_NUMBER (~999) with many
+   * rooms. Orphaned messages/sync_state are then deleted by joining against the
+   * conversations table, so invitation rows (invitation_id != 0, kept below)
+   * keep their messages — the old per-token NOT IN wrongly purged those. */
   sqlite3_stmt *stmt;
   int deleted = 0;
 
-  if (sqlite3_prepare_v2 (self->db, sql->str, -1, &stmt, NULL) == SQLITE_OK)
+  gnalk_database_begin_transaction (self);
+
+  sqlite3_exec (self->db,
+                "CREATE TEMP TABLE IF NOT EXISTS _valid_tokens (token TEXT PRIMARY KEY);"
+                "DELETE FROM _valid_tokens;",
+                NULL, NULL, NULL);
+
+  if (sqlite3_prepare_v2 (self->db, "INSERT OR IGNORE INTO _valid_tokens (token) VALUES (?)",
+                          -1, &stmt, NULL) == SQLITE_OK)
     {
-      sqlite3_bind_int64 (stmt, 1, account_id);
       for (guint i = 0; i < valid_tokens->len; i++)
         {
-          const char *token = g_ptr_array_index (valid_tokens, i);
-          sqlite3_bind_text (stmt, 2 + i, token, -1, SQLITE_STATIC);
+          sqlite3_bind_text (stmt, 1, g_ptr_array_index (valid_tokens, i), -1, SQLITE_STATIC);
+          sqlite3_step (stmt);
+          sqlite3_reset (stmt);
         }
-
-      if (sqlite3_step (stmt) == SQLITE_DONE)
-        deleted = sqlite3_changes (self->db);
-
       sqlite3_finalize (stmt);
     }
 
-  g_string_free (sql, TRUE);
+  /* Delete conversations no longer present, protecting invitations. */
+  if (sqlite3_prepare_v2 (self->db,
+                          "DELETE FROM conversations WHERE account_id = ? AND invitation_id = 0 "
+                          "AND token NOT IN (SELECT token FROM _valid_tokens)",
+                          -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_int64 (stmt, 1, account_id);
+      if (sqlite3_step (stmt) == SQLITE_DONE)
+        deleted = sqlite3_changes (self->db);
+      sqlite3_finalize (stmt);
+    }
 
-  /* Also clean up related messages and sync_state for deleted conversations */
+  /* Clean up messages/sync_state orphaned by the delete above (i.e. whose
+   * conversation row no longer exists) — keeps invitation data intact. */
   if (deleted > 0)
     {
-      GString *msg_sql = g_string_new ("DELETE FROM messages WHERE account_id = ? AND conversation_token NOT IN (");
-      for (guint i = 0; i < valid_tokens->len; i++)
+      const char *orphan_sql[] = {
+        "DELETE FROM messages WHERE account_id = ?1 AND conversation_token NOT IN "
+        "(SELECT token FROM conversations WHERE account_id = ?1)",
+        "DELETE FROM sync_state WHERE account_id = ?1 AND conversation_token NOT IN "
+        "(SELECT token FROM conversations WHERE account_id = ?1)",
+      };
+      for (guint i = 0; i < G_N_ELEMENTS (orphan_sql); i++)
         {
-          if (i > 0)
-            g_string_append (msg_sql, ", ");
-          g_string_append (msg_sql, "?");
-        }
-      g_string_append (msg_sql, ")");
-
-      if (sqlite3_prepare_v2 (self->db, msg_sql->str, -1, &stmt, NULL) == SQLITE_OK)
-        {
-          sqlite3_bind_int64 (stmt, 1, account_id);
-          for (guint i = 0; i < valid_tokens->len; i++)
+          if (sqlite3_prepare_v2 (self->db, orphan_sql[i], -1, &stmt, NULL) == SQLITE_OK)
             {
-              const char *token = g_ptr_array_index (valid_tokens, i);
-              sqlite3_bind_text (stmt, 2 + i, token, -1, SQLITE_STATIC);
+              sqlite3_bind_int64 (stmt, 1, account_id);
+              sqlite3_step (stmt);
+              sqlite3_finalize (stmt);
             }
-          sqlite3_step (stmt);
-          sqlite3_finalize (stmt);
         }
-      g_string_free (msg_sql, TRUE);
-
-      GString *sync_sql = g_string_new ("DELETE FROM sync_state WHERE account_id = ? AND conversation_token NOT IN (");
-      for (guint i = 0; i < valid_tokens->len; i++)
-        {
-          if (i > 0)
-            g_string_append (sync_sql, ", ");
-          g_string_append (sync_sql, "?");
-        }
-      g_string_append (sync_sql, ")");
-
-      if (sqlite3_prepare_v2 (self->db, sync_sql->str, -1, &stmt, NULL) == SQLITE_OK)
-        {
-          sqlite3_bind_int64 (stmt, 1, account_id);
-          for (guint i = 0; i < valid_tokens->len; i++)
-            {
-              const char *token = g_ptr_array_index (valid_tokens, i);
-              sqlite3_bind_text (stmt, 2 + i, token, -1, SQLITE_STATIC);
-            }
-          sqlite3_step (stmt);
-          sqlite3_finalize (stmt);
-        }
-      g_string_free (sync_sql, TRUE);
     }
+
+  gnalk_database_commit_transaction (self);
 
   return deleted;
 }
@@ -1123,7 +1105,11 @@ gnalk_database_load_messages (GnalkDatabase *self,
         "FROM messages WHERE account_id = ? AND conversation_token = ? AND id < ? "
         "AND (thread_id IS NULL OR thread_id = 0 OR id = thread_id "
         "     OR is_thread = 0 OR system_message = 'thread_created') "
-        "ORDER BY timestamp DESC LIMIT ?";
+        /* Paginate on the same column as the cursor (id). Ordering by timestamp
+         * while the cursor is `id < ?` skipped rows whose id<before_id but whose
+         * timestamp fell outside the top-N, leaving gaps in media rooms. The
+         * message processor re-sorts by timestamp for display. */
+        "ORDER BY id DESC LIMIT ?";
     }
   else
     {

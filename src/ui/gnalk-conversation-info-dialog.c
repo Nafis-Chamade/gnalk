@@ -995,7 +995,7 @@ show_dialog_participant_context_menu (GnalkConversationInfoDialog *self,
 
   /* Get participant data from row */
   const char *actor_id = g_object_get_data (G_OBJECT (row), "actor-id");
-  gint64 attendee_id = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (row), "attendee-id"));
+  gint64 attendee_id = (gint64) GPOINTER_TO_SIZE (g_object_get_data (G_OBJECT (row), "attendee-id"));
   gint participant_type = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (row), "participant-type"));
 
   /* Store context for action handlers */
@@ -1274,7 +1274,7 @@ on_participants_response (GnalkHttpClient *client G_GNUC_UNUSED,
       /* Store data for context menu */
       gint64 attendee_id = json_object_get_int_member_with_default (participant, "attendeeId", 0);
       g_object_set_data_full (G_OBJECT (row), "actor-id", g_strdup (actor_id), g_free);
-      g_object_set_data (G_OBJECT (row), "attendee-id", GINT_TO_POINTER ((gint) attendee_id));
+      g_object_set_data (G_OBJECT (row), "attendee-id", GSIZE_TO_POINTER ((gsize) attendee_id));
       g_object_set_data (G_OBJECT (row), "participant-type", GINT_TO_POINTER ((gint) participant_type));
       g_object_set_data (G_OBJECT (row), "info-dialog", self);
 

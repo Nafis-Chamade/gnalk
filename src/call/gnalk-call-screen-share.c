@@ -58,10 +58,10 @@ on_screen_capture_started (GnalkScreenCapture *capture G_GNUC_UNUSED,
         gnalk_webrtc_set_turn_server (self->screen_publisher, turn, turn_user, turn_cred);
     }
 
-  /* Set signal callback for SDP/ICE */
+  /* Set signal callback for SDP/ICE (user_data is the window, not owned) */
   gnalk_webrtc_set_signal_callback (self->screen_publisher,
                                      on_screen_publisher_signal,
-                                     self);
+                                     self, NULL);
 
   /* Start screen share pipeline */
   gnalk_webrtc_start_screen_share (self->screen_publisher,
@@ -325,9 +325,9 @@ gnalk_call_screen_share_on_signaling_changed (GnalkSignaling  *signaling G_GNUC_
           g_weak_ref_init (&conn_cb_data->window_ref, self);
           conn_cb_data->session_id = g_strdup (session_id);
 
-          gnalk_webrtc_set_remote_video_callback (subscriber, gnalk_call_participant_on_screen_remote_video_frame, video_cb_data);
-          gnalk_webrtc_set_signal_callback (subscriber, gnalk_call_signaling_on_screen_subscriber_signal, signal_cb_data);
-          gnalk_webrtc_set_connection_state_callback (subscriber, gnalk_call_signaling_on_screen_subscriber_connection_state, conn_cb_data);
+          gnalk_webrtc_set_remote_video_callback (subscriber, gnalk_call_participant_on_screen_remote_video_frame, video_cb_data, tile_video_callback_data_free);
+          gnalk_webrtc_set_signal_callback (subscriber, gnalk_call_signaling_on_screen_subscriber_signal, signal_cb_data, tile_video_callback_data_free);
+          gnalk_webrtc_set_connection_state_callback (subscriber, gnalk_call_signaling_on_screen_subscriber_connection_state, conn_cb_data, tile_video_callback_data_free);
 
           /* Enable continuous keyframe requests for screen share quality */
           gnalk_webrtc_enable_continuous_pli (subscriber, TRUE, 2000);

@@ -438,7 +438,7 @@ show_participant_context_menu (GnalkParticipantsList *self,
 
   /* Get participant data from item */
   const char *actor_id = g_object_get_data (G_OBJECT (item), "user-id");
-  gint64 attendee_id = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (item), "attendee-id"));
+  gint64 attendee_id = (gint64) GPOINTER_TO_SIZE (g_object_get_data (G_OBJECT (item), "attendee-id"));
   gint participant_type = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (item), "participant-type"));
 
   /* Store context for action handlers */
@@ -669,7 +669,7 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
       update_participant_call_icon (item, in_call);
 
       /* Store additional data for context menu and profile */
-      g_object_set_data (G_OBJECT (item), "attendee-id", GINT_TO_POINTER ((gint) attendee_id));
+      g_object_set_data (G_OBJECT (item), "attendee-id", GSIZE_TO_POINTER ((gsize) attendee_id));
       g_object_set_data (G_OBJECT (item), "participant-type", GINT_TO_POINTER (participant_type));
       g_object_set_data (G_OBJECT (item), "participants-list", self);
       g_object_set_data_full (G_OBJECT (item), "participant-json",

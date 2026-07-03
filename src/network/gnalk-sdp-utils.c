@@ -75,7 +75,15 @@ gnalk_sdp_strip_rtx (const char *sdp)
     return NULL;
 
   GString *result = g_string_new (NULL);
-  g_auto(GStrv) lines = g_strsplit (sdp, "\r\n", -1);
+  /* Split on LF so both "\r\n" (CRLF) and "\n" (LF-only) SDP are handled, then
+   * strip any trailing CR left over from CRLF input so line matching is exact. */
+  g_auto(GStrv) lines = g_strsplit (sdp, "\n", -1);
+  for (int i = 0; lines[i] != NULL; i++)
+    {
+      size_t len = strlen (lines[i]);
+      if (len > 0 && lines[i][len - 1] == '\r')
+        lines[i][len - 1] = '\0';
+    }
 
   /* First pass: find RTX payload types */
   GArray *rtx_pts = g_array_new (FALSE, FALSE, sizeof (int));

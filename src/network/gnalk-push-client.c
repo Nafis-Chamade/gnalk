@@ -25,7 +25,9 @@ struct _GnalkPushClient
   char                    *password;
   PushState                state;
   gboolean                 pending_reconnect;  /* Reconnect after current disconnect completes */
+  gboolean                 auth_rejected;      /* Server rejected credentials — stop auto-retrying */
   guint                    reconnect_timeout_id;
+  guint                    reconnect_attempts;  /* Backoff counter, reset on successful auth */
 
   GnalkPushNotificationCallback notification_callback;
   gpointer                       notification_callback_data;
@@ -33,7 +35,25 @@ struct _GnalkPushClient
 
 G_DEFINE_FINAL_TYPE (GnalkPushClient, gnalk_push_client, G_TYPE_OBJECT)
 
+/* Exponential-backoff bounds for reconnect scheduling (seconds). */
+#define PUSH_RECONNECT_BASE_SEC  2
+#define PUSH_RECONNECT_CAP_SEC  60
+
 static void gnalk_push_client_do_connect (GnalkPushClient *self);
+static void push_schedule_reconnect (GnalkPushClient *self);
+
+/* Jittered exponential backoff (seconds): MIN(base * 2^attempt, cap) + jitter. */
+static guint
+backoff_delay_seconds (guint attempt, guint base, guint cap)
+{
+  guint delay = base;
+  for (guint i = 0; i < attempt && delay < cap; i++)
+    delay *= 2;
+  if (delay > cap)
+    delay = cap;
+  /* Up to ~25% jitter to de-synchronise reconnects (thundering herd). */
+  return delay + (guint) g_random_int_range (0, (gint) (delay / 4) + 1);
+}
 
 static void
 gnalk_push_client_finalize (GObject *object)
@@ -112,11 +132,19 @@ on_ws_message (SoupWebsocketConnection *ws,
       if (g_strcmp0 (msg, "authenticated") == 0)
         {
           self->state = PUSH_STATE_AUTHENTICATED;
+          /* Successful auth: clear backoff so a later transient drop
+           * reconnects promptly. */
+          self->reconnect_attempts = 0;
+          self->auth_rejected = FALSE;
           g_message ("Push client authenticated successfully");
         }
       else if (g_str_has_prefix (msg, "err:"))
         {
-          g_warning ("Push authentication failed: %s", msg);
+          /* Credentials were rejected: retrying with the same credentials will
+           * only fail again. Stop auto-reconnecting and stay disconnected until
+           * credentials change or an explicit reconnect is requested. */
+          g_warning ("Push authentication failed, giving up until credentials change: %s", msg);
+          self->auth_rejected = TRUE;
           self->state = PUSH_STATE_CONNECTED;
         }
       return;
@@ -140,6 +168,30 @@ reconnect_timeout (gpointer user_data)
   gnalk_push_client_do_connect (self);
 
   return G_SOURCE_REMOVE;
+}
+
+/* Schedule a reconnect with jittered exponential backoff. No-op if the server
+ * rejected our credentials (stay disconnected until credentials change / an
+ * explicit reconnect is requested) or a reconnect is already pending. */
+static void
+push_schedule_reconnect (GnalkPushClient *self)
+{
+  if (self->auth_rejected)
+    return;
+
+  if (!self->websocket_url || !self->user_id || !self->password)
+    return;
+
+  if (self->reconnect_timeout_id != 0)
+    return;
+
+  guint delay = backoff_delay_seconds (self->reconnect_attempts,
+                                       PUSH_RECONNECT_BASE_SEC,
+                                       PUSH_RECONNECT_CAP_SEC);
+  self->reconnect_attempts++;
+
+  g_message ("Push: scheduling reconnect in %us", delay);
+  self->reconnect_timeout_id = g_timeout_add_seconds (delay, reconnect_timeout, self);
 }
 
 static void
@@ -171,12 +223,8 @@ on_ws_closed (SoupWebsocketConnection *ws,
       return;
     }
 
-  /* Schedule reconnect if we have credentials */
-  if (self->websocket_url && self->user_id && self->password)
-    {
-      if (self->reconnect_timeout_id == 0)
-        self->reconnect_timeout_id = g_timeout_add_seconds (5, reconnect_timeout, self);
-    }
+  /* Schedule reconnect (backoff; skipped if credentials were rejected) */
+  push_schedule_reconnect (self);
 }
 
 static void
@@ -216,9 +264,8 @@ on_ws_connected (GObject      *source,
       g_warning ("Push WebSocket connection failed: %s", error->message);
       self->state = PUSH_STATE_DISCONNECTED;
 
-      /* Schedule reconnect */
-      if (self->reconnect_timeout_id == 0)
-        self->reconnect_timeout_id = g_timeout_add_seconds (5, reconnect_timeout, self);
+      /* Schedule reconnect with backoff */
+      push_schedule_reconnect (self);
       return;
     }
 
@@ -299,6 +346,11 @@ gnalk_push_client_connect (GnalkPushClient *self,
   self->websocket_url = g_strdup (websocket_url);
   self->user_id = g_strdup (user_id);
   self->password = g_strdup (password);
+
+  /* Explicit connect (fresh credentials): clear any prior auth-rejection and
+   * reset backoff so we retry from scratch. */
+  self->auth_rejected = FALSE;
+  self->reconnect_attempts = 0;
 
   if (was_connected)
     {

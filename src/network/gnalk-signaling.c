@@ -19,6 +19,7 @@ struct _GnalkSignaling
   gboolean        has_mcu;  /* Server has MCU support */
   gboolean        pending_reconnect;  /* Reconnect after current disconnect completes */
   guint           reconnect_timeout_id;
+  guint           reconnect_attempts;  /* Backoff counter, reset on successful connect */
   guint64         message_id;
 
   /* WebSocket signal handler IDs for proper cleanup */
@@ -63,7 +64,63 @@ enum {
 
 static guint signals[N_SIGNALS];
 
+/* Exponential-backoff bounds for reconnect scheduling (seconds). */
+#define SIGNALING_RECONNECT_BASE_SEC  2
+#define SIGNALING_RECONNECT_CAP_SEC  60
+
 static void gnalk_signaling_do_connect (GnalkSignaling *self);
+
+/* Jittered exponential backoff (seconds): MIN(base * 2^attempt, cap) + jitter. */
+static guint
+backoff_delay_seconds (guint attempt, guint base, guint cap)
+{
+  guint delay = base;
+  for (guint i = 0; i < attempt && delay < cap; i++)
+    delay *= 2;
+  if (delay > cap)
+    delay = cap;
+  /* Up to ~25% jitter to de-synchronise reconnects (thundering herd). */
+  return delay + (guint) g_random_int_range (0, (gint) (delay / 4) + 1);
+}
+
+static gboolean
+reconnect_timeout (gpointer user_data)
+{
+  GnalkSignaling *self = GNALK_SIGNALING (user_data);
+
+  self->reconnect_timeout_id = 0;
+
+  /* Only auto-reconnect if we're genuinely disconnected and not already in the
+   * middle of an intentional reconnect (pending_reconnect) or connect. */
+  if (!self->connected && !self->pending_reconnect && !self->ws_connection)
+    gnalk_signaling_do_connect (self);
+
+  return G_SOURCE_REMOVE;
+}
+
+/* Schedule a signaling reconnect with jittered exponential backoff. Coexists
+ * with the pending_reconnect mechanism: if an intentional reconnect is already
+ * in flight we don't schedule a second one. */
+static void
+schedule_reconnect (GnalkSignaling *self)
+{
+  if (self->reconnect_timeout_id != 0)
+    return;
+
+  if (self->pending_reconnect)
+    return;
+
+  if (!self->server_url)
+    return;
+
+  guint delay = backoff_delay_seconds (self->reconnect_attempts,
+                                       SIGNALING_RECONNECT_BASE_SEC,
+                                       SIGNALING_RECONNECT_CAP_SEC);
+  self->reconnect_attempts++;
+
+  g_message ("Signaling: scheduling reconnect in %us", delay);
+  self->reconnect_timeout_id = g_timeout_add_seconds (delay, reconnect_timeout, self);
+}
 
 static void
 gnalk_signaling_finalize (GObject *object)
@@ -683,10 +740,16 @@ on_ws_closed (SoupWebsocketConnection *ws,
       return;
     }
 
-  /* Emit connection-lost signal if we were previously connected.
-   * This allows the ConnectionManager to trigger offline mode recovery. */
+  /* Unexpected close: emit connection-lost (so the Session can drive its own
+   * re-auth + reconnect) and also schedule a signaling-level backoff reconnect.
+   * The latter is the only recovery path for connections the Session doesn't
+   * manage (e.g. federation signaling). Any explicit connect cancels this
+   * pending timer, so the two paths don't double-connect. */
   if (was_connected)
-    g_signal_emit (self, signals[SIGNAL_CONNECTION_LOST], 0);
+    {
+      g_signal_emit (self, signals[SIGNAL_CONNECTION_LOST], 0);
+      schedule_reconnect (self);
+    }
 }
 
 static void
@@ -864,8 +927,12 @@ on_ws_connected (GObject      *source,
   if (error)
     {
       g_clear_object (&ws);
-      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        g_warning ("Failed to connect WebSocket: %s", error->message);
+      if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        return;
+      g_warning ("Failed to connect WebSocket: %s", error->message);
+      /* A non-cancelled error means we were not disconnected/finalized, so
+       * self is still alive: retry the connect with backoff. */
+      schedule_reconnect (GNALK_SIGNALING (user_data));
       return;
     }
 
@@ -874,6 +941,10 @@ on_ws_connected (GObject      *source,
   GnalkSignaling *self = GNALK_SIGNALING (user_data);
 
   self->ws_connection = ws;
+
+  /* Successful connect: clear backoff so a later transient drop reconnects
+   * promptly. */
+  self->reconnect_attempts = 0;
 
   /* Now safe to release the pending message - handshake is complete */
   g_clear_object (&self->pending_ws_msg);
@@ -898,6 +969,14 @@ gnalk_signaling_do_connect (GnalkSignaling *self)
     return;
 
   g_message ("Signaling: connecting to %s", self->server_url);
+
+  /* Cancel any pending backoff reconnect — we're connecting now, so the timer
+   * must not fire a second connect on top of this one. */
+  if (self->reconnect_timeout_id != 0)
+    {
+      g_source_remove (self->reconnect_timeout_id);
+      self->reconnect_timeout_id = 0;
+    }
 
   /* Clear any previous pending message */
   g_clear_object (&self->pending_ws_msg);
@@ -1037,6 +1116,14 @@ gnalk_signaling_disconnect (GnalkSignaling *self)
   /* Cancel any pending async WebSocket connect */
   g_cancellable_cancel (self->connect_cancellable);
   g_clear_object (&self->connect_cancellable);
+
+  /* Intentional disconnect: cancel any scheduled auto-reconnect so we stay
+   * down (unless the caller subsequently requests a reconnect). */
+  if (self->reconnect_timeout_id != 0)
+    {
+      g_source_remove (self->reconnect_timeout_id);
+      self->reconnect_timeout_id = 0;
+    }
 
   if (self->ws_connection)
     {

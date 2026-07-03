@@ -355,7 +355,7 @@ load_conversations_from_db_finish (GObject      *source_object,
           g_object_unref (fav_header);
           has_changes = TRUE;
         }
-      if (!has_conv_header)
+      if (has_non_favorites && !has_conv_header)
         {
           GnalkConversationData *conv_header = gnalk_conversation_data_new_section_header ("Conversations", FALSE);
           g_list_store_append (self->conversations_store, conv_header);

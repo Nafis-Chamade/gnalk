@@ -817,6 +817,24 @@ stop_heartbeat (GnalkSession *self)
 }
 
 /* Reconnection */
+
+/* Exponential-backoff bounds for reconnect scheduling (seconds). */
+#define GNALK_SESSION_RECONNECT_BASE_SEC  2
+#define GNALK_SESSION_RECONNECT_CAP_SEC  60
+
+/* Jittered exponential backoff (seconds): MIN(base * 2^attempt, cap) + jitter. */
+static guint
+backoff_delay_seconds (guint attempt, guint base, guint cap)
+{
+  guint delay = base;
+  for (guint i = 0; i < attempt && delay < cap; i++)
+    delay *= 2;
+  if (delay > cap)
+    delay = cap;
+  /* Up to ~25% jitter to de-synchronise reconnects (thundering herd). */
+  return delay + (guint) g_random_int_range (0, (gint) (delay / 4) + 1);
+}
+
 static gboolean
 reconnect_timeout (gpointer user_data)
 {
@@ -838,17 +856,22 @@ schedule_reconnect (GnalkSession *self)
   if (self->reconnect_timer_id > 0)
     return;
 
-  if (self->reconnect_attempts >= GNALK_SESSION_MAX_RECONNECT_ATTEMPTS)
-    {
-      g_debug ("Session %s: Max reconnect attempts reached",
-               gnalk_account_get_user_id (self->account));
-      set_state (self, GNALK_SESSION_STATE_DISCONNECTED);
-      return;
-    }
+  /* Exponential backoff with jitter instead of a fixed interval with a hard
+   * attempt cap. We intentionally keep retrying (with a capped delay) rather
+   * than giving up: a transient outage must always be able to recover. The
+   * delay plateaus at ~60s so this is never aggressive. network-restored
+   * events reset reconnect_attempts, so recovery is fast once connectivity
+   * returns. */
+  guint delay = backoff_delay_seconds (self->reconnect_attempts,
+                                       GNALK_SESSION_RECONNECT_BASE_SEC,
+                                       GNALK_SESSION_RECONNECT_CAP_SEC);
+
+  g_debug ("Session %s: Scheduling reconnect attempt %d in %us",
+           gnalk_account_get_user_id (self->account),
+           self->reconnect_attempts + 1, delay);
 
   self->reconnect_timer_id =
-    g_timeout_add_seconds (GNALK_SESSION_RECONNECT_INTERVAL_SEC,
-                           reconnect_timeout, self);
+    g_timeout_add_seconds (delay, reconnect_timeout, self);
 }
 
 static void
@@ -863,9 +886,9 @@ attempt_reconnect (GnalkSession *self)
     }
 
   self->reconnect_attempts++;
-  g_debug ("Session %s: Reconnect attempt %d/%d",
+  g_debug ("Session %s: Reconnect attempt %d",
            gnalk_account_get_user_id (self->account),
-           self->reconnect_attempts, GNALK_SESSION_MAX_RECONNECT_ATTEMPTS);
+           self->reconnect_attempts);
 
   set_state (self, GNALK_SESSION_STATE_RECONNECTING);
 
