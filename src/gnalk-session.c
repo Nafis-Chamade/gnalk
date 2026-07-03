@@ -451,6 +451,24 @@ on_sync_coordinator_threads_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNU
   g_signal_emit (self, signals[SIGNAL_THREADS_SYNCED], 0, thread_infos);
 }
 
+/* Recompute the account's total unread from the DB after a conversations sync
+ * and emit only if it changed (the value was otherwise stuck at login time). */
+static void
+on_sync_coordinator_conversations_synced (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
+                                          GnalkSession         *self)
+{
+  if (!self->database || !self->account)
+    return;
+
+  gint total = gnalk_database_get_total_unread (self->database,
+                                                gnalk_account_get_id (self->account));
+  if (total != self->total_unread)
+    {
+      self->total_unread = total;
+      g_signal_emit (self, signals[SIGNAL_UNREAD_COUNT_CHANGED], 0, self->total_unread);
+    }
+}
+
 /* Re-fetch federation invitations after each successful sync */
 static void
 on_sync_coordinator_sync_finished (GnalkSyncCoordinator *coordinator G_GNUC_UNUSED,
@@ -662,6 +680,11 @@ set_state (GnalkSession *self, GnalkSessionState new_state)
           self->sync_finished_handler_id =
             g_signal_connect (self->sync_coordinator, "sync-finished",
                               G_CALLBACK (on_sync_coordinator_sync_finished), self);
+          /* Recompute the unread badge on every conversations sync (it used to
+           * be frozen at the login-time value). */
+          g_signal_connect_object (self->sync_coordinator, "conversations-synced",
+                                   G_CALLBACK (on_sync_coordinator_conversations_synced),
+                                   self, 0);
         }
 
       /* Configure and start sync coordinator (skipped for guests) */
@@ -1929,6 +1952,53 @@ gnalk_session_set_user_status (GnalkSession *self,
                                      on_set_user_status_response, NULL);
 }
 
+/* Requeue payload so a failed online send falls back to the offline queue
+ * instead of being silently dropped. reference_id is UNIQUE server- and
+ * DB-side, so requeuing after a possibly-delivered send is idempotent. */
+typedef struct {
+  GWeakRef session_ref;
+  char    *room_token;
+  char    *message;
+  gint64   reply_to;
+  char    *reference_id;
+} OnlineSendData;
+
+static void
+online_send_data_free (OnlineSendData *d)
+{
+  g_weak_ref_clear (&d->session_ref);
+  g_free (d->room_token);
+  g_free (d->message);
+  g_free (d->reference_id);
+  g_free (d);
+}
+
+static void
+on_online_send_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                         JsonNode         *response G_GNUC_UNUSED,
+                         GError           *error,
+                         gpointer          user_data)
+{
+  OnlineSendData *d = user_data;
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { online_send_data_free (d); return; }
+
+  if (error)
+    {
+      g_autoptr(GnalkSession) self = g_weak_ref_get (&d->session_ref);
+      if (self && self->sync_manager)
+        {
+          g_warning ("Session: online send failed (%s) — queuing for retry",
+                     error->message);
+          gnalk_sync_manager_queue_message (self->sync_manager, d->room_token,
+                                            d->message, d->reply_to, d->reference_id);
+        }
+    }
+
+  online_send_data_free (d);
+}
+
 void
 gnalk_session_send_message (GnalkSession *self,
                               const char    *room_token,
@@ -1940,9 +2010,16 @@ gnalk_session_send_message (GnalkSession *self,
 
   if (self->state == GNALK_SESSION_STATE_ONLINE)
     {
+      OnlineSendData *d = g_new0 (OnlineSendData, 1);
+      g_weak_ref_init (&d->session_ref, self);
+      d->room_token = g_strdup (room_token);
+      d->message = g_strdup (message);
+      d->reply_to = reply_to;
+      d->reference_id = g_strdup (reference_id);
+
       gnalk_http_client_send_message (self->http_client,
                                         room_token, message, reply_to, reference_id,
-                                        NULL, NULL);
+                                        on_online_send_response, d);
     }
   else if (self->sync_manager)
     {

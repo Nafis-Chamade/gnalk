@@ -942,6 +942,29 @@ gnalk_database_find_conversation_token (GnalkDatabase *self,
   return token;
 }
 
+gint
+gnalk_database_get_total_unread (GnalkDatabase *self,
+                                 gint64          account_id)
+{
+  g_return_val_if_fail (GNALK_IS_DATABASE (self), 0);
+  g_return_val_if_fail (self->db != NULL, 0);
+
+  sqlite3_stmt *stmt;
+  gint total = 0;
+  const char *sql =
+    "SELECT COALESCE(SUM(unread_messages), 0) FROM conversations WHERE account_id = ?";
+
+  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+      sqlite3_bind_int64 (stmt, 1, account_id);
+      if (sqlite3_step (stmt) == SQLITE_ROW)
+        total = sqlite3_column_int (stmt, 0);
+      sqlite3_finalize (stmt);
+    }
+
+  return total;
+}
+
 GListStore *
 gnalk_database_load_conversations (GnalkDatabase *self,
                                      gint64          account_id)

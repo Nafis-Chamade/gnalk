@@ -57,9 +57,6 @@ void gnalk_avatar_cache_invalidate (GnalkAvatarCache *self,
 void gnalk_avatar_cache_invalidate_room (GnalkAvatarCache *self,
                                             const char        *room_token);
 
-GtkWidget *gnalk_avatar_cache_create_round_avatar (GdkTexture *texture,
-                                                     int         size);
-
 gboolean gnalk_avatar_cache_get_user_color (GnalkAvatarCache *self,
                                               const char        *user_id,
                                               GdkRGBA           *color_out);

@@ -23,6 +23,9 @@ void gnalk_database_close (GnalkDatabase *self);
 void gnalk_database_begin_transaction (GnalkDatabase *self);
 void gnalk_database_commit_transaction (GnalkDatabase *self);
 
+/* Sum of unread_messages across an account's conversations. */
+gint gnalk_database_get_total_unread (GnalkDatabase *self, gint64 account_id);
+
 /* Account management - legacy (for backward compat during migration) */
 gint64 gnalk_database_get_or_create_account (GnalkDatabase *self,
                                                const char *server_url,

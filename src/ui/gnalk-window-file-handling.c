@@ -78,15 +78,127 @@ get_icon_name_for_mime_type (const char *mime_type)
   return "text-x-generic-symbolic";
 }
 
-/* Shared helper: add a single GFile as an attachment (reads content, creates preview) */
-static gboolean
+/* Reduced-preview thumbnail dimensions (bounds worker-thread + retained RAM).
+ * The UI shows the preview at 64x64; we decode a small multiple of that. */
+#define ATTACHMENT_PREVIEW_MAX 256
+
+/* Async load context: the file is read (and, for images, a small preview is
+ * decoded) on a worker thread; the attachment + UI item are created on the
+ * main thread in the completion callback. Doing the whole read off-thread keeps
+ * the UI responsive even for large videos/images and bounds preview RAM. */
+typedef struct {
+  GWeakRef    window_ref;
+  GFile      *file;
+  char       *path;
+  char       *basename;
+  char       *content_type;
+  gboolean    is_image;
+  GBytes     *bytes;      /* result: full file contents (for upload) */
+  GdkTexture *preview;    /* result: reduced-size preview, or NULL */
+} AttachLoad;
+
+static void
+attach_load_free (gpointer data)
+{
+  AttachLoad *d = data;
+  g_weak_ref_clear (&d->window_ref);
+  g_clear_object (&d->file);
+  g_free (d->path);
+  g_free (d->basename);
+  g_free (d->content_type);
+  g_clear_pointer (&d->bytes, g_bytes_unref);
+  g_clear_object (&d->preview);
+  g_free (d);
+}
+
+/* Worker thread: read the file and decode a reduced preview (images only). */
+static void
+attach_load_thread (GTask        *task,
+                    gpointer      source_object G_GNUC_UNUSED,
+                    gpointer      task_data,
+                    GCancellable *cancellable)
+{
+  AttachLoad *d = task_data;
+  GError *error = NULL;
+
+  d->bytes = g_file_load_bytes (d->file, cancellable, NULL, &error);
+  if (!d->bytes)
+    {
+      g_task_return_error (task, error);
+      return;
+    }
+
+  if (d->is_image && d->path)
+    {
+      /* Decode a scaled-down preview so we never hold a full-size image in RAM
+       * just to show a 64x64 thumbnail. Preview is best-effort. */
+      GError *preview_error = NULL;
+      GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_scale (d->path,
+                                                             ATTACHMENT_PREVIEW_MAX,
+                                                             ATTACHMENT_PREVIEW_MAX,
+                                                             TRUE, &preview_error);
+      if (pixbuf)
+        {
+          d->preview = gdk_texture_new_for_pixbuf (pixbuf);
+          g_object_unref (pixbuf);
+        }
+      else
+        {
+          g_clear_error (&preview_error);
+        }
+    }
+
+  g_task_return_boolean (task, TRUE);
+}
+
+/* Main thread: create the attachment and its UI item together (paired, so the
+ * array index always matches the UI child index used for per-item removal). */
+static void
+attach_load_done (GObject      *source_object G_GNUC_UNUSED,
+                  GAsyncResult *result,
+                  gpointer      user_data G_GNUC_UNUSED)
+{
+  GTask *task = G_TASK (result);
+  AttachLoad *d = g_task_get_task_data (task);
+  g_autoptr(GError) error = NULL;
+
+  if (!g_task_propagate_boolean (task, &error))
+    {
+      g_warning ("Failed to read attachment %s: %s",
+                 d->path ? d->path : "?", error ? error->message : "unknown error");
+      return;
+    }
+
+  GnalkWindow *self = g_weak_ref_get (&d->window_ref);
+  if (!self)
+    return;  /* Window went away while loading */
+
+  if (!self->attachments)
+    self->attachments = g_ptr_array_new_with_free_func ((GDestroyNotify) attachment_info_free);
+
+  AttachmentInfo *att = g_new0 (AttachmentInfo, 1);
+  att->file_path = g_strdup (d->path);
+  att->file_bytes = g_bytes_ref (d->bytes);
+  att->content_type = g_strdup (d->content_type);
+  att->file_name = g_strdup (d->basename);
+
+  g_ptr_array_add (self->attachments, att);
+
+  const char *icon_name = get_icon_name_for_mime_type (d->content_type);
+  gnalk_conversation_actions_add_attachment (self->conversation_actions,
+                                               d->basename, icon_name, d->preview);
+
+  g_object_unref (self);
+}
+
+/* Shared helper: add a single GFile as an attachment. The blocking work (file
+ * read + preview decode) runs on a worker thread; the attachment is created on
+ * the main thread when it completes. */
+static void
 add_file_as_attachment (GnalkWindow *self,
                         GFile        *file)
 {
-  g_autofree char *path = g_file_get_path (file);
-  g_autofree char *basename = g_file_get_basename (file);
   g_autofree char *content_type = NULL;
-
   g_autoptr(GFileInfo) info = g_file_query_info (file,
                                                    G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
                                                    G_FILE_QUERY_INFO_NONE,
@@ -94,45 +206,18 @@ add_file_as_attachment (GnalkWindow *self,
   if (info)
     content_type = g_strdup (g_file_info_get_content_type (info));
 
-  /* Read file contents */
-  gchar *contents = NULL;
-  gsize length = 0;
-  g_autoptr(GError) read_error = NULL;
+  AttachLoad *d = g_new0 (AttachLoad, 1);
+  g_weak_ref_init (&d->window_ref, self);
+  d->file = g_object_ref (file);
+  d->path = g_file_get_path (file);
+  d->basename = g_file_get_basename (file);
+  d->content_type = g_strdup (content_type);
+  d->is_image = content_type && g_str_has_prefix (content_type, "image/");
 
-  if (!g_file_get_contents (path, &contents, &length, &read_error))
-    {
-      g_warning ("Failed to read file %s: %s", path, read_error->message);
-      return FALSE;
-    }
-
-  /* Ensure array exists */
-  if (!self->attachments)
-    self->attachments = g_ptr_array_new_with_free_func ((GDestroyNotify) attachment_info_free);
-
-  /* Create attachment info */
-  AttachmentInfo *att = g_new0 (AttachmentInfo, 1);
-  att->file_path = g_strdup (path);
-  att->file_bytes = g_bytes_new_take (contents, length);
-  att->content_type = g_strdup (content_type);
-  att->file_name = g_strdup (basename);
-
-  g_ptr_array_add (self->attachments, att);
-
-  /* Prepare preview texture for images */
-  GdkTexture *preview_texture = NULL;
-  if (content_type && g_str_has_prefix (content_type, "image/"))
-    preview_texture = gdk_texture_new_from_file (file, NULL);
-
-  const char *icon_name = get_icon_name_for_mime_type (content_type);
-
-  /* Add to UI preview */
-  gnalk_conversation_actions_add_attachment (self->conversation_actions,
-                                               basename, icon_name, preview_texture);
-
-  if (preview_texture)
-    g_object_unref (preview_texture);
-
-  return TRUE;
+  GTask *task = g_task_new (NULL, NULL, attach_load_done, NULL);
+  g_task_set_task_data (task, d, attach_load_free);
+  g_task_run_in_thread (task, attach_load_thread);
+  g_object_unref (task);
 }
 
 static void

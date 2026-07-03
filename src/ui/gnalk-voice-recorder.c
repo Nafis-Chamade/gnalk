@@ -169,6 +169,7 @@ on_bus_message (GstBus     *bus G_GNUC_UNUSED,
                 gdouble peak_db = -60.0;  /* default to silence */
 
                 /* Handle GValueArray (GLib), GstValueList, GstValueArray, or direct double */
+                G_GNUC_BEGIN_IGNORE_DEPRECATIONS
                 if (G_VALUE_HOLDS (peak_value, G_TYPE_VALUE_ARRAY))
                   {
                     /* GValueArray - older GLib array type used by level element */
@@ -202,6 +203,7 @@ on_bus_message (GstBus     *bus G_GNUC_UNUSED,
                     g_warning ("VoiceRecorder: Unknown peak value type: %s",
                                G_VALUE_TYPE_NAME (peak_value));
                   }
+                G_GNUC_END_IGNORE_DEPRECATIONS
 
                 /* Convert dB to linear (0.0-1.0 range)
                  * -60dB = 0.0, 0dB = 1.0 */

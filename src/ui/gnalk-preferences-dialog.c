@@ -16,6 +16,7 @@ typedef struct {
   GObject parent_instance;
   char *display_name;
   char *device_id;
+  GObject *device;   /* Cached GstDevice ref (audio), so we never re-enumerate */
 } DeviceInfo;
 
 typedef struct {
@@ -30,6 +31,7 @@ device_info_finalize (GObject *object)
   DeviceInfo *self = (DeviceInfo *)object;
   g_free (self->display_name);
   g_free (self->device_id);
+  g_clear_object (&self->device);
   G_OBJECT_CLASS (device_info_parent_class)->finalize (object);
 }
 
@@ -46,11 +48,12 @@ device_info_init (DeviceInfo *self)
 }
 
 static DeviceInfo *
-device_info_new (const char *display_name, const char *device_id)
+device_info_new (const char *display_name, const char *device_id, GObject *device)
 {
   DeviceInfo *info = g_object_new (device_info_get_type (), NULL);
   info->display_name = g_strdup (display_name);
   info->device_id = g_strdup (device_id);
+  info->device = device ? g_object_ref (device) : NULL;
   return info;
 }
 
@@ -159,6 +162,7 @@ on_audio_bus_message (GstBus     *bus,
             if (rms_arr)
               {
                 /* Handle GValueArray (GLib), GstList, and GstArray types */
+                G_GNUC_BEGIN_IGNORE_DEPRECATIONS
                 if (G_VALUE_HOLDS (rms_arr, G_TYPE_VALUE_ARRAY))
                   {
                     /* GLib's GValueArray (deprecated but still used by level element) */
@@ -182,6 +186,7 @@ on_audio_bus_message (GstBus     *bus,
                     if (rms_val && G_VALUE_HOLDS_DOUBLE (rms_val))
                       rms_db = g_value_get_double (rms_val);
                   }
+                G_GNUC_END_IGNORE_DEPRECATIONS
               }
 
             /* Map dB linearly to 0-1 range for better visualization
@@ -204,6 +209,42 @@ on_audio_bus_message (GstBus     *bus,
 
   return TRUE;
 }
+
+/* Build the stable PulseAudio device name from a device's properties, e.g.
+ * "alsa_input.<bus_path>.<profile>". Returns NULL if the required properties
+ * are missing. Used both as a persistent device id and to create pulsesrc. */
+static gchar *
+build_pa_device_name (GstStructure *props)
+{
+  if (!props)
+    return NULL;
+
+  const gchar *bus_path = gst_structure_get_string (props, "device.bus_path");
+  const gchar *profile_name = gst_structure_get_string (props, "device.profile.name");
+
+  if (!bus_path || !profile_name)
+    return NULL;
+
+  /* Convert profile name: "HiFi: Headset: source" -> "HiFi__Headset__source"
+   * Each ": " becomes "__" (double underscore) */
+  GString *result = g_string_new ("");
+  for (const gchar *p = profile_name; *p; p++)
+    {
+      if (*p == ':' && *(p + 1) == ' ')
+        {
+          g_string_append (result, "__");
+          p++; /* Skip the space */
+        }
+      else
+        {
+          g_string_append_c (result, *p);
+        }
+    }
+
+  gchar *pa_name = g_strdup_printf ("alsa_input.%s.%s", bus_path, result->str);
+  g_string_free (result, TRUE);
+  return pa_name;
+}
 #endif /* HAVE_GSTREAMER */
 
 static void
@@ -224,7 +265,7 @@ enumerate_video_devices (GnalkPreferencesDialog *self)
       gst_object_unref (monitor);
       /* No cameras - add None option */
       gtk_string_list_append (self->video_device_names, _("None"));
-      g_list_store_append (self->video_devices_store, device_info_new (_("None"), ""));
+      g_list_store_append (self->video_devices_store, device_info_new (_("None"), "", NULL));
       return;
     }
 
@@ -257,7 +298,7 @@ enumerate_video_devices (GnalkPreferencesDialog *self)
         }
 
       gtk_string_list_append (self->video_device_names, name);
-      g_list_store_append (self->video_devices_store, device_info_new (name, device_id));
+      g_list_store_append (self->video_devices_store, device_info_new (name, device_id, NULL));
 
       /* Track front camera index */
       if (name && strstr (name, "Front"))
@@ -273,7 +314,7 @@ enumerate_video_devices (GnalkPreferencesDialog *self)
   if (device_count == 0)
     {
       gtk_string_list_append (self->video_device_names, _("None"));
-      g_list_store_append (self->video_devices_store, device_info_new (_("None"), ""));
+      g_list_store_append (self->video_devices_store, device_info_new (_("None"), "", NULL));
       return;
     }
 
@@ -312,7 +353,7 @@ enumerate_audio_devices (GnalkPreferencesDialog *self)
 
   /* Add "None" option first */
   gtk_string_list_append (self->audio_device_names, _("None"));
-  g_list_store_append (self->audio_devices_store, device_info_new (_("None"), ""));
+  g_list_store_append (self->audio_devices_store, device_info_new (_("None"), "", NULL));
 
   GstDeviceMonitor *monitor = gst_device_monitor_new ();
   gst_device_monitor_add_filter (monitor, "Audio/Source", NULL);
@@ -326,7 +367,6 @@ enumerate_audio_devices (GnalkPreferencesDialog *self)
 
   GList *devices = gst_device_monitor_get_devices (monitor);
 
-  guint device_index = 1;  /* Start after "None" */
   for (GList *l = devices; l != NULL; l = l->next)
     {
       GstDevice *device = GST_DEVICE (l->data);
@@ -336,12 +376,19 @@ enumerate_audio_devices (GnalkPreferencesDialog *self)
       if (name && g_str_has_prefix (name, "Monitor of "))
         continue;
 
-      /* Store device index as ID - we'll look up the GstDevice when creating pipeline */
-      g_autofree gchar *device_id = g_strdup_printf ("%u", device_index);
+      /* Persistent device id from the stable PulseAudio device name (falls back
+       * to the display name). Never the list index, which is not stable. */
+      GstStructure *props = gst_device_get_properties (device);
+      g_autofree gchar *pa_name = build_pa_device_name (props);
+      if (props)
+        gst_structure_free (props);
+      g_autofree gchar *device_id = pa_name ? g_strdup (pa_name) : g_strdup (name);
 
+      /* Cache the GstDevice on the DeviceInfo so audio monitoring never has to
+       * re-enumerate the device monitor. */
       gtk_string_list_append (self->audio_device_names, name);
-      g_list_store_append (self->audio_devices_store, device_info_new (name, device_id));
-      device_index++;
+      g_list_store_append (self->audio_devices_store,
+                           device_info_new (name, device_id, G_OBJECT (device)));
     }
 
   g_list_free_full (devices, gst_object_unref);
@@ -435,84 +482,22 @@ start_audio_monitoring (GnalkPreferencesDialog *self)
       return;
     }
 
-  /* Find the selected device using GstDeviceMonitor */
-  GstDeviceMonitor *monitor = gst_device_monitor_new ();
-  gst_device_monitor_add_filter (monitor, "Audio/Source", NULL);
-
-  if (!gst_device_monitor_start (monitor))
-    {
-      g_warning ("Preferences: Failed to start audio device monitor for playback");
-      gst_object_unref (monitor);
-      return;
-    }
-
-  GList *devices = gst_device_monitor_get_devices (monitor);
-  GstDevice *target_device = NULL;
-  guint device_index = 1;
-
-  for (GList *l = devices; l != NULL; l = l->next)
-    {
-      GstDevice *device = GST_DEVICE (l->data);
-      g_autofree gchar *name = gst_device_get_display_name (device);
-
-      /* Skip monitor devices */
-      if (name && g_str_has_prefix (name, "Monitor of "))
-        continue;
-
-      if (device_index == selected)
-        {
-          target_device = gst_object_ref (device);
-          break;
-        }
-      device_index++;
-    }
-
-  g_list_free_full (devices, gst_object_unref);
-  gst_device_monitor_stop (monitor);
-  gst_object_unref (monitor);
+  /* Use the GstDevice cached on the selected DeviceInfo - no re-enumeration */
+  DeviceInfo *info = g_list_model_get_item (G_LIST_MODEL (self->audio_devices_store), selected);
+  GstDevice *target_device = (info && info->device) ? GST_DEVICE (g_object_ref (info->device)) : NULL;
+  g_clear_object (&info);
 
   if (!target_device)
     {
-      g_warning ("Preferences: Could not find audio device at index %u", selected);
+      g_warning ("Preferences: Could not find cached audio device at index %u", selected);
       return;
     }
 
   /* Get device properties to construct the PulseAudio device name */
   GstStructure *props = gst_device_get_properties (target_device);
-  g_autofree gchar *pa_device_name = NULL;
-
+  g_autofree gchar *pa_device_name = build_pa_device_name (props);
   if (props)
-    {
-      const gchar *bus_path = gst_structure_get_string (props, "device.bus_path");
-      const gchar *profile_name = gst_structure_get_string (props, "device.profile.name");
-
-      if (bus_path && profile_name)
-        {
-          /* Convert profile name: "HiFi: Headset: source" -> "HiFi__Headset__source"
-           * Each ": " becomes "__" (double underscore) */
-          g_autofree gchar *profile_converted = g_strdup (profile_name);
-
-          /* Replace ": " with "__" */
-          GString *result = g_string_new ("");
-          for (gchar *p = profile_converted; *p; p++)
-            {
-              if (*p == ':' && *(p + 1) == ' ')
-                {
-                  g_string_append (result, "__");
-                  p++; /* Skip the space */
-                }
-              else
-                {
-                  g_string_append_c (result, *p);
-                }
-            }
-
-          pa_device_name = g_strdup_printf ("alsa_input.%s.%s", bus_path, result->str);
-          g_string_free (result, TRUE);
-        }
-
-      gst_structure_free (props);
-    }
+    gst_structure_free (props);
 
   GstElement *src;
 
