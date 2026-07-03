@@ -172,6 +172,13 @@ void
 gnalk_window_switch_to_session (GnalkWindow  *self,
                                 GnalkSession *session)
 {
+  /* Idempotent: startup calls this both directly and via the
+   * active-session-changed signal (set_active_session only emits on a real
+   * change), which previously double-wired signals and double-loaded. A switch
+   * to the already-current session is a no-op. */
+  if (self->active_session == session)
+    return;
+
   /* Disconnect from old session and controllers */
   if (self->active_session)
     {
