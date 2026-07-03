@@ -6,6 +6,7 @@ struct _GnalkDataRepository
 
   GnalkDatabase *database;
   gboolean        is_open;
+  int             batch_depth;  /* >0: coalesce writes into one tx, defer emits */
 };
 
 G_DEFINE_FINAL_TYPE (GnalkDataRepository, gnalk_data_repository, G_TYPE_OBJECT)
@@ -699,6 +700,9 @@ gnalk_data_repository_save_conversations (GnalkDataRepository *self,
 
   gboolean any_changed = FALSE;
 
+  /* One transaction for the whole batch: the 20 s sync tick can save 100+ rooms
+   * and would otherwise do 100+ autocommit fsyncs on the main thread. */
+  gnalk_database_begin_transaction (self->database);
   for (guint i = 0; i < conversations->len; i++)
     {
       GnalkConversationData *conv = g_ptr_array_index (conversations, i);
@@ -708,6 +712,7 @@ gnalk_data_repository_save_conversations (GnalkDataRepository *self,
             any_changed = TRUE;
         }
     }
+  gnalk_database_commit_transaction (self->database);
 
   if (any_changed)
     g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, "conversations");
@@ -753,8 +758,48 @@ gnalk_data_repository_save_message (GnalkDataRepository *self,
 
   gnalk_database_save_message (self->database, account_id, conversation_token, message);
 
-  g_autofree char *scope = g_strdup_printf ("messages:%s", conversation_token);
-  g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, scope);
+  /* Inside a batch, the single data-changed is emitted by end_message_batch. */
+  if (self->batch_depth == 0)
+    {
+      g_autofree char *scope = g_strdup_printf ("messages:%s", conversation_token);
+      g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, scope);
+    }
+}
+
+/*
+ * gnalk_data_repository_begin_message_batch:
+ *
+ * Open a write transaction and defer per-message data-changed emissions.
+ * Pair with gnalk_data_repository_end_message_batch(). Turns a sync batch of
+ * N messages into one fsync and one Window reload instead of N of each.
+ */
+void
+gnalk_data_repository_begin_message_batch (GnalkDataRepository *self)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  if (!self->is_open)
+    return;
+  if (self->batch_depth++ == 0)
+    gnalk_database_begin_transaction (self->database);
+}
+
+void
+gnalk_data_repository_end_message_batch (GnalkDataRepository *self,
+                                         const char          *conversation_token,
+                                         gboolean             any_saved)
+{
+  g_return_if_fail (GNALK_IS_DATA_REPOSITORY (self));
+  if (!self->is_open || self->batch_depth == 0)
+    return;
+  if (--self->batch_depth == 0)
+    {
+      gnalk_database_commit_transaction (self->database);
+      if (any_saved && conversation_token)
+        {
+          g_autofree char *scope = g_strdup_printf ("messages:%s", conversation_token);
+          g_signal_emit (self, signals[SIGNAL_DATA_CHANGED], 0, scope);
+        }
+    }
 }
 
 gint64

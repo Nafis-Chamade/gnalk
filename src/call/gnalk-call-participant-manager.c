@@ -72,7 +72,7 @@ gnalk_call_participant_on_tile_remote_video_frame (GnalkWebrtc *webrtc G_GNUC_UN
     {
       static int frame_count = 0;
       if (frame_count++ % 100 == 0)
-        g_message ("tile_remote_video_frame: received frame %d for session=%.30s...", frame_count, cb_data->session_id);
+        g_debug ("tile_remote_video_frame: received frame %d for session=%.30s...", frame_count, cb_data->session_id);
       gnalk_participant_tile_update_video_frame (record->tile, texture);
     }
   else
@@ -100,7 +100,7 @@ gnalk_call_participant_on_screen_remote_video_frame (GnalkWebrtc *webrtc G_GNUC_
   if (!self)
     {
       if (cb_data->frame_count % 100 == 0)
-        g_message ("screen_remote_video_frame: window ref gone, frame %d for session=%.30s...",
+        g_debug ("screen_remote_video_frame: window ref gone, frame %d for session=%.30s...",
                    cb_data->frame_count, cb_data->session_id);
       return;
     }
@@ -110,14 +110,14 @@ gnalk_call_participant_on_screen_remote_video_frame (GnalkWebrtc *webrtc G_GNUC_
   if (tile)
     {
       if (cb_data->frame_count % 100 == 0)
-        g_message ("screen_remote_video_frame: frame %d for session=%.30s...",
+        g_debug ("screen_remote_video_frame: frame %d for session=%.30s...",
                    cb_data->frame_count, cb_data->session_id);
       gnalk_participant_tile_update_video_frame (tile, texture);
     }
   else
     {
       if (cb_data->frame_count % 100 == 0)
-        g_message ("screen_remote_video_frame: tile not found, frame %d for session=%.30s...",
+        g_debug ("screen_remote_video_frame: tile not found, frame %d for session=%.30s...",
                    cb_data->frame_count, cb_data->session_id);
     }
 
@@ -159,7 +159,7 @@ gnalk_call_participant_on_local_video_frame (GnalkWebrtc *webrtc G_GNUC_UNUSED,
   static int display_count = 0;
 
   if (display_count++ % 30 == 0)
-    g_message ("Local video callback: frame %d, texture=%p, local_video_frame=%p",
+    g_debug ("Local video callback: frame %d, texture=%p, local_video_frame=%p",
                display_count, (void*)texture, (void*)self->local_video_frame);
 
   /* Update the small overlay preview (shown during call) */

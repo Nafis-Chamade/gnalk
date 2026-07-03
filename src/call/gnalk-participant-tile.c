@@ -185,7 +185,7 @@ on_frozen_check_timeout (gpointer user_data)
           if (!self->stream_frozen)
             {
               self->stream_frozen = TRUE;
-              g_message ("Tile %s: stream FROZEN (no frames for %ld ms, is_screen_share=%d)",
+              g_debug ("Tile %s: stream FROZEN (no frames for %ld ms, is_screen_share=%d)",
                          self->session_id ? self->session_id : "unknown",
                          (long)elapsed_ms, self->is_screen_share);
               if (self->loading_spinner)

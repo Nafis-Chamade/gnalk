@@ -92,9 +92,14 @@ update_frame_idle (gpointer user_data)
 {
   FrameUpdate *update = user_data;
 
-  if (update->picture && GTK_IS_PICTURE (update->picture))
-    gtk_picture_set_paintable (GTK_PICTURE (update->picture),
-                               GDK_PAINTABLE (update->texture));
+  /* Check if picture widget is still valid (weak ref cleared on destroy) */
+  if (update->picture)
+    {
+      if (GTK_IS_PICTURE (update->picture))
+        gtk_picture_set_paintable (GTK_PICTURE (update->picture),
+                                   GDK_PAINTABLE (update->texture));
+      g_object_remove_weak_pointer (G_OBJECT (update->picture), (gpointer *)&update->picture);
+    }
 
   g_object_unref (update->texture);
   g_free (update);
@@ -147,12 +152,14 @@ on_new_sample (GstAppSink *appsink, gpointer user_data)
                         {
                           static int frame_count = 0;
                           if (frame_count++ % 30 == 0)
-                            g_message ("CameraPreview: frame %d, size=%dx%d",
+                            g_debug ("CameraPreview: frame %d, size=%dx%d",
                                        frame_count, video_info.width, video_info.height);
 
                           FrameUpdate *update = g_new0 (FrameUpdate, 1);
                           update->picture = self->picture;
                           update->texture = texture;
+                          /* Add weak reference to detect if widget is destroyed before callback runs */
+                          g_object_add_weak_pointer (G_OBJECT (update->picture), (gpointer *)&update->picture);
                           g_idle_add (update_frame_idle, update);
                         }
                     }

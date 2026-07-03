@@ -600,6 +600,10 @@ gnalk_window_on_content_page_hiding (AdwNavigationPage *page,
   /* Disconnect ConversationData status tracking */
   gnalk_window_track_conv_data_for_status (self, NULL);
 
+  /* Cancel any pending highlight timer before current_room is nulled;
+   * its handler dereferences current_room. */
+  g_clear_handle_id (&self->highlight_clear_timer_id, g_source_remove);
+
   /* Sync Window state from controller */
   self->current_room = NULL;
   self->has_active_room = FALSE;

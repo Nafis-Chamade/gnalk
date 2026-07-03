@@ -216,16 +216,18 @@ static void update_status_indicator (GnalkConversationRow *self);
 typedef struct { GWeakRef weak_ref; } AvatarCallbackData;
 static void on_avatar_loaded (GnalkAvatarCache *cache, GdkTexture *texture, gpointer user_data);
 
-/* Helper to get current user ID from conversation data's session */
-static const char *
+/* Helper to get current user ID from conversation data's session.
+ * Returns a newly-allocated copy (or NULL) — the session is only borrowed for
+ * the duration of this call (get_session now returns a strong ref). */
+static char *
 get_current_user_id (GnalkConversationData *data)
 {
-  GnalkSession *session = gnalk_conversation_data_get_session (data);
+  g_autoptr(GnalkSession) session = gnalk_conversation_data_get_session (data);
   if (session)
     {
       GnalkAccount *account = gnalk_session_get_account (session);
       if (account)
-        return gnalk_account_get_user_id (account);
+        return g_strdup (gnalk_account_get_user_id (account));
     }
   return NULL;
 }
@@ -236,7 +238,7 @@ on_data_updated (GnalkConversationData *data,
                  GnalkConversationRow  *self)
 {
   /* Get current user ID for subtitle formatting */
-  const char *current_user_id = get_current_user_id (data);
+  g_autofree char *current_user_id = get_current_user_id (data);
 
   /* Re-read values from data and update UI */
   g_free (self->title);
@@ -726,7 +728,7 @@ gnalk_conversation_row_set_from_data (GnalkConversationRow  *self,
                                                 G_CALLBACK (on_data_updated), self);
 
   /* Get current user ID for subtitle formatting */
-  const char *current_user_id = get_current_user_id (data);
+  g_autofree char *current_user_id = get_current_user_id (data);
 
   g_free (self->token);
   g_free (self->title);

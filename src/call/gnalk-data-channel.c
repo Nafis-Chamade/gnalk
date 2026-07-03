@@ -70,7 +70,57 @@ send_status_message (GnalkDataChannel *self,
   g_signal_emit_by_name (self->channel, "send-string", message);
 }
 
-/* Callback when data channel is opened */
+/* Data channel signals ("on-open"/"on-close"/"on-message-string") are emitted
+ * on the webrtcbin/data-channel streaming thread. All work that touches
+ * main-thread-owned state (signal emission into speaking/active-speaker
+ * handling, sending status messages) must be marshalled to the main thread.
+ * We use a GWeakRef (thread-safe, unlike g_object_add_weak_pointer) to the
+ * owner so a pending idle survives disposal safely. */
+typedef struct {
+  GWeakRef  self_ref;
+  char     *message;   /* dup'd; NULL for open/close events */
+} DataChannelEvent;
+
+static DataChannelEvent *
+data_channel_event_new (GnalkDataChannel *self,
+                        const char        *message)
+{
+  DataChannelEvent *ev = g_new0 (DataChannelEvent, 1);
+  g_weak_ref_init (&ev->self_ref, self);
+  ev->message = g_strdup (message);
+  return ev;
+}
+
+static void
+data_channel_event_free (DataChannelEvent *ev)
+{
+  g_weak_ref_clear (&ev->self_ref);
+  g_free (ev->message);
+  g_free (ev);
+}
+
+/* Main-thread half of the "on-open" handler */
+static gboolean
+on_channel_open_main (gpointer user_data)
+{
+  DataChannelEvent *ev = user_data;
+  GnalkDataChannel *self = g_weak_ref_get (&ev->self_ref);
+
+  if (self)
+    {
+      /* Send initial status */
+      send_status_message (self, self->cached_video_enabled ? "videoOn" : "videoOff");
+      send_status_message (self, self->cached_audio_enabled ? "audioOn" : "audioOff");
+
+      g_signal_emit (self, signals[SIGNAL_CHANNEL_OPENED], 0);
+      g_object_unref (self);
+    }
+
+  data_channel_event_free (ev);
+  return G_SOURCE_REMOVE;
+}
+
+/* Callback when data channel is opened (streaming thread) */
 static void
 on_channel_open (GObject  *channel,
                  gpointer  user_data)
@@ -80,11 +130,7 @@ on_channel_open (GObject  *channel,
 
   g_message ("Data channel opened");
 
-  /* Send initial status */
-  send_status_message (self, self->cached_video_enabled ? "videoOn" : "videoOff");
-  send_status_message (self, self->cached_audio_enabled ? "audioOn" : "audioOff");
-
-  g_signal_emit (self, signals[SIGNAL_CHANNEL_OPENED], 0);
+  g_idle_add (on_channel_open_main, data_channel_event_new (self, NULL));
 }
 
 /* Callback for data channel errors */
@@ -98,7 +144,24 @@ on_channel_error (GObject  *channel,
   g_warning ("Data channel error: %s", error ? error->message : "unknown");
 }
 
-/* Callback for data channel close */
+/* Main-thread half of the "on-close" handler */
+static gboolean
+on_channel_close_main (gpointer user_data)
+{
+  DataChannelEvent *ev = user_data;
+  GnalkDataChannel *self = g_weak_ref_get (&ev->self_ref);
+
+  if (self)
+    {
+      g_signal_emit (self, signals[SIGNAL_CHANNEL_CLOSED], 0);
+      g_object_unref (self);
+    }
+
+  data_channel_event_free (ev);
+  return G_SOURCE_REMOVE;
+}
+
+/* Callback for data channel close (streaming thread) */
 static void
 on_channel_close (GObject  *channel,
                   gpointer  user_data)
@@ -107,10 +170,48 @@ on_channel_close (GObject  *channel,
   GnalkDataChannel *self = GNALK_DATA_CHANNEL (user_data);
 
   g_message ("Data channel closed");
-  g_signal_emit (self, signals[SIGNAL_CHANNEL_CLOSED], 0);
+
+  g_idle_add (on_channel_close_main, data_channel_event_new (self, NULL));
 }
 
-/* Callback for incoming data channel messages */
+/* Main-thread half of the "on-message-string" handler. Parsing logic is
+ * identical to the original; only its execution (and the signal emission it
+ * drives) has moved onto the main thread. */
+static gboolean
+on_channel_message_main (gpointer user_data)
+{
+  DataChannelEvent *ev = user_data;
+  GnalkDataChannel *self = g_weak_ref_get (&ev->self_ref);
+
+  if (self && ev->message)
+    {
+      /* Parse JSON message */
+      g_autoptr (JsonParser) parser = json_parser_new ();
+      if (json_parser_load_from_data (parser, ev->message, -1, NULL))
+        {
+          JsonNode *root = json_parser_get_root (parser);
+          if (JSON_NODE_HOLDS_OBJECT (root))
+            {
+              JsonObject *obj = json_node_get_object (root);
+              const char *type = json_object_get_string_member_with_default (obj, "type", NULL);
+
+              /* Handle speaking status messages */
+              if (g_strcmp0 (type, "speaking") == 0)
+                g_signal_emit (self, signals[SIGNAL_SPEAKING_CHANGED], 0, TRUE);
+              else if (g_strcmp0 (type, "stoppedSpeaking") == 0)
+                g_signal_emit (self, signals[SIGNAL_SPEAKING_CHANGED], 0, FALSE);
+            }
+        }
+    }
+
+  if (self)
+    g_object_unref (self);
+
+  data_channel_event_free (ev);
+  return G_SOURCE_REMOVE;
+}
+
+/* Callback for incoming data channel messages (streaming thread) */
 static void
 on_channel_message_string (GObject  *channel,
                            gchar    *message,
@@ -124,30 +225,7 @@ on_channel_message_string (GObject  *channel,
   if (!message)
     return;
 
-  /* Parse JSON message */
-  g_autoptr (JsonParser) parser = json_parser_new ();
-  if (!json_parser_load_from_data (parser, message, -1, NULL))
-    return;
-
-  JsonNode *root = json_parser_get_root (parser);
-  if (!JSON_NODE_HOLDS_OBJECT (root))
-    return;
-
-  JsonObject *obj = json_node_get_object (root);
-  const char *type = json_object_get_string_member_with_default (obj, "type", NULL);
-
-  if (!type)
-    return;
-
-  /* Handle speaking status messages */
-  if (g_strcmp0 (type, "speaking") == 0)
-    {
-      g_signal_emit (self, signals[SIGNAL_SPEAKING_CHANGED], 0, TRUE);
-    }
-  else if (g_strcmp0 (type, "stoppedSpeaking") == 0)
-    {
-      g_signal_emit (self, signals[SIGNAL_SPEAKING_CHANGED], 0, FALSE);
-    }
+  g_idle_add (on_channel_message_main, data_channel_event_new (self, message));
 }
 
 /* Timer callback to periodically send status messages */

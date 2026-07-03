@@ -118,5 +118,7 @@ gboolean
 gnalk_network_monitor_is_metered (GnalkNetworkMonitor *self)
 {
   g_return_val_if_fail (GNALK_IS_NETWORK_MONITOR (self), FALSE);
+  if (!self->monitor)
+    return FALSE;
   return g_network_monitor_get_network_metered (self->monitor);
 }

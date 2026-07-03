@@ -92,19 +92,22 @@ save_thumbnail_to_cache (GnalkVideoThumbnail *self,
   if (!cache_path)
     return;
 
-  /* Save texture as JPEG */
+  /* Save texture as JPEG. Download with an explicit non-premultiplied RGBA
+   * layout — the default gdk_texture_download() format is premultiplied BGRA,
+   * which fed to GdkPixbuf as RGBA swapped red/blue and mangled alpha. */
   int width = gdk_texture_get_width (texture);
   int height = gdk_texture_get_height (texture);
-  gsize stride = width * 4;  /* RGBA */
-  g_autofree guchar *data = g_malloc (stride * height);
 
-  gdk_texture_download (texture, data, stride);
+  GdkTextureDownloader *downloader = gdk_texture_downloader_new (texture);
+  gdk_texture_downloader_set_format (downloader, GDK_MEMORY_R8G8B8A8);
+  gsize stride = 0;
+  GBytes *bytes = gdk_texture_downloader_download_bytes (downloader, &stride);
+  gdk_texture_downloader_free (downloader);
 
-  /* Create pixbuf from RGBA data */
-  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_data (
-      data, GDK_COLORSPACE_RGB, TRUE, 8,
-      width, height, stride,
-      NULL, NULL);
+  /* Create pixbuf from RGBA data (keeps a ref on @bytes for its lifetime) */
+  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_bytes (
+      bytes, GDK_COLORSPACE_RGB, TRUE, 8,
+      width, height, stride);
 
   if (pixbuf)
     {
@@ -116,6 +119,9 @@ save_thumbnail_to_cache (GnalkVideoThumbnail *self,
         }
       g_object_unref (pixbuf);
     }
+
+  if (bytes)
+    g_bytes_unref (bytes);
 }
 
 #ifdef HAVE_GSTREAMER

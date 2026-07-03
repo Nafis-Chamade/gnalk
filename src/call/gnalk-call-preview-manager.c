@@ -116,9 +116,13 @@ gnalk_call_preview_find_camera_source_by_position (GnalkCameraPosition position,
   return source;
 }
 
-/* Preview update data for main thread callback */
+/* Preview update data for main thread callback.
+ * on_preview_sample runs on a GStreamer streaming thread, so the reference to
+ * the (main-thread-owned) picture widget is held via a GWeakRef, which is
+ * thread-safe. g_object_add_weak_pointer is NOT thread-safe and must not be
+ * called from the streaming thread. */
 typedef struct {
-  GtkWidget *picture;  /* Use GtkWidget* for weak pointer compatibility */
+  GWeakRef    picture_ref;
   GdkTexture *texture;
 } PreviewUpdate;
 
@@ -126,14 +130,16 @@ static gboolean
 update_preview_in_main_thread (gpointer user_data)
 {
   PreviewUpdate *update = user_data;
+  GtkWidget *picture = g_weak_ref_get (&update->picture_ref);
 
-  /* Check if picture widget is still valid (weak ref cleared on destroy) */
-  if (update->picture)
+  /* Check if picture widget is still valid (weak ref returns NULL on destroy) */
+  if (picture)
     {
-      gtk_picture_set_paintable (GTK_PICTURE (update->picture), GDK_PAINTABLE (update->texture));
-      g_object_remove_weak_pointer (G_OBJECT (update->picture), (gpointer *)&update->picture);
+      gtk_picture_set_paintable (GTK_PICTURE (picture), GDK_PAINTABLE (update->texture));
+      g_object_unref (picture);
     }
 
+  g_weak_ref_clear (&update->picture_ref);
   g_object_unref (update->texture);
   g_free (update);
   return G_SOURCE_REMOVE;
@@ -183,10 +189,10 @@ on_preview_sample (GstAppSink *appsink,
               if (texture)
                 {
                   PreviewUpdate *update = g_new (PreviewUpdate, 1);
-                  update->picture = self->local_video_fullscreen;
+                  /* GWeakRef so a widget destroyed before the idle runs is
+                   * detected safely from this streaming thread. */
+                  g_weak_ref_init (&update->picture_ref, self->local_video_fullscreen);
                   update->texture = texture;
-                  /* Add weak reference to detect if widget is destroyed before callback runs */
-                  g_object_add_weak_pointer (G_OBJECT (update->picture), (gpointer *)&update->picture);
                   g_idle_add (update_preview_in_main_thread, update);
                 }
             }

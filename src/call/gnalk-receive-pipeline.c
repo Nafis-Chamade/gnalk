@@ -98,9 +98,13 @@ gnalk_receive_pipeline_set_quality_controller (GnalkReceivePipeline   *self,
   self->quality_controller = controller;  /* Not ref'd - owned by caller */
 }
 
-/* Structure for dispatching video frames to main thread */
+/* Structure for dispatching video frames to main thread.
+ * on_remote_video_sample runs on a GStreamer streaming thread, so the
+ * reference to the (main-thread-owned) pipeline object is held via a GWeakRef,
+ * which is thread-safe. g_object_add_weak_pointer is NOT thread-safe and must
+ * not be called from the streaming thread. */
 typedef struct {
-  GnalkReceivePipeline *recv_pipeline;
+  GWeakRef    recv_pipeline_ref;
   GdkTexture *texture;
 } RemoteVideoUpdate;
 
@@ -108,13 +112,15 @@ static gboolean
 update_remote_video_in_main_thread (gpointer user_data)
 {
   RemoteVideoUpdate *update = user_data;
+  GnalkReceivePipeline *recv_pipeline = g_weak_ref_get (&update->recv_pipeline_ref);
 
-  if (update->recv_pipeline)
+  if (recv_pipeline)
     {
-      g_signal_emit (update->recv_pipeline, signals[SIGNAL_REMOTE_VIDEO_FRAME], 0, update->texture);
-      g_object_remove_weak_pointer (G_OBJECT (update->recv_pipeline), (gpointer *)&update->recv_pipeline);
+      g_signal_emit (recv_pipeline, signals[SIGNAL_REMOTE_VIDEO_FRAME], 0, update->texture);
+      g_object_unref (recv_pipeline);
     }
 
+  g_weak_ref_clear (&update->recv_pipeline_ref);
   g_object_unref (update->texture);
   g_free (update);
   return G_SOURCE_REMOVE;
@@ -130,10 +136,12 @@ on_webrtcbin_video_probe (GstPad          *pad,
   (void)info;
   (void)user_data;
 
-  static int webrtc_packet_count = 0;
-  webrtc_packet_count++;
-  if (webrtc_packet_count <= 5 || webrtc_packet_count % 100 == 0)
-    g_message ("WebRTC video probe: packet %d from webrtcbin", webrtc_packet_count);
+  /* Static counter shared across all receive-pipeline instances, each of which
+   * runs this probe on its own streaming thread; increment atomically. */
+  static gint webrtc_packet_count = 0;
+  gint count = g_atomic_int_add (&webrtc_packet_count, 1) + 1;
+  if (count <= 5 || count % 100 == 0)
+    g_debug ("WebRTC video probe: packet %d from webrtcbin", count);
   return GST_PAD_PROBE_OK;
 }
 
@@ -146,10 +154,12 @@ on_decoded_video_probe (GstPad          *pad,
   (void)info;
   (void)user_data;
 
-  static int decoded_frame_count = 0;
-  decoded_frame_count++;
-  if (decoded_frame_count <= 5 || decoded_frame_count % 30 == 0)
-    g_message ("Decoded video probe: frame %d from vp8dec", decoded_frame_count);
+  /* Static counter shared across all receive-pipeline instances, each of which
+   * runs this probe on its own streaming thread; increment atomically. */
+  static gint decoded_frame_count = 0;
+  gint count = g_atomic_int_add (&decoded_frame_count, 1) + 1;
+  if (count <= 5 || count % 30 == 0)
+    g_debug ("Decoded video probe: frame %d from vp8dec", count);
   return GST_PAD_PROBE_OK;
 }
 
@@ -171,21 +181,25 @@ on_remote_video_sample (GstAppSink *appsink,
       return GST_FLOW_OK;
     }
 
-  self->decoded_frame_count++;
+  /* decoded_frame_count and got_decoded_video are written here on the
+   * streaming thread and read/reset on the main thread, so access them
+   * atomically. This is the sole writer of the counter (single appsink),
+   * so fetch-and-add gives us a stable post-increment value. */
+  guint frame_count = (guint) g_atomic_int_add ((gint *) &self->decoded_frame_count, 1) + 1;
 
   /* After receiving 10 frames from decoder, assume we have good video */
-  if (!self->got_decoded_video && self->decoded_frame_count >= 10)
+  if (!g_atomic_int_get (&self->got_decoded_video) && frame_count >= 10)
     {
-      self->got_decoded_video = TRUE;
+      g_atomic_int_set (&self->got_decoded_video, TRUE);
       if (self->quality_controller)
         gnalk_quality_controller_set_video_received (self->quality_controller, TRUE);
       g_message ("Remote video: got %u frames, stopping PLI timer for recv_pipeline=%p",
-                 self->decoded_frame_count, (void *)self);
+                 frame_count, (void *)self);
     }
 
-  if (self->decoded_frame_count % 30 == 0)
-    g_message ("Remote video: received frame %u for recv_pipeline=%p",
-               self->decoded_frame_count, (void *)self);
+  if (frame_count % 30 == 0)
+    g_debug ("Remote video: received frame %u for recv_pipeline=%p",
+               frame_count, (void *)self);
 
   buffer = gst_sample_get_buffer (sample);
   caps = gst_sample_get_caps (sample);
@@ -228,9 +242,8 @@ on_remote_video_sample (GstAppSink *appsink,
               if (texture)
                 {
                   RemoteVideoUpdate *update = g_new (RemoteVideoUpdate, 1);
-                  update->recv_pipeline = self;
+                  g_weak_ref_init (&update->recv_pipeline_ref, self);
                   update->texture = texture;
-                  g_object_add_weak_pointer (G_OBJECT (self), (gpointer *)&update->recv_pipeline);
                   g_idle_add (update_remote_video_in_main_thread, update);
                 }
             }
@@ -511,13 +524,15 @@ gnalk_receive_pipeline_reset_frame_counters (GnalkReceivePipeline *self)
 {
   g_return_if_fail (GNALK_IS_RECEIVE_PIPELINE (self));
 
-  self->got_decoded_video = FALSE;
-  self->decoded_frame_count = 0;
+  /* Written on the streaming thread in on_remote_video_sample; reset here on
+   * the main thread. Use atomic access to avoid a data race. */
+  g_atomic_int_set (&self->got_decoded_video, FALSE);
+  g_atomic_int_set (&self->decoded_frame_count, 0);
 }
 
 gboolean
 gnalk_receive_pipeline_has_video (GnalkReceivePipeline *self)
 {
   g_return_val_if_fail (GNALK_IS_RECEIVE_PIPELINE (self), FALSE);
-  return self->got_decoded_video;
+  return g_atomic_int_get (&self->got_decoded_video);
 }

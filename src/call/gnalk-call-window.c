@@ -1280,8 +1280,8 @@ on_http_get_participants_response (GnalkHttpClient *client,
 }
 
 static void
-on_http_join_call_response (GnalkHttpClient *client,
-                            JsonNode         *response,
+on_http_join_call_response (GnalkHttpClient *client G_GNUC_UNUSED,
+                            JsonNode         *response G_GNUC_UNUSED,
                             GError           *error,
                             gpointer          user_data)
 {
@@ -1289,8 +1289,12 @@ on_http_join_call_response (GnalkHttpClient *client,
 
   if (error)
     {
-      g_warning ("Failed to join call via HTTP: %s", error->message);
-      g_object_set (self, "call-status", _("Failed to join call"), NULL);
+      /* Cancellation (disconnect/account switch) is not a join failure */
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        {
+          g_warning ("Failed to join call via HTTP: %s", error->message);
+          g_object_set (self, "call-status", _("Failed to join call"), NULL);
+        }
       g_object_unref (self);
       return;
     }

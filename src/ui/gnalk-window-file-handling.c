@@ -509,9 +509,15 @@ on_file_downloaded (GnalkHttpClient *client,
 
   if (error)
     {
-      g_warning ("Failed to download file: %s", error->message);
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        g_warning ("Failed to download file: %s", error->message);
       if (row)
-        g_object_unref (row);
+        {
+          /* Also leave the audio player's loading state, if any */
+          if (gnalk_message_row_has_audio_file (row))
+            gnalk_message_row_set_audio_loading (row, FALSE);
+          g_object_unref (row);
+        }
       file_download_data_free (data);
       return;
     }

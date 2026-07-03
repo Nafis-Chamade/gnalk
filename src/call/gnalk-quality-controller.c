@@ -170,6 +170,97 @@ gnalk_quality_controller_set_pli_pad (GnalkQualityController *self,
 }
 
 #ifdef HAVE_GSTREAMER_WEBRTC
+
+/* Applies extracted stats on the MAIN thread: mutates self fields, reconfigures
+ * the encoder, and emits stats-updated (which reaches the UI). Scheduled from
+ * on_stats_promise_reply, which runs on the GStreamer promise thread. */
+typedef struct {
+  GnalkQualityController *self;   /* owns a ref */
+  guint64                 packets_sent;
+  guint64                 packets_lost;
+} StatsApply;
+
+static gboolean
+apply_stats_in_main_thread (gpointer user_data)
+{
+  StatsApply *a = user_data;
+  GnalkQualityController *self = a->self;
+  guint64 packets_sent = a->packets_sent;
+  guint64 packets_lost = a->packets_lost;
+
+  /* Calculate packet loss ratio since last check */
+  guint64 new_packets = packets_sent - self->last_packets_sent;
+  guint64 new_lost = packets_lost - self->last_packets_lost;
+  gdouble loss_ratio = 0.0;
+
+  if (new_packets > 10)
+    {
+      loss_ratio = (gdouble)new_lost / (gdouble)new_packets;
+
+      guint new_bitrate = self->current_bitrate;
+
+      if (loss_ratio > 0.10)
+        {
+          /* > 10% loss: aggressive reduction */
+          new_bitrate = (guint)(self->current_bitrate * 0.7);
+          g_message ("QC: HIGH loss (%.1f%%), reducing to %u kbps",
+                     loss_ratio * 100, new_bitrate / 1000);
+        }
+      else if (loss_ratio > 0.05)
+        {
+          /* 5-10% loss: moderate reduction */
+          new_bitrate = (guint)(self->current_bitrate * 0.85);
+          g_message ("QC: moderate loss (%.1f%%), reducing to %u kbps",
+                     loss_ratio * 100, new_bitrate / 1000);
+        }
+      else if (loss_ratio < 0.02 && self->current_bitrate < BITRATE_MAX)
+        {
+          /* < 2% loss: try increasing */
+          new_bitrate = (guint)(self->current_bitrate * 1.1);
+          if (new_bitrate > BITRATE_MAX)
+            new_bitrate = BITRATE_MAX;
+          g_message ("QC: low loss (%.1f%%), increasing to %u kbps",
+                     loss_ratio * 100, new_bitrate / 1000);
+        }
+
+      /* Clamp to min/max */
+      if (new_bitrate < BITRATE_MIN)
+        new_bitrate = BITRATE_MIN;
+      if (new_bitrate > BITRATE_MAX)
+        new_bitrate = BITRATE_MAX;
+
+      /* Apply new bitrate if changed significantly (> 5%) */
+      if (new_bitrate != self->current_bitrate)
+        {
+          gint diff = (gint)new_bitrate - (gint)self->current_bitrate;
+          if (diff < 0) diff = -diff;
+          if (diff > (gint)(self->current_bitrate * 0.05))
+            {
+              self->current_bitrate = new_bitrate;
+              if (self->video_encoder)
+                {
+                  g_object_set (self->video_encoder, "target-bitrate", new_bitrate, NULL);
+                  g_debug ("QC: encoder set to %u kbps", new_bitrate / 1000);
+                }
+            }
+        }
+
+      /* Emit stats signal */
+      guint loss_pct = (guint)(loss_ratio * 100);
+      guint keyframe_pct = self->depay_frame_count > 0
+        ? (self->keyframe_count * 100) / self->depay_frame_count : 0;
+      g_signal_emit (self, signals[SIGNAL_STATS_UPDATED], 0,
+                     self->current_bitrate / 1000, loss_pct, keyframe_pct);
+    }
+
+  self->last_packets_sent = packets_sent;
+  self->last_packets_lost = packets_lost;
+
+  g_object_unref (self);
+  g_free (a);
+  return G_SOURCE_REMOVE;
+}
+
 /* Stats promise callback for bitrate adaptation */
 static void
 on_stats_promise_reply (GstPromise *promise, gpointer user_data)
@@ -231,7 +322,7 @@ on_stats_promise_reply (GstPromise *promise, gpointer user_data)
                   static guint64 last_log_packets = 0;
                   if (packets_received > last_log_packets + 200)
                     {
-                      g_message ("QC INBOUND RTP[0x%08x]: recv=%lu lost=%lu nack=%lu jitter=%.1fms",
+                      g_debug ("QC INBOUND RTP[0x%08x]: recv=%lu lost=%lu nack=%lu jitter=%.1fms",
                                  ssrc, (unsigned long)packets_received, (unsigned long)packets_lost_in,
                                  (unsigned long)nack_count, jitter * 1000.0);
                       last_log_packets = packets_received;
@@ -241,75 +332,16 @@ on_stats_promise_reply (GstPromise *promise, gpointer user_data)
         }
     }
 
+  /* Hand the extracted numbers to the main thread for the actual adaptation
+   * (self-field mutation, encoder reconfig, and the UI-bound signal). self is
+   * kept alive by the ref held in the promise user_data. */
   if (found_outbound && packets_sent > 0)
     {
-      /* Calculate packet loss ratio since last check */
-      guint64 new_packets = packets_sent - self->last_packets_sent;
-      guint64 new_lost = packets_lost - self->last_packets_lost;
-      gdouble loss_ratio = 0.0;
-
-      if (new_packets > 10)
-        {
-          loss_ratio = (gdouble)new_lost / (gdouble)new_packets;
-
-          guint new_bitrate = self->current_bitrate;
-
-          if (loss_ratio > 0.10)
-            {
-              /* > 10% loss: aggressive reduction */
-              new_bitrate = (guint)(self->current_bitrate * 0.7);
-              g_message ("QC: HIGH loss (%.1f%%), reducing to %u kbps",
-                         loss_ratio * 100, new_bitrate / 1000);
-            }
-          else if (loss_ratio > 0.05)
-            {
-              /* 5-10% loss: moderate reduction */
-              new_bitrate = (guint)(self->current_bitrate * 0.85);
-              g_message ("QC: moderate loss (%.1f%%), reducing to %u kbps",
-                         loss_ratio * 100, new_bitrate / 1000);
-            }
-          else if (loss_ratio < 0.02 && self->current_bitrate < BITRATE_MAX)
-            {
-              /* < 2% loss: try increasing */
-              new_bitrate = (guint)(self->current_bitrate * 1.1);
-              if (new_bitrate > BITRATE_MAX)
-                new_bitrate = BITRATE_MAX;
-              g_message ("QC: low loss (%.1f%%), increasing to %u kbps",
-                         loss_ratio * 100, new_bitrate / 1000);
-            }
-
-          /* Clamp to min/max */
-          if (new_bitrate < BITRATE_MIN)
-            new_bitrate = BITRATE_MIN;
-          if (new_bitrate > BITRATE_MAX)
-            new_bitrate = BITRATE_MAX;
-
-          /* Apply new bitrate if changed significantly (> 5%) */
-          if (new_bitrate != self->current_bitrate)
-            {
-              gint diff = (gint)new_bitrate - (gint)self->current_bitrate;
-              if (diff < 0) diff = -diff;
-              if (diff > (gint)(self->current_bitrate * 0.05))
-                {
-                  self->current_bitrate = new_bitrate;
-                  if (self->video_encoder)
-                    {
-                      g_object_set (self->video_encoder, "target-bitrate", new_bitrate, NULL);
-                      g_message ("QC: encoder set to %u kbps", new_bitrate / 1000);
-                    }
-                }
-            }
-
-          /* Emit stats signal */
-          guint loss_pct = (guint)(loss_ratio * 100);
-          guint keyframe_pct = self->depay_frame_count > 0
-            ? (self->keyframe_count * 100) / self->depay_frame_count : 0;
-          g_signal_emit (self, signals[SIGNAL_STATS_UPDATED], 0,
-                         self->current_bitrate / 1000, loss_pct, keyframe_pct);
-        }
-
-      self->last_packets_sent = packets_sent;
-      self->last_packets_lost = packets_lost;
+      StatsApply *a = g_new0 (StatsApply, 1);
+      a->self = g_object_ref (self);
+      a->packets_sent = packets_sent;
+      a->packets_lost = packets_lost;
+      g_idle_add (apply_stats_in_main_thread, a);
     }
 
   gst_promise_unref (promise);
@@ -324,7 +356,12 @@ bitrate_timer_callback (gpointer user_data)
     return G_SOURCE_CONTINUE;
 
   /* Request stats from webrtcbin */
-  GstPromise *promise = gst_promise_new_with_change_func (on_stats_promise_reply, self, NULL);
+  /* Hold a ref on self for the lifetime of the promise: the reply fires on a
+   * GStreamer thread and could otherwise land after dispose (UAF). The
+   * GDestroyNotify releases it when the promise is freed. */
+  GstPromise *promise = gst_promise_new_with_change_func (on_stats_promise_reply,
+                                                          g_object_ref (self),
+                                                          g_object_unref);
   g_signal_emit_by_name (self->webrtcbin, "get-stats", NULL, promise);
 
   return G_SOURCE_CONTINUE;
@@ -354,7 +391,7 @@ rtp_video_probe_cb (GstPad          *pad,
       /* Detect SSRC changes */
       if (self->last_rtp_ssrc != 0 && ssrc != self->last_rtp_ssrc)
         {
-          g_message ("QC RTP SSRC CHANGE: was 0x%08x, now 0x%08x at packet %u",
+          g_debug ("QC RTP SSRC CHANGE: was 0x%08x, now 0x%08x at packet %u",
                      self->last_rtp_ssrc, ssrc, self->rtp_packet_count);
         }
       self->last_rtp_ssrc = ssrc;
@@ -369,7 +406,7 @@ rtp_video_probe_cb (GstPad          *pad,
               if (gap > 0)
                 {
                   self->rtp_seq_gaps++;
-                  g_message ("QC RTP seq gap: expected %u, got %u (gap=%d, total=%u)",
+                  g_debug ("QC RTP seq gap: expected %u, got %u (gap=%d, total=%u)",
                              expected_seq, seq, gap, self->rtp_seq_gaps);
                 }
             }
@@ -416,7 +453,7 @@ rtp_video_probe_cb (GstPad          *pad,
       if (keyframe)
         {
           self->keyframe_count++;
-          g_message ("QC KEYFRAME #%u at packet %u (seq=%u)",
+          g_debug ("QC KEYFRAME #%u at packet %u (seq=%u)",
                      self->keyframe_count, self->rtp_packet_count, seq);
         }
 
@@ -425,7 +462,7 @@ rtp_video_probe_cb (GstPad          *pad,
         {
           guint8 pt = gst_rtp_buffer_get_payload_type (&rtp);
           gboolean marker = gst_rtp_buffer_get_marker (&rtp);
-          g_message ("QC RTP pkt=%u seq=%u pt=%u marker=%d len=%u keyframes=%u gaps=%u",
+          g_debug ("QC RTP pkt=%u seq=%u pt=%u marker=%d len=%u keyframes=%u gaps=%u",
                      self->rtp_packet_count, seq, pt, marker,
                      payload_len, self->keyframe_count, self->rtp_seq_gaps);
         }
@@ -449,7 +486,7 @@ depay_src_probe_cb (GstPad          *pad,
   self->depay_frame_count++;
 
   if (self->depay_frame_count <= 5 || self->depay_frame_count % 100 == 0)
-    g_message ("QC Depay frame %u (rtp_pkts=%u, keyframes=%u, gaps=%u)",
+    g_debug ("QC Depay frame %u (rtp_pkts=%u, keyframes=%u, gaps=%u)",
                self->depay_frame_count, self->rtp_packet_count,
                self->keyframe_count, self->rtp_seq_gaps);
 
@@ -523,7 +560,7 @@ send_pli_request (GnalkQualityController *self)
       sent = gst_element_send_event (self->webrtcbin, force_key);
       if (sent)
         {
-          g_message ("QC PLI #%u: sent via webrtcbin", self->pli_request_count);
+          g_debug ("QC PLI #%u: sent via webrtcbin", self->pli_request_count);
           return TRUE;
         }
     }
@@ -534,7 +571,7 @@ send_pli_request (GnalkQualityController *self)
       GstEvent *force_key = gst_video_event_new_upstream_force_key_unit (
           GST_CLOCK_TIME_NONE, TRUE, 0);
       sent = gst_pad_push_event (self->pli_pad, force_key);
-      g_message ("QC PLI #%u: sent via pad push, result=%d",
+      g_debug ("QC PLI #%u: sent via pad push, result=%d",
                  self->pli_request_count, sent);
       return sent;
     }

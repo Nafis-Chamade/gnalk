@@ -874,7 +874,8 @@ attempt_reconnect (GnalkSession *self)
       /* Guest auth chain: start with room info */
       const char *room_token = gnalk_account_get_room_token (self->account);
       gnalk_http_client_get_room_info (self->http_client, room_token,
-                                         on_guest_room_info_response, self);
+                                         on_guest_room_info_response,
+                                         gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
     }
   else
     {
@@ -883,7 +884,7 @@ attempt_reconnect (GnalkSession *self)
         self->http_client,
         GNALK_SESSION_AUTH_TIMEOUT_SEC,
         on_server_status_response,
-        self);
+        gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
     }
 }
 
@@ -922,7 +923,17 @@ on_server_status_response (GnalkHttpClient *client G_GNUC_UNUSED,
                            GError           *error,
                            gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  /* The HTTP client can outlive the session (avatar cache / call window hold
+   * strong refs), so use a GWeakRef instead of a raw self pointer. */
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {
@@ -933,7 +944,7 @@ on_server_status_response (GnalkHttpClient *client G_GNUC_UNUSED,
   /* Proceed to get user info */
   gnalk_http_client_get_user_info (self->http_client,
                                      on_user_info_response,
-                                     self);
+                                     gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 static void
@@ -942,7 +953,15 @@ on_user_info_response (GnalkHttpClient *client G_GNUC_UNUSED,
                        GError           *error,
                        gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {
@@ -970,7 +989,7 @@ on_user_info_response (GnalkHttpClient *client G_GNUC_UNUSED,
   /* Proceed to get conversations */
   gnalk_http_client_get_conversations (self->http_client,
                                          on_conversations_response,
-                                         self);
+                                         gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 static void
@@ -979,7 +998,15 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
                            GError           *error,
                            gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {
@@ -1038,7 +1065,7 @@ on_conversations_response (GnalkHttpClient *client G_GNUC_UNUSED,
   /* Proceed to get capabilities */
   gnalk_http_client_get_capabilities (self->http_client,
                                         on_capabilities_response,
-                                        self);
+                                        gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 static void
@@ -1047,7 +1074,15 @@ on_capabilities_response (GnalkHttpClient *client G_GNUC_UNUSED,
                           GError           *error,
                           gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   /* Capabilities are optional - continue even on error */
   if (error)
@@ -1154,7 +1189,7 @@ on_capabilities_response (GnalkHttpClient *client G_GNUC_UNUSED,
   /* Proceed to get signaling settings */
   gnalk_http_client_get_signaling_settings (self->http_client,
                                               on_signaling_settings_response,
-                                              self);
+                                              gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 static void
@@ -1163,7 +1198,15 @@ on_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                 GError           *error,
                                 gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {
@@ -1602,7 +1645,7 @@ gnalk_session_connect (GnalkSession *self,
   /* Start auth chain */
   gnalk_http_client_get_server_status (self->http_client,
                                          on_server_status_response,
-                                         self);
+                                         gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 void
@@ -1630,7 +1673,8 @@ gnalk_session_connect_guest (GnalkSession *self)
   /* Start guest auth chain: get room info first to check if accessible */
   const char *room_token = gnalk_account_get_room_token (self->account);
   gnalk_http_client_get_room_info (self->http_client, room_token,
-                                     on_guest_room_info_response, self);
+                                     on_guest_room_info_response,
+                                     gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 void
@@ -2064,7 +2108,15 @@ on_guest_room_info_response (GnalkHttpClient *client G_GNUC_UNUSED,
                               GError           *error,
                               gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {
@@ -2137,7 +2189,8 @@ on_guest_room_info_response (GnalkHttpClient *client G_GNUC_UNUSED,
   const char *room_token = gnalk_account_get_room_token (self->account);
   gnalk_http_client_join_room_as_guest (self->http_client, room_token,
                                           has_password ? self->room_password : NULL,
-                                          on_guest_join_response, self);
+                                          on_guest_join_response,
+                                          gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 static void
@@ -2146,7 +2199,15 @@ on_guest_join_response (GnalkHttpClient *client G_GNUC_UNUSED,
                          GError           *error,
                          gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {
@@ -2201,7 +2262,8 @@ on_guest_join_response (GnalkHttpClient *client G_GNUC_UNUSED,
   const char *room_token = gnalk_account_get_room_token (self->account);
   gnalk_http_client_set_guest_name (self->http_client, room_token,
                                       self->guest_display_name,
-                                      on_guest_set_name_response, self);
+                                      on_guest_set_name_response,
+                                      gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 static void
@@ -2210,7 +2272,15 @@ on_guest_set_name_response (GnalkHttpClient *client G_GNUC_UNUSED,
                              GError           *error,
                              gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {
@@ -2220,7 +2290,8 @@ on_guest_set_name_response (GnalkHttpClient *client G_GNUC_UNUSED,
 
   /* Get signaling settings */
   gnalk_http_client_get_signaling_settings (self->http_client,
-                                              on_guest_signaling_settings_response, self);
+                                              on_guest_signaling_settings_response,
+                                              gnalk_async_op_new (G_OBJECT (self), NULL, NULL, 0));
 }
 
 static void
@@ -2229,7 +2300,15 @@ on_guest_signaling_settings_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                        GError           *error,
                                        gpointer          user_data)
 {
-  GnalkSession *self = GNALK_SESSION (user_data);
+  GnalkAsyncOp *op = user_data;
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    { gnalk_async_op_free (op); return; }
+
+  g_autoptr(GObject) owner = gnalk_async_op_get_owner (op);
+  gnalk_async_op_free (op);
+  if (!owner)
+    return;
+  GnalkSession *self = GNALK_SESSION (owner);
 
   if (error)
     {

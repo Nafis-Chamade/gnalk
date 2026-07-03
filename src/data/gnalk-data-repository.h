@@ -262,6 +262,12 @@ void gnalk_data_repository_save_message (GnalkDataRepository *self,
                                          const char          *conversation_token,
                                          GnalkMessageData    *message);
 
+/* Batch a run of save_message calls into one transaction + one data-changed. */
+void gnalk_data_repository_begin_message_batch (GnalkDataRepository *self);
+void gnalk_data_repository_end_message_batch (GnalkDataRepository *self,
+                                              const char          *conversation_token,
+                                              gboolean             any_saved);
+
 /**
  * gnalk_data_repository_get_last_known_message_id:
  * @self: The data repository

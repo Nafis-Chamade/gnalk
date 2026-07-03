@@ -1,5 +1,6 @@
 #include "gnalk-background-generator.h"
 #include <cairo.h>
+#include <glib/gstdio.h>
 
 /* Convert a GdkTexture to a Cairo surface */
 static cairo_surface_t *
@@ -258,6 +259,25 @@ gnalk_background_generator_create_css_provider (GdkTexture *texture)
   /* Save texture to a temporary PNG file with timestamp to avoid caching */
   g_autofree char *cache_dir = g_build_filename (g_get_user_cache_dir (), "gnalk", NULL);
   g_mkdir_with_parents (cache_dir, 0755);
+
+  /* Each generation writes a fresh timestamped PNG; sweep away the previous
+   * ones so the cache dir does not grow without bound. */
+  {
+    GDir *dir = g_dir_open (cache_dir, 0, NULL);
+    if (dir)
+      {
+        const char *entry;
+        while ((entry = g_dir_read_name (dir)))
+          {
+            if (g_str_has_prefix (entry, "mosaic-bg-") && g_str_has_suffix (entry, ".png"))
+              {
+                g_autofree char *stale = g_build_filename (cache_dir, entry, NULL);
+                g_unlink (stale);
+              }
+          }
+        g_dir_close (dir);
+      }
+  }
 
   gint64 timestamp = g_get_monotonic_time ();
   g_autofree char *filename = g_strdup_printf ("mosaic-bg-%" G_GINT64_FORMAT ".png", timestamp);

@@ -12,8 +12,91 @@ static FILE *http_log_file = NULL;
 static FILE *ws_log_file = NULL;
 static FILE *notif_log_file = NULL;
 
+/* Request/response body logging is opt-in (GNALK_LOG_HTTP_BODY=1). Bodies can
+ * carry private conversation content, so they are OFF by default. Secret
+ * fields are additionally redacted regardless of this flag (see redact_secrets). */
+static gboolean log_http_body = FALSE;
+
+/*
+ * redact_secrets:
+ * @text: JSON-ish text that may contain sensitive fields (may be NULL)
+ *
+ * Returns a newly-allocated copy of @text with the value of any known-sensitive
+ * key ("password", "ticket", a JWT, etc.) replaced by "[redacted]". The key name
+ * itself is dropped too so that grepping the log for "password"/"ticket"/... stays
+ * clean. Returns NULL if @text is NULL/empty. Caller frees.
+ */
+static char *
+redact_secrets (const char *text)
+{
+  static gsize once = 0;
+  static GRegex *re = NULL;
+
+  if (!text || !*text)
+    return NULL;
+
+  if (g_once_init_enter (&once))
+    {
+      /* Match "<key>" : "<value>" for sensitive keys, tolerating escaped quotes
+       * inside the value. Case-insensitive so PassWord/Ticket are caught too. */
+      re = g_regex_new (
+        "\"(password|ticket|jwt|app_?password|proxytoken|secret|authorization)\""
+        "\\s*:\\s*\"(?:\\\\.|[^\"\\\\])*\"",
+        G_REGEX_CASELESS | G_REGEX_OPTIMIZE, 0, NULL);
+      g_once_init_leave (&once, 1);
+    }
+
+  if (!re)
+    return g_strdup (text);
+
+  return g_regex_replace_literal (re, text, -1, 0, "\"[redacted]\"", 0, NULL);
+}
+
 /* Trace logging enabled flags per category */
 static gboolean trace_enabled[GNALK_LOG_CAT_COUNT] = { FALSE };
+
+/* Minimum severity to emit (GNALK_LOG_LEVEL env). GLib level flags are ordered
+ * so that a *higher* numeric value means *less* severe (ERROR=4 … DEBUG=128);
+ * a record is dropped when its level flag exceeds this threshold. Default keeps
+ * G_LOG_LEVEL_MESSAGE so the startup sequence stays visible; set
+ * GNALK_LOG_LEVEL=warning to silence the g_message flood. */
+static GLogLevelFlags log_threshold = G_LOG_LEVEL_MESSAGE;
+
+static GLogWriterOutput
+gnalk_log_writer (GLogLevelFlags   log_level,
+                  const GLogField *fields,
+                  gsize            n_fields,
+                  gpointer         user_data)
+{
+  GLogLevelFlags severity = log_level & G_LOG_LEVEL_MASK;
+
+  /* Drop records less severe than the configured threshold. Errors/criticals/
+   * warnings are never below G_LOG_LEVEL_MESSAGE, so they always pass. */
+  if (severity > log_threshold)
+    return G_LOG_WRITER_HANDLED;
+
+  return g_log_writer_default (log_level, fields, n_fields, user_data);
+}
+
+static void
+parse_log_level (const char *level)
+{
+  if (!level || !*level)
+    return;
+
+  if (g_ascii_strcasecmp (level, "error") == 0)
+    log_threshold = G_LOG_LEVEL_ERROR;
+  else if (g_ascii_strcasecmp (level, "critical") == 0)
+    log_threshold = G_LOG_LEVEL_CRITICAL;
+  else if (g_ascii_strcasecmp (level, "warning") == 0)
+    log_threshold = G_LOG_LEVEL_WARNING;
+  else if (g_ascii_strcasecmp (level, "message") == 0)
+    log_threshold = G_LOG_LEVEL_MESSAGE;
+  else if (g_ascii_strcasecmp (level, "info") == 0)
+    log_threshold = G_LOG_LEVEL_INFO;
+  else if (g_ascii_strcasecmp (level, "debug") == 0)
+    log_threshold = G_LOG_LEVEL_DEBUG;
+}
 
 /* Category names for parsing GNALK_TRACE env var */
 static const char *category_names[GNALK_LOG_CAT_COUNT] = {
@@ -152,6 +235,14 @@ gnalk_log_init (void)
         }
     }
 
+  /* Opt-in HTTP body logging (private content; off by default) */
+  const char *http_body = g_getenv ("GNALK_LOG_HTTP_BODY");
+  log_http_body = (http_body && (*http_body == '1' || g_ascii_strcasecmp (http_body, "true") == 0));
+
+  /* Severity threshold + custom writer */
+  parse_log_level (g_getenv ("GNALK_LOG_LEVEL"));
+  g_log_set_writer_func (gnalk_log_writer, NULL, NULL);
+
   /* Parse trace logging configuration */
   const char *trace_config = g_getenv ("GNALK_TRACE");
   parse_trace_config (trace_config);
@@ -222,8 +313,12 @@ gnalk_log_http_request (const char *account,
   if (account && *account)
     fprintf (out, "[%s] ", account);
   fprintf (out, ">>> HTTP %s %s", method, url);
-  if (body && *body)
-    fprintf (out, "\n    Body: %s", body);
+  if (body && *body && log_http_body)
+    {
+      char *safe = redact_secrets (body);
+      fprintf (out, "\n    Body: %s", safe ? safe : body);
+      g_free (safe);
+    }
   fprintf (out, "\n");
 
   if (http_log_file)
@@ -249,8 +344,12 @@ gnalk_log_http_response (const char *account,
   fprintf (out, "<<< HTTP %u %s", status_code, reason_phrase ? reason_phrase : "");
   if (url && *url)
     fprintf (out, " %s", url);
-  if (body && *body)
-    fprintf (out, "\n    Body: %s", body);
+  if (body && *body && log_http_body)
+    {
+      char *safe = redact_secrets (body);
+      fprintf (out, "\n    Body: %s", safe ? safe : body);
+      g_free (safe);
+    }
   fprintf (out, "\n");
 
   if (http_log_file)
@@ -270,7 +369,11 @@ gnalk_log_ws_send (const char *account,
 
   if (account && *account)
     fprintf (out, "[%s] ", account);
-  fprintf (out, ">>> %s\n", message ? message : "(null)");
+  {
+    char *safe = redact_secrets (message);
+    fprintf (out, ">>> %s\n", safe ? safe : (message ? message : "(null)"));
+    g_free (safe);
+  }
 
   if (ws_log_file)
     fflush (ws_log_file);
@@ -289,7 +392,11 @@ gnalk_log_ws_recv (const char *account,
 
   if (account && *account)
     fprintf (out, "[%s] ", account);
-  fprintf (out, "<<< %s\n", message ? message : "(null)");
+  {
+    char *safe = redact_secrets (message);
+    fprintf (out, "<<< %s\n", safe ? safe : (message ? message : "(null)"));
+    g_free (safe);
+  }
 
   if (ws_log_file)
     fflush (ws_log_file);

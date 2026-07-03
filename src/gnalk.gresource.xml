@@ -2,7 +2,6 @@
 <gresources>
   <gresource prefix="/net/skilpa/gnalk">
     <file preprocess="xml-stripblanks">gnalk-window.ui</file>
-    <file preprocess="xml-stripblanks">gnalk-connection-dialog.ui</file>
     <file preprocess="xml-stripblanks">gnalk-new-conversation-dialog.ui</file>
     <file preprocess="xml-stripblanks">gnalk-conversation-info-dialog.ui</file>
     <file preprocess="xml-stripblanks">gnalk-conversation-row.ui</file>

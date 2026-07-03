@@ -1,7 +1,6 @@
 #include "gnalk-config.h"
 #include "gnalk-window-private.h"
 #include "gnalk-application.h"
-#include "gnalk-connection-dialog.h"
 #include "gnalk-new-conversation-dialog.h"
 #include "gnalk-conversation-info-dialog.h"
 #include "gnalk-conversation-row.h"
@@ -99,7 +98,7 @@ gnalk_window_get_property (GObject    *object,
       g_value_set_string (value, self->user_name);
       break;
     case GNALK_WINDOW_PROP_CURRENT_ROOM_NAME:
-      g_value_set_string (value, self->current_room->room_name);
+      g_value_set_string (value, self->current_room ? self->current_room->room_name : NULL);
       break;
     case GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM:
       g_value_set_boolean (value, self->has_active_room);
@@ -124,8 +123,11 @@ gnalk_window_set_property (GObject      *object,
       self->user_name = g_value_dup_string (value);
       break;
     case GNALK_WINDOW_PROP_CURRENT_ROOM_NAME:
-      g_free (self->current_room->room_name);
-      self->current_room->room_name = g_value_dup_string (value);
+      if (self->current_room)
+        {
+          g_free (self->current_room->room_name);
+          self->current_room->room_name = g_value_dup_string (value);
+        }
       break;
     case GNALK_WINDOW_PROP_HAS_ACTIVE_ROOM:
       self->has_active_room = g_value_get_boolean (value);
@@ -378,7 +380,8 @@ gnalk_window_on_session_room_joined (GnalkSession *session G_GNUC_UNUSED,
                                       const char    *session_id,
                                       GnalkWindow  *self)
 {
-  g_message ("Window: session room joined: %s (session_id: %s)", room_token, session_id);
+  g_message ("Window: session room joined: %s (session_id: %.8s…)",
+             room_token, session_id ? session_id : "");
 
   if (!self->current_room)
     return;
@@ -481,8 +484,10 @@ gnalk_window_on_session_typing (GnalkSession *session G_GNUC_UNUSED,
                                  gboolean       is_typing,
                                  GnalkWindow  *self)
 {
-  /* Only show typing indicator for current room */
-  if (g_strcmp0 (room_token, self->current_room->room_token) != 0)
+  /* Only show typing indicator for current room (a peer can type while no room
+   * is open — current_room is NULL then). */
+  if (!self->current_room ||
+      g_strcmp0 (room_token, self->current_room->room_token) != 0)
     return;
 
   gnalk_typing_indicator_set_typing (self->typing_indicator, session_id, display_name, is_typing);
@@ -805,12 +810,27 @@ gnalk_window_on_sign_out_requested (GnalkAccountSwitcher *switcher G_GNUC_UNUSED
     }
 }
 
+/* Free a heap GWeakRef used as action closure data. */
 static void
-on_about_action (GSimpleAction *action,
-                 GVariant      *parameter,
+about_weak_ref_free (gpointer data, GClosure *closure G_GNUC_UNUSED)
+{
+  GWeakRef *ref = data;
+  g_weak_ref_clear (ref);
+  g_free (ref);
+}
+
+static void
+on_about_action (GSimpleAction *action G_GNUC_UNUSED,
+                 GVariant      *parameter G_GNUC_UNUSED,
                  gpointer       user_data)
 {
-  GnalkWindow *self = GNALK_WINDOW (user_data);
+  /* The "about" action is registered on the GApplication, which outlives any
+   * window, so the window is captured via a GWeakRef to avoid a use-after-free
+   * when invoked after the originating window is gone. */
+  GWeakRef *ref = user_data;
+  g_autoptr(GnalkWindow) self = g_weak_ref_get (ref);
+  if (!self)
+    return;
 
   const char *developers[] = { "Skilpa", NULL };
 
@@ -1042,9 +1062,11 @@ gnalk_window_start_call (GnalkWindow *self,
                                  with_video,
                                  is_federated);
 
-  /* Track active call window */
+  /* Track active call window. connect_object so the handler auto-disconnects if
+   * the main window is destroyed while the call window is still alive. */
   self->active_call_window = call_window;
-  g_signal_connect (call_window, "destroy", G_CALLBACK (on_call_window_destroy), self);
+  g_signal_connect_object (call_window, "destroy", G_CALLBACK (on_call_window_destroy),
+                           self, 0);
 
   gtk_window_present (GTK_WINDOW (call_window));
 }
@@ -1497,6 +1519,7 @@ static gboolean
 attempt_autologin_idle (gpointer user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
+  self->autologin_retry_timer_id = 0;
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
 
   /* Check if startup is complete (managers are ready).
@@ -1507,8 +1530,9 @@ attempt_autologin_idle (gpointer user_data)
 
   if (!account_manager || !session_manager)
     {
-      /* Startup not complete yet, try again in 10ms */
-      g_timeout_add (10, attempt_autologin_idle, self);
+      /* Startup not complete yet, try again shortly. Track the id so dispose
+       * can cancel it — otherwise a late fire derefs a freed window. */
+      self->autologin_retry_timer_id = g_timeout_add (50, attempt_autologin_idle, self);
       return G_SOURCE_REMOVE;
     }
 
@@ -1744,6 +1768,11 @@ on_message_input_text_changed (GnalkMessageInput *input,
                                 GnalkWindow       *self)
 {
   (void) input;
+
+  /* No open room → nowhere to route typing state. */
+  if (!self->current_room)
+    return;
+
   gboolean has_text = text && *text;
 
   GnalkSignaling *signaling = self->active_session
@@ -2121,6 +2150,8 @@ gnalk_window_finalize (GObject *object)
       self->typing_send_timer_id = 0;
     }
 
+  g_clear_handle_id (&self->autologin_retry_timer_id, g_source_remove);
+
   g_clear_object (&self->room_controller);
   g_clear_object (&self->message_processor);
 
@@ -2141,6 +2172,8 @@ gnalk_window_finalize (GObject *object)
       g_source_remove (self->mark_read_timer_id);
       self->mark_read_timer_id = 0;
     }
+
+  g_clear_handle_id (&self->highlight_clear_timer_id, g_source_remove);
 
   /* Clean up read status tracking (removes weak refs and cancels timers) */
   gnalk_window_clear_read_status_tracking (self);
@@ -2405,10 +2438,6 @@ gnalk_window_init (GnalkWindow *self)
     { "search-messages", on_search_messages_action },
   };
 
-  static GActionEntry app_actions[] = {
-    { "about", on_about_action },
-  };
-
   gtk_widget_init_template (GTK_WIDGET (self));
 
   /* Capture sidebar header bar (anonymous in UI template, needed for guest reparenting) */
@@ -2433,7 +2462,19 @@ gnalk_window_init (GnalkWindow *self)
   GApplication *app = g_application_get_default ();
   gtk_application_set_accels_for_action (GTK_APPLICATION (app), "win.search-messages",
                                           (const char *[]) { "<Control>f", NULL });
-  g_action_map_add_action_entries (G_ACTION_MAP (app), app_actions, G_N_ELEMENTS (app_actions), self);
+  /* Register the app-level "about" action. It lives on the GApplication, which
+   * outlives windows, so capture the window through a GWeakRef (freed with the
+   * action's closure) to avoid a use-after-free after this window is gone. */
+  {
+    GSimpleAction *about_action = g_simple_action_new ("about", NULL);
+    GWeakRef *about_ref = g_new0 (GWeakRef, 1);
+    g_weak_ref_init (about_ref, self);
+    g_signal_connect_data (about_action, "activate",
+                           G_CALLBACK (on_about_action), about_ref,
+                           about_weak_ref_free, 0);
+    g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (about_action));
+    g_object_unref (about_action);
+  }
 
   /* Connect to network monitor for offline/online status */
   /* Use g_signal_connect_object for application-level objects that outlive the window */

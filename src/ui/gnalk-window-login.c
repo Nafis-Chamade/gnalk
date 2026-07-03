@@ -488,18 +488,31 @@ gnalk_window_show_login_view (GnalkWindow *self)
   GnalkApplication *app = GNALK_APPLICATION (gtk_window_get_application (GTK_WINDOW (self)));
 
 #ifdef HAVE_GOA
-  /* Initialize GOA client if not already done */
+  /* Initialize the module-static GOA client once; it persists across windows. */
   if (!g_goa_client)
-    {
-      g_goa_client = gnalk_goa_new ();
-      if (g_goa_client && gnalk_goa_is_available (g_goa_client))
-        {
-          g_signal_connect (g_goa_client, "accounts-changed",
-                            G_CALLBACK (on_goa_accounts_changed), self);
+    g_goa_client = gnalk_goa_new ();
 
-          /* Connect the GOA account selection signal */
+  if (g_goa_client && gnalk_goa_is_available (g_goa_client))
+    {
+      /* Connect GOA signals once per window. The "accounts-changed" signal
+       * lives on the module-static GOA client, which outlives any single
+       * window, so bind the handler to the window's lifetime with
+       * g_signal_connect_object — otherwise a re-created window (service mode)
+       * would leave the previous, freed window's handler attached (UAF).
+       * A per-window data flag ensures we reconnect for each new window
+       * without double-connecting if this runs more than once. */
+      if (!g_object_get_data (G_OBJECT (self), "goa-signals-connected"))
+        {
+          g_signal_connect_object (g_goa_client, "accounts-changed",
+                                   G_CALLBACK (on_goa_accounts_changed), self, 0);
+
+          /* Connect the GOA account selection signal (login_view is owned by
+           * the window, so this dies with the window too) */
           g_signal_connect (self->login_view, "goa-account-selected",
                             G_CALLBACK (on_login_view_goa_account_selected), self);
+
+          g_object_set_data (G_OBJECT (self), "goa-signals-connected",
+                             GINT_TO_POINTER (1));
         }
     }
 

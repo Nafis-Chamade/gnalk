@@ -1,6 +1,8 @@
 #include "gnalk-push-client.h"
 #include "gnalk-log.h"
 
+#include <gio/gio.h>
+
 typedef enum {
   PUSH_STATE_DISCONNECTED,
   PUSH_STATE_CONNECTING,
@@ -17,6 +19,7 @@ struct _GnalkPushClient
   SoupSession             *session;
   SoupWebsocketConnection *ws_connection;
   SoupMessage             *pending_ws_msg;  /* Keep message alive during async connect */
+  GCancellable            *connect_cancellable;  /* Cancels pending WebSocket connect on disconnect/finalize */
   char                    *websocket_url;
   char                    *user_id;
   char                    *password;
@@ -73,13 +76,16 @@ gnalk_push_client_new (void)
 }
 
 static void
-send_text_message (GnalkPushClient *self, const char *message)
+send_text_message (GnalkPushClient *self, const char *message, gboolean sensitive)
 {
   if (!self->ws_connection ||
       soup_websocket_connection_get_state (self->ws_connection) != SOUP_WEBSOCKET_STATE_OPEN)
     return;
 
-  gnalk_log_ws_send (self->user_id, message);
+  /* notify_push authenticates by sending the raw user id then the raw
+   * app-password as plain-text frames (no JSON envelope to redact) — never
+   * echo those credentials to the log. */
+  gnalk_log_ws_send (self->user_id, sensitive ? "[redacted credential]" : message);
   soup_websocket_connection_send_text (self->ws_connection, message);
 }
 
@@ -189,8 +195,18 @@ on_ws_connected (GObject      *source,
   GnalkPushClient *self = GNALK_PUSH_CLIENT (user_data);
   g_autoptr(GError) error = NULL;
 
-  self->ws_connection = soup_session_websocket_connect_finish (SOUP_SESSION (source),
-                                                                result, &error);
+  SoupWebsocketConnection *conn =
+    soup_session_websocket_connect_finish (SOUP_SESSION (source), result, &error);
+
+  /* If the connect was cancelled, the client is being disconnected/finalized;
+   * self may be mid-teardown, so drop the result and return without touching it. */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      g_clear_object (&conn);
+      return;
+    }
+
+  self->ws_connection = conn;
 
   /* Now safe to release the pending message - handshake is complete */
   g_clear_object (&self->pending_ws_msg);
@@ -214,11 +230,11 @@ on_ws_connected (GObject      *source,
   g_signal_connect (self->ws_connection, "error", G_CALLBACK (on_ws_error), self);
 
   /* Send user_id first */
-  send_text_message (self, self->user_id);
+  send_text_message (self, self->user_id, TRUE);
   self->state = PUSH_STATE_SENT_USER;
 
   /* Send password immediately after */
-  send_text_message (self, self->password);
+  send_text_message (self, self->password, TRUE);
   self->state = PUSH_STATE_SENT_PASSWORD;
 }
 
@@ -246,12 +262,17 @@ gnalk_push_client_do_connect (GnalkPushClient *self)
       return;
     }
 
+  /* Fresh cancellable for this connect attempt so disconnect/finalize can
+   * abort an in-flight handshake and avoid a use-after-free in the callback. */
+  g_clear_object (&self->connect_cancellable);
+  self->connect_cancellable = g_cancellable_new ();
+
   soup_session_websocket_connect_async (self->session,
                                          self->pending_ws_msg,
                                          NULL,  /* origin */
                                          NULL,  /* protocols */
                                          G_PRIORITY_DEFAULT,
-                                         NULL,  /* cancellable */
+                                         self->connect_cancellable,
                                          on_ws_connected,
                                          self);
   /* Don't unref msg here - keep it alive until on_ws_connected finishes */
@@ -302,8 +323,17 @@ gnalk_push_client_disconnect (GnalkPushClient *self)
       self->reconnect_timeout_id = 0;
     }
 
+  /* Cancel any pending async WebSocket connect so its callback won't touch us */
+  g_cancellable_cancel (self->connect_cancellable);
+  g_clear_object (&self->connect_cancellable);
+
   if (self->ws_connection)
     {
+      /* Disconnect the message/closed/error handlers BEFORE closing and clearing.
+       * We clear the connection synchronously here, so the "closed" handler must
+       * not fire against a half-torn-down client. */
+      g_signal_handlers_disconnect_by_data (self->ws_connection, self);
+
       soup_websocket_connection_close (self->ws_connection,
                                         SOUP_WEBSOCKET_CLOSE_NORMAL,
                                         "Client disconnecting");

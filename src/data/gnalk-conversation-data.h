@@ -90,7 +90,8 @@ const char *gnalk_conversation_data_get_last_message_actor_name (GnalkConversati
 const char *gnalk_conversation_data_get_last_message_type (GnalkConversationData *self);
 char *gnalk_conversation_data_get_last_message_params_json (GnalkConversationData *self);
 
-/* Session that owns this conversation (for multi-account support) */
+/* Session that owns this conversation (for multi-account support).
+ * get_session returns a strong reference (transfer full) or NULL — unref it. */
 GnalkSession *gnalk_conversation_data_get_session (GnalkConversationData *self);
 void           gnalk_conversation_data_set_session (GnalkConversationData *self,
                                                       GnalkSession          *session);

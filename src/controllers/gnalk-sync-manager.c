@@ -195,7 +195,7 @@ gnalk_sync_manager_queue_file (GnalkSyncManager *self,
 
 /* Data for pending message send callback */
 typedef struct {
-  GnalkSyncManager *manager;
+  GWeakRef          manager_ref;  /* Weak ref to owner (use-after-free safe) */
   char              *reference_id;
   char              *conversation_token;
 } PendingSendData;
@@ -203,6 +203,7 @@ typedef struct {
 static void
 pending_send_data_free (PendingSendData *data)
 {
+  g_weak_ref_clear (&data->manager_ref);
   g_free (data->reference_id);
   g_free (data->conversation_token);
   g_slice_free (PendingSendData, data);
@@ -217,7 +218,27 @@ on_pending_message_sent (GnalkHttpClient *client,
                           gpointer          user_data)
 {
   PendingSendData *data = user_data;
-  GnalkSyncManager *self = data->manager;
+  /* Owner may have been destroyed while the request was in flight. */
+  GnalkSyncManager *self = g_weak_ref_get (&data->manager_ref);
+
+  /* Cancelled (disconnect/account switch): keep the message queued without
+   * consuming a retry, and stop the flush — it restarts on reconnect. */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      pending_send_data_free (data);
+      if (self)
+        {
+          self->flush_in_progress = FALSE;
+          g_object_unref (self);  /* balance g_weak_ref_get */
+        }
+      return;
+    }
+
+  if (!self)
+    {
+      pending_send_data_free (data);
+      return;
+    }
 
   if (error)
     {
@@ -267,6 +288,7 @@ on_pending_message_sent (GnalkHttpClient *client,
 
   /* Continue flushing queue */
   flush_next_pending_message (self);
+  g_object_unref (self);  /* balance g_weak_ref_get */
 }
 
 static void
@@ -317,7 +339,7 @@ flush_next_pending_message (GnalkSyncManager *self)
 
   /* Prepare callback data */
   PendingSendData *data = g_slice_new0 (PendingSendData);
-  data->manager = self;
+  g_weak_ref_init (&data->manager_ref, self);
   data->reference_id = g_strdup (pm->reference_id);
   data->conversation_token = g_strdup (pm->conversation_token);
 

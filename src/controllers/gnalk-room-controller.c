@@ -207,12 +207,12 @@ join_room_via_session (GnalkRoomController   *self,
                          GnalkConversationData *conv_data,
                          const char            *token)
 {
-  GnalkSession *session = NULL;
-
-  if (conv_data)
-    session = gnalk_conversation_data_get_session (conv_data);
-  if (!session)
-    session = self->active_session;
+  /* get_session returns a strong ref (may be NULL if the session was freed);
+   * the active_session fallback is borrowed. Hold the owned one for the call. */
+  g_autoptr(GnalkSession) owned_session = conv_data
+    ? gnalk_conversation_data_get_session (conv_data)
+    : NULL;
+  GnalkSession *session = owned_session ? owned_session : self->active_session;
 
   if (session)
     {

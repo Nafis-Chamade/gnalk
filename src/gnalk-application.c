@@ -3,6 +3,7 @@
 #include "gnalk-config.h"
 #include "gnalk-account-manager.h"
 #include "gnalk-session-manager.h"
+#include "gnalk-session.h"
 #include "gnalk-push-client.h"
 #include "gnalk-notification-service.h"
 #include "gnalk-http-client.h"
@@ -149,18 +150,23 @@ on_mark_read_action (GSimpleAction *action G_GNUC_UNUSED,
   if (self->notification_service)
     gnalk_notification_service_withdraw (self->notification_service, room_token);
 
-  /* Mark conversation as read via HTTP API */
-  if (self->http_client && self->database && self->account_id > 0)
+  /* Mark conversation as read via the active session's HTTP client. The
+   * app-level http_client/account_id were never wired to credentials, so we
+   * use the session that owns the (authenticated) client instead. */
+  GnalkSession *session = self->session_manager
+                            ? gnalk_session_manager_get_active_session (self->session_manager)
+                            : NULL;
+  if (session && self->database)
     {
-      gint64 last_msg_id = gnalk_database_get_last_known_message_id (
-          self->database, self->account_id, room_token);
-      if (last_msg_id > 0)
+      GnalkHttpClient *http = gnalk_session_get_http_client (session);
+      gint64 account_id = gnalk_session_get_account_id (session);
+      if (http && account_id > 0)
         {
-          gnalk_http_client_mark_chat_read (self->http_client,
-                                              room_token,
-                                              last_msg_id,
-                                              on_mark_read_response,
-                                              NULL);
+          gint64 last_msg_id = gnalk_database_get_last_known_message_id (
+              self->database, account_id, room_token);
+          if (last_msg_id > 0)
+            gnalk_http_client_mark_chat_read (http, room_token, last_msg_id,
+                                              on_mark_read_response, NULL);
         }
     }
 }
@@ -196,13 +202,18 @@ on_reply_action (GSimpleAction *action G_GNUC_UNUSED,
       return;
     }
 
-  /* Send message via app-level HTTP client (no window needed) */
-  if (self->http_client && gnalk_http_client_is_ready (self->http_client))
+  /* Send the reply via the active session's (authenticated) HTTP client —
+   * the app-level http_client is never given credentials. */
+  GnalkSession *session = self->session_manager
+                            ? gnalk_session_manager_get_active_session (self->session_manager)
+                            : NULL;
+  GnalkHttpClient *http = session ? gnalk_session_get_http_client (session) : NULL;
+  if (http && gnalk_http_client_is_ready (http))
     {
       /* Generate a unique reference ID for tracking */
       g_autofree char *reference_id = g_uuid_string_random ();
 
-      gnalk_http_client_send_message (self->http_client,
+      gnalk_http_client_send_message (http,
                                        room_token,
                                        text,
                                        0,  /* no reply_to */
@@ -216,7 +227,7 @@ on_reply_action (GSimpleAction *action G_GNUC_UNUSED,
     }
   else
     {
-      g_warning ("Reply action: HTTP client not ready");
+      g_warning ("Reply action: no ready HTTP client for active session");
     }
 }
 
@@ -231,10 +242,17 @@ gnalk_application_ensure_window (GnalkApplication *self)
 {
   GtkWindow *window = NULL;
 
-  /* Get any existing window - get_active_window may return NULL if minimized */
-  GList *windows = gtk_application_get_windows (GTK_APPLICATION (self));
-  if (windows)
-    window = GTK_WINDOW (windows->data);
+  /* Find the main window specifically — the list may also contain call windows
+   * (also GtkWindows), and picking one of those would drop notification
+   * navigation and spawn no usable window. */
+  for (GList *l = gtk_application_get_windows (GTK_APPLICATION (self)); l; l = l->next)
+    {
+      if (GNALK_IS_WINDOW (l->data))
+        {
+          window = GTK_WINDOW (l->data);
+          break;
+        }
+    }
 
   if (window == NULL)
     window = g_object_new (GNALK_TYPE_WINDOW,

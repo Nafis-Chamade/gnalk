@@ -80,20 +80,26 @@ gnalk_date_separator_set_timestamp (GnalkDateSeparator *self,
 
   char buffer[64];
 
-  if (now_tm && tm_info->tm_year == now_tm->tm_year &&
-      tm_info->tm_yday == now_tm->tm_yday)
+  /* Compare by julian day so "Yesterday" is correct across year boundaries
+   * (tm_yday resets to 0 on Jan 1, which broke Dec 31 -> "Yesterday"). */
+  gint day_diff = G_MININT;
+  if (now_tm)
     {
-      g_strlcpy (buffer, "Today", sizeof (buffer));
+      GDate msg_date, now_date;
+      g_date_set_dmy (&msg_date, tm_info->tm_mday, tm_info->tm_mon + 1,
+                      tm_info->tm_year + 1900);
+      g_date_set_dmy (&now_date, now_tm->tm_mday, now_tm->tm_mon + 1,
+                      now_tm->tm_year + 1900);
+      if (g_date_valid (&msg_date) && g_date_valid (&now_date))
+        day_diff = (gint) g_date_get_julian (&now_date) - (gint) g_date_get_julian (&msg_date);
     }
-  else if (now_tm && tm_info->tm_year == now_tm->tm_year &&
-           tm_info->tm_yday == now_tm->tm_yday - 1)
-    {
-      g_strlcpy (buffer, "Yesterday", sizeof (buffer));
-    }
+
+  if (day_diff == 0)
+    g_strlcpy (buffer, "Today", sizeof (buffer));
+  else if (day_diff == 1)
+    g_strlcpy (buffer, "Yesterday", sizeof (buffer));
   else
-    {
-      strftime (buffer, sizeof (buffer), "%A, %B %d, %Y", tm_info);
-    }
+    strftime (buffer, sizeof (buffer), "%A, %B %d, %Y", tm_info);
 
   gtk_label_set_text (GTK_LABEL (self->label), buffer);
   gtk_widget_set_visible (GTK_WIDGET (self), TRUE);

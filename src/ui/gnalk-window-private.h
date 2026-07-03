@@ -204,6 +204,7 @@ struct _GnalkWindow
   char   *autologin_user;
   char   *autologin_password;
   gboolean autologin_pending;  /* Waiting to authenticate */
+  guint    autologin_retry_timer_id;  /* Retry poll while managers come up */
 
   /* Room switch debouncing + join state now in GnalkRoomController */
 

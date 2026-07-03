@@ -29,7 +29,7 @@ static guint signals[N_SIGNALS];
 
 /* Callback data structure */
 typedef struct {
-  GnalkConversationController *controller;
+  GWeakRef                     controller_ref;  /* Weak ref to owner (use-after-free safe) */
   char                        *room_token;
   gboolean                     favorite;  /* Used by set_favorite */
 } OperationCallbackData;
@@ -37,6 +37,7 @@ typedef struct {
 static void
 operation_callback_data_free (OperationCallbackData *data)
 {
+  g_weak_ref_clear (&data->controller_ref);
   g_free (data->room_token);
   g_slice_free (OperationCallbackData, data);
 }
@@ -157,8 +158,13 @@ on_create_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  GnalkConversationController *self = cb_data->controller;
+  /* Owner may have been destroyed while the request was in flight; g_autoptr
+   * balances g_weak_ref_get on every return path. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
   operation_callback_data_free (cb_data);
+
+  if (!self)
+    return;
 
   if (error)
     {
@@ -208,7 +214,7 @@ gnalk_conversation_controller_create (GnalkConversationController *self,
   g_return_if_fail (self->http_client != NULL);
 
   OperationCallbackData *cb_data = g_slice_new0 (OperationCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->room_token = NULL;
 
   gnalk_http_client_create_conversation (self->http_client,
@@ -233,9 +239,17 @@ on_leave_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  GnalkConversationController *self = cb_data->controller;
+  /* Owner may have been destroyed while the request was in flight; g_autoptr
+   * balances g_weak_ref_get on every return path. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
   char *room_token = g_strdup (cb_data->room_token);
   operation_callback_data_free (cb_data);
+
+  if (!self)
+    {
+      g_free (room_token);
+      return;
+    }
 
   if (error)
     {
@@ -264,7 +278,7 @@ gnalk_conversation_controller_leave (GnalkConversationController *self,
   g_return_if_fail (room_token != NULL);
 
   OperationCallbackData *cb_data = g_slice_new0 (OperationCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->room_token = g_strdup (room_token);
 
   gnalk_http_client_leave_conversation (self->http_client,
@@ -287,9 +301,17 @@ on_delete_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  GnalkConversationController *self = cb_data->controller;
+  /* Owner may have been destroyed while the request was in flight; g_autoptr
+   * balances g_weak_ref_get on every return path. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
   char *room_token = g_strdup (cb_data->room_token);
   operation_callback_data_free (cb_data);
+
+  if (!self)
+    {
+      g_free (room_token);
+      return;
+    }
 
   if (error)
     {
@@ -318,7 +340,7 @@ gnalk_conversation_controller_delete (GnalkConversationController *self,
   g_return_if_fail (room_token != NULL);
 
   OperationCallbackData *cb_data = g_slice_new0 (OperationCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->room_token = g_strdup (room_token);
 
   gnalk_http_client_delete_conversation (self->http_client,
@@ -341,10 +363,18 @@ on_favorite_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  GnalkConversationController *self = cb_data->controller;
+  /* Owner may have been destroyed while the request was in flight; g_autoptr
+   * balances g_weak_ref_get on every return path. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
   char *room_token = g_strdup (cb_data->room_token);
   gboolean favorite = cb_data->favorite;
   operation_callback_data_free (cb_data);
+
+  if (!self)
+    {
+      g_free (room_token);
+      return;
+    }
 
   if (error)
     {
@@ -372,7 +402,7 @@ gnalk_conversation_controller_set_favorite (GnalkConversationController *self,
   g_return_if_fail (room_token != NULL);
 
   OperationCallbackData *cb_data = g_slice_new0 (OperationCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->room_token = g_strdup (room_token);
   cb_data->favorite = favorite;
 
@@ -386,7 +416,7 @@ gnalk_conversation_controller_set_favorite (GnalkConversationController *self,
 /* ============ Search Contacts ============ */
 
 typedef struct {
-  GnalkConversationController  *controller;
+  GWeakRef                      controller_ref;  /* Weak ref to owner (use-after-free safe) */
   GnalkSearchContactsCallback   callback;
   gpointer                       user_data;
 } SearchContactsCallbackData;
@@ -399,9 +429,14 @@ on_search_contacts_response (GnalkHttpClient *client G_GNUC_UNUSED,
 {
   SearchContactsCallbackData *cb_data = user_data;
 
-  if (cb_data->callback)
-    cb_data->callback (cb_data->controller, response, error, cb_data->user_data);
+  /* Owner may have been destroyed while the request was in flight; only invoke
+   * the user callback while the controller is alive to avoid passing a
+   * dangling pointer. g_autoptr balances g_weak_ref_get. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
+  if (self && cb_data->callback)
+    cb_data->callback (self, response, error, cb_data->user_data);
 
+  g_weak_ref_clear (&cb_data->controller_ref);
   g_slice_free (SearchContactsCallbackData, cb_data);
 }
 
@@ -417,7 +452,7 @@ gnalk_conversation_controller_search_contacts (GnalkConversationController  *sel
   g_return_if_fail (search_term != NULL);
 
   SearchContactsCallbackData *cb_data = g_slice_new0 (SearchContactsCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->callback = callback;
   cb_data->user_data = user_data;
 
@@ -444,8 +479,13 @@ on_create_federated_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  GnalkConversationController *self = cb_data->controller;
+  /* Owner may have been destroyed while the request was in flight; g_autoptr
+   * balances g_weak_ref_get on every return path. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
   operation_callback_data_free (cb_data);
+
+  if (!self)
+    return;
 
   if (error)
     {
@@ -512,7 +552,7 @@ gnalk_conversation_controller_create_federated (GnalkConversationController *sel
     }
 
   OperationCallbackData *cb_data = g_slice_new0 (OperationCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->room_token = NULL;
 
   /* Use cloud_id as roomName so we can find the conversation later
@@ -529,13 +569,14 @@ gnalk_conversation_controller_create_federated (GnalkConversationController *sel
 /* ============ Federation Invitations ============ */
 
 typedef struct {
-  GnalkConversationController *controller;
+  GWeakRef                     controller_ref;  /* Weak ref to owner (use-after-free safe) */
   gint64                       invitation_id;
 } InvitationCallbackData;
 
 static void
 invitation_callback_data_free (InvitationCallbackData *data)
 {
+  g_weak_ref_clear (&data->controller_ref);
   g_slice_free (InvitationCallbackData, data);
 }
 
@@ -553,8 +594,13 @@ on_fetch_invitations_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  GnalkConversationController *self = cb_data->controller;
+  /* Owner may have been destroyed while the request was in flight; g_autoptr
+   * balances g_weak_ref_get on every return path. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
   invitation_callback_data_free (cb_data);
+
+  if (!self)
+    return;
 
   if (error)
     {
@@ -588,7 +634,7 @@ gnalk_conversation_controller_fetch_invitations (GnalkConversationController *se
   g_return_if_fail (self->http_client != NULL);
 
   InvitationCallbackData *cb_data = g_slice_new0 (InvitationCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->invitation_id = 0;
 
   gnalk_http_client_get_federation_invitations (self->http_client,
@@ -610,9 +656,14 @@ on_accept_invitation_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  GnalkConversationController *self = cb_data->controller;
+  /* Owner may have been destroyed while the request was in flight; g_autoptr
+   * balances g_weak_ref_get on every return path. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
   gint64 invitation_id = cb_data->invitation_id;
   invitation_callback_data_free (cb_data);
+
+  if (!self)
+    return;
 
   if (error)
     {
@@ -633,7 +684,7 @@ gnalk_conversation_controller_accept_invitation (GnalkConversationController *se
   g_return_if_fail (self->http_client != NULL);
 
   InvitationCallbackData *cb_data = g_slice_new0 (InvitationCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->invitation_id = invitation_id;
 
   gnalk_http_client_accept_federation_invitation (self->http_client,
@@ -656,9 +707,14 @@ on_decline_invitation_response (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
-  GnalkConversationController *self = cb_data->controller;
+  /* Owner may have been destroyed while the request was in flight; g_autoptr
+   * balances g_weak_ref_get on every return path. */
+  g_autoptr(GnalkConversationController) self = g_weak_ref_get (&cb_data->controller_ref);
   gint64 invitation_id = cb_data->invitation_id;
   invitation_callback_data_free (cb_data);
+
+  if (!self)
+    return;
 
   if (error)
     {
@@ -679,7 +735,7 @@ gnalk_conversation_controller_decline_invitation (GnalkConversationController *s
   g_return_if_fail (self->http_client != NULL);
 
   InvitationCallbackData *cb_data = g_slice_new0 (InvitationCallbackData);
-  cb_data->controller = self;
+  g_weak_ref_init (&cb_data->controller_ref, self);
   cb_data->invitation_id = invitation_id;
 
   gnalk_http_client_decline_federation_invitation (self->http_client,

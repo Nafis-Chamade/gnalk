@@ -255,8 +255,17 @@ gnalk_window_apply_highlight_timeout (gpointer user_data)
 {
   GnalkWindow *self = GNALK_WINDOW (user_data);
 
+  if (!self->current_room)
+    {
+      self->highlight_clear_timer_id = 0;
+      return G_SOURCE_REMOVE;
+    }
+
   if (self->current_room->highlight_message_id <= 0)
-    return G_SOURCE_REMOVE;
+    {
+      self->highlight_clear_timer_id = 0;
+      return G_SOURCE_REMOVE;
+    }
 
   /* Recursively search for the message row in the widget tree */
   iterate_children (GTK_WIDGET (gnalk_message_view_get_list_view (self->message_view)), self);
@@ -330,8 +339,11 @@ gnalk_window_on_quote_closed (GnalkConversationActions *actions,
   if (was_editing)
     gnalk_message_input_clear (self->message_input);
 
-  self->current_room->reply_to_message_id = 0;
-  self->current_room->edit_message_id = 0;
+  if (self->current_room)
+    {
+      self->current_room->reply_to_message_id = 0;
+      self->current_room->edit_message_id = 0;
+    }
   gnalk_conversation_actions_clear_quote (self->conversation_actions);
 }
 
@@ -355,6 +367,9 @@ gnalk_window_on_quote_requested (GnalkMessageRow *row,
 {
   (void) row;
   GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  if (!self->current_room)
+    return;
 
   self->current_room->reply_to_message_id = message_id;
 
@@ -427,6 +442,9 @@ gnalk_window_on_edit_requested (GnalkMessageRow *row,
 {
   (void) row;
   GnalkWindow *self = GNALK_WINDOW (user_data);
+
+  if (!self->current_room)
+    return;
 
   /* Set edit mode - clear any reply in progress */
   self->current_room->edit_message_id = message_id;

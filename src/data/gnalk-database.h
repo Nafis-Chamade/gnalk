@@ -19,6 +19,10 @@ GnalkDatabase *gnalk_database_new (void);
 gboolean gnalk_database_open (GnalkDatabase *self, GError **error);
 void gnalk_database_close (GnalkDatabase *self);
 
+/* Wrap a batch of save_* calls to commit as one atomic, single-fsync unit. */
+void gnalk_database_begin_transaction (GnalkDatabase *self);
+void gnalk_database_commit_transaction (GnalkDatabase *self);
+
 /* Account management - legacy (for backward compat during migration) */
 gint64 gnalk_database_get_or_create_account (GnalkDatabase *self,
                                                const char *server_url,
@@ -80,16 +84,6 @@ void gnalk_database_save_message (GnalkDatabase *self,
                                     gint64 account_id,
                                     const char *conversation_token,
                                     GnalkMessageData *message);
-void gnalk_database_update_message (GnalkDatabase *self,
-                                      gint64 message_id,
-                                      const char *message_text,
-                                      gint64 last_edit_timestamp);
-void gnalk_database_update_message_reactions (GnalkDatabase *self,
-                                                gint64 message_id,
-                                                const char *reactions_json);
-void gnalk_database_update_message_status (GnalkDatabase *self,
-                                             gint64 message_id,
-                                             GnalkMessageDataStatus status);
 GListStore *gnalk_database_load_messages (GnalkDatabase *self,
                                             gint64 account_id,
                                             const char *conversation_token,

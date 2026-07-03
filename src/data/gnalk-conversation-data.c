@@ -95,7 +95,7 @@ struct _GnalkConversationData
   gboolean    has_unread_threads;
 
   /* Session that owns this conversation (weak reference, not owned) */
-  GnalkSession *session;
+  GWeakRef session_ref;  /* Weak ref to owning session (may outlive it) */
 };
 
 enum {
@@ -127,6 +127,7 @@ gnalk_conversation_data_finalize (GObject *object)
   g_clear_pointer (&self->last_message_params, json_object_unref);
   g_free (self->cached_subtitle);
   g_clear_object (&self->threads_store);
+  g_weak_ref_clear (&self->session_ref);
 
   G_OBJECT_CLASS (gnalk_conversation_data_parent_class)->finalize (object);
 }
@@ -148,6 +149,7 @@ gnalk_conversation_data_class_init (GnalkConversationDataClass *klass)
 static void
 gnalk_conversation_data_init (GnalkConversationData *self)
 {
+  g_weak_ref_init (&self->session_ref, NULL);
 }
 
 
@@ -185,7 +187,6 @@ gnalk_conversation_data_new_from_json_with_user (JsonObject *room_data,
 
   GnalkConversationData *self = g_object_new (GNALK_TYPE_CONVERSATION_DATA, NULL);
 
-  self->session = NULL;  /* Will be set later if needed */
   self->token = g_strdup (json_object_get_string_member_with_default (room_data, "token", ""));
   self->title = g_strdup (json_object_get_string_member_with_default (room_data, "displayName", ""));
   self->name = g_strdup (json_object_get_string_member_with_default (room_data, "name", ""));
@@ -262,7 +263,7 @@ gnalk_conversation_data_new_from_json (JsonObject    *room_data,
 
   GnalkConversationData *self = gnalk_conversation_data_new_from_json_with_user (room_data, current_user_id);
   if (self)
-    self->session = session;  /* Set session reference */
+    g_weak_ref_set (&self->session_ref, session);  /* Set session reference */
 
   return self;
 }
@@ -272,7 +273,7 @@ gnalk_conversation_data_new_from_db (const GnalkConversationDataInit *init)
 {
   GnalkConversationData *self = g_object_new (GNALK_TYPE_CONVERSATION_DATA, NULL);
 
-  self->session = init->session;  /* Weak reference, not owned */
+  g_weak_ref_set (&self->session_ref, init->session);  /* Weak reference, not owned */
   self->token = g_strdup (init->token ? init->token : "");
   self->title = g_strdup (init->title ? init->title : "");
   self->name = g_strdup (init->name ? init->name : "");
@@ -472,11 +473,13 @@ gnalk_conversation_data_get_last_read_message (GnalkConversationData *self)
   return self->last_read_message;
 }
 
+/* Returns a strong reference (transfer full) or NULL if the session is gone —
+ * caller must g_object_unref() when done. */
 GnalkSession *
 gnalk_conversation_data_get_session (GnalkConversationData *self)
 {
   g_return_val_if_fail (GNALK_IS_CONVERSATION_DATA (self), NULL);
-  return self->session;
+  return g_weak_ref_get (&self->session_ref);
 }
 
 void
@@ -484,7 +487,7 @@ gnalk_conversation_data_set_session (GnalkConversationData *self,
                                        GnalkSession          *session)
 {
   g_return_if_fail (GNALK_IS_CONVERSATION_DATA (self));
-  self->session = session;  /* Weak reference, not owned */
+  g_weak_ref_set (&self->session_ref, session);  /* Weak reference, not owned */
 }
 
 void
@@ -865,7 +868,10 @@ gnalk_conversation_data_update_from_data (GnalkConversationData *self,
     }
 
   /* Update session reference (don't count as change for UI purposes) */
-  self->session = source->session;
+  {
+    g_autoptr(GnalkSession) src_session = g_weak_ref_get (&source->session_ref);
+    g_weak_ref_set (&self->session_ref, src_session);
+  }
 
   /* Only emit signal if something actually changed */
   if (changed)

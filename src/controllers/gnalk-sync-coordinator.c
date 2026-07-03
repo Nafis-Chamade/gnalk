@@ -55,7 +55,7 @@ static void on_threads_fetched       (GnalkHttpClient *client,
 
 /* Data for conversation fetching - captures account context at trigger time */
 typedef struct {
-  GnalkSyncCoordinator *coordinator;
+  GWeakRef              coordinator_ref;  /* Weak ref to owner (use-after-free safe) */
   GnalkHttpClient      *http_client;  /* Borrowed reference */
   gint64                account_id;
   char                 *user_id;
@@ -65,13 +65,14 @@ typedef struct {
 static void
 conversation_fetch_data_free (ConversationFetchData *data)
 {
+  g_weak_ref_clear (&data->coordinator_ref);
   g_free (data->user_id);
   g_slice_free (ConversationFetchData, data);
 }
 
 /* Data for message fetching */
 typedef struct {
-  GnalkSyncCoordinator *coordinator;
+  GWeakRef              coordinator_ref;  /* Weak ref to owner (use-after-free safe) */
   GnalkHttpClient      *http_client;  /* Borrowed reference */
   gint64                account_id;
   char                 *user_id;
@@ -85,10 +86,25 @@ typedef struct {
 static void
 room_sync_data_free (RoomSyncData *data)
 {
+  g_weak_ref_clear (&data->coordinator_ref);
   g_free (data->user_id);
   g_free (data->room_token);
   g_free (data->room_name);
   g_slice_free (RoomSyncData, data);
+}
+
+/* Data for subscribed-thread fetching. on_threads_fetched previously received
+ * the coordinator raw as user_data; it now carries a GWeakRef so a callback
+ * that fires after the coordinator is destroyed does not use-after-free. */
+typedef struct {
+  GWeakRef coordinator_ref;
+} ThreadFetchData;
+
+static void
+thread_fetch_data_free (ThreadFetchData *data)
+{
+  g_weak_ref_clear (&data->coordinator_ref);
+  g_slice_free (ThreadFetchData, data);
 }
 
 /* ============ Notification Logic ============ */
@@ -132,7 +148,6 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
                          gpointer         user_data)
 {
   RoomSyncData *data = user_data;
-  GnalkSyncCoordinator *self = data->coordinator;
 
   if (error)
     {
@@ -171,6 +186,15 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
       return;
     }
 
+  /* Owner may have been destroyed while this HTTP request was in flight;
+   * resolve the weak ref before any owner deref. */
+  GnalkSyncCoordinator *self = g_weak_ref_get (&data->coordinator_ref);
+  if (!self)
+    {
+      room_sync_data_free (data);
+      return;
+    }
+
   /* Track info for notification and conversation subtitle */
   gint64 newest_id = 0;
   gint64 newest_timestamp = 0;
@@ -180,7 +204,9 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
   GString *notification_body = g_string_new (NULL);
   guint notification_msg_count = 0;
 
-  /* Process messages */
+  /* Process messages — one transaction + one data-changed for the whole batch
+   * instead of one fsync and one Window reload per message. */
+  gnalk_data_repository_begin_message_batch (self->repository);
   for (guint i = 0; i < len; i++)
     {
       JsonObject *msg_obj = json_array_get_object_element (messages_array, i);
@@ -258,6 +284,8 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
 
       g_object_unref (msg_data);
     }
+  gnalk_data_repository_end_message_batch (self->repository, data->room_token,
+                                           saved_count > 0);
 
   if (saved_count > 0)
     {
@@ -349,6 +377,7 @@ on_room_messages_synced (GnalkHttpClient *client G_GNUC_UNUSED,
                                                            data->room_token, newest_id);
     }
 
+  g_object_unref (self);  /* balance g_weak_ref_get */
   room_sync_data_free (data);
 }
 
@@ -365,7 +394,7 @@ sync_room_messages (GnalkSyncCoordinator *self,
                     gint                  notification_level)
 {
   RoomSyncData *sync_data = g_slice_new0 (RoomSyncData);
-  sync_data->coordinator = self;
+  g_weak_ref_init (&sync_data->coordinator_ref, self);
   sync_data->http_client = http_client;
   sync_data->account_id = account_id;
   sync_data->user_id = g_strdup (user_id);
@@ -407,7 +436,22 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
                           gpointer         user_data)
 {
   ConversationFetchData *fetch_data = user_data;
-  GnalkSyncCoordinator *self = fetch_data->coordinator;
+
+  /* CANCELLED-first (disconnect/account switch): free data, no owner deref,
+   * no signals. */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      conversation_fetch_data_free (fetch_data);
+      return;
+    }
+
+  /* Owner may have been destroyed while the request was in flight. */
+  GnalkSyncCoordinator *self = g_weak_ref_get (&fetch_data->coordinator_ref);
+  if (!self)
+    {
+      conversation_fetch_data_free (fetch_data);
+      return;
+    }
 
   self->is_syncing = FALSE;
 
@@ -416,6 +460,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
       g_debug ("SyncCoordinator: failed to fetch conversations: %s", error->message);
       g_signal_emit (self, signals[SIGNAL_ERROR], 0, error->message);
       g_signal_emit (self, signals[SIGNAL_SYNC_FINISHED], 0, FALSE);
+      g_object_unref (self);
       conversation_fetch_data_free (fetch_data);
       return;
     }
@@ -423,6 +468,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
   if (!response || !JSON_NODE_HOLDS_OBJECT (response))
     {
       g_signal_emit (self, signals[SIGNAL_SYNC_FINISHED], 0, FALSE);
+      g_object_unref (self);
       conversation_fetch_data_free (fetch_data);
       return;
     }
@@ -432,6 +478,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
   if (!ocs)
     {
       g_signal_emit (self, signals[SIGNAL_SYNC_FINISHED], 0, FALSE);
+      g_object_unref (self);
       conversation_fetch_data_free (fetch_data);
       return;
     }
@@ -440,6 +487,7 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
   if (!data)
     {
       g_signal_emit (self, signals[SIGNAL_SYNC_FINISHED], 0, FALSE);
+      g_object_unref (self);
       conversation_fetch_data_free (fetch_data);
       return;
     }
@@ -577,10 +625,15 @@ on_conversations_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
 
   /* Fetch subscribed threads if server supports them */
   if (self->has_threads && http_client)
-    gnalk_http_client_get_subscribed_threads (http_client, 100, 0,
-                                              on_threads_fetched, self);
+    {
+      ThreadFetchData *thread_data = g_slice_new0 (ThreadFetchData);
+      g_weak_ref_init (&thread_data->coordinator_ref, self);
+      gnalk_http_client_get_subscribed_threads (http_client, 100, 0,
+                                                on_threads_fetched, thread_data);
+    }
 
   g_signal_emit (self, signals[SIGNAL_SYNC_FINISHED], 0, TRUE);
+  g_object_unref (self);
   conversation_fetch_data_free (fetch_data);
 }
 
@@ -592,28 +645,55 @@ on_threads_fetched (GnalkHttpClient *client G_GNUC_UNUSED,
                     GError          *error,
                     gpointer         user_data)
 {
-  GnalkSyncCoordinator *self = GNALK_SYNC_COORDINATOR (user_data);
+  ThreadFetchData *data = user_data;
+
+  /* CANCELLED-first: free data, no owner deref, no signals */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      thread_fetch_data_free (data);
+      return;
+    }
 
   if (error)
     {
       g_debug ("SyncCoordinator: thread fetch failed: %s", error->message);
+      thread_fetch_data_free (data);
       return;
     }
 
   if (!response || !JSON_NODE_HOLDS_OBJECT (response))
-    return;
+    {
+      thread_fetch_data_free (data);
+      return;
+    }
 
   JsonObject *root = json_node_get_object (response);
   JsonObject *ocs = json_object_get_object_member (root, "ocs");
   if (!ocs)
-    return;
+    {
+      thread_fetch_data_free (data);
+      return;
+    }
 
-  JsonArray *data = json_object_get_array_member (ocs, "data");
-  if (!data)
-    return;
+  JsonArray *thread_infos = json_object_get_array_member (ocs, "data");
+  if (!thread_infos)
+    {
+      thread_fetch_data_free (data);
+      return;
+    }
 
-  g_message ("SyncCoordinator: fetched %u subscribed threads", json_array_get_length (data));
-  g_signal_emit (self, signals[SIGNAL_THREADS_SYNCED], 0, data);
+  /* Owner may have been destroyed while the request was in flight. */
+  GnalkSyncCoordinator *self = g_weak_ref_get (&data->coordinator_ref);
+  if (!self)
+    {
+      thread_fetch_data_free (data);
+      return;
+    }
+
+  g_message ("SyncCoordinator: fetched %u subscribed threads", json_array_get_length (thread_infos));
+  g_signal_emit (self, signals[SIGNAL_THREADS_SYNCED], 0, thread_infos);
+  g_object_unref (self);  /* balance g_weak_ref_get */
+  thread_fetch_data_free (data);
 }
 
 /* ============ Periodic Timer ============ */
@@ -830,7 +910,7 @@ gnalk_sync_coordinator_trigger (GnalkSyncCoordinator *self,
 
   /* Capture account context at trigger time */
   ConversationFetchData *fetch_data = g_slice_new0 (ConversationFetchData);
-  fetch_data->coordinator = self;
+  g_weak_ref_init (&fetch_data->coordinator_ref, self);
   fetch_data->http_client = self->http_client;
   fetch_data->account_id = self->account_id;
   fetch_data->user_id = g_strdup (self->user_id);

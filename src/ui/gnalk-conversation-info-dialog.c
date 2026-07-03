@@ -160,7 +160,8 @@ on_name_saved (GnalkHttpClient *client G_GNUC_UNUSED,
                GError           *error,
                gpointer          user_data)
 {
-  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+  GnalkConversationInfoDialog *self = user_data;  /* owns a ref */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) { g_object_unref (self); return; }
 
   if (error)
     g_warning ("Failed to save name: %s", error->message);
@@ -171,6 +172,7 @@ on_name_saved (GnalkHttpClient *client G_GNUC_UNUSED,
     }
 
   on_save_complete (self);
+  g_object_unref (self);
 }
 
 static void
@@ -179,7 +181,8 @@ on_description_saved (GnalkHttpClient *client G_GNUC_UNUSED,
                       GError           *error,
                       gpointer          user_data)
 {
-  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+  GnalkConversationInfoDialog *self = user_data;  /* owns a ref */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) { g_object_unref (self); return; }
 
   if (error)
     g_warning ("Failed to save description: %s", error->message);
@@ -190,6 +193,7 @@ on_description_saved (GnalkHttpClient *client G_GNUC_UNUSED,
     }
 
   on_save_complete (self);
+  g_object_unref (self);
 }
 
 static void
@@ -198,7 +202,8 @@ on_avatar_saved (GnalkHttpClient *client G_GNUC_UNUSED,
                  GError           *error,
                  gpointer          user_data)
 {
-  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+  GnalkConversationInfoDialog *self = user_data;  /* owns a ref */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) { g_object_unref (self); return; }
 
   if (error)
     {
@@ -220,6 +225,7 @@ on_avatar_saved (GnalkHttpClient *client G_GNUC_UNUSED,
     }
 
   on_save_complete (self);
+  g_object_unref (self);
 }
 
 static void
@@ -228,12 +234,14 @@ on_notification_level_saved (GnalkHttpClient *client G_GNUC_UNUSED,
                              GError           *error,
                              gpointer          user_data)
 {
-  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+  GnalkConversationInfoDialog *self = user_data;  /* owns a ref */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) { g_object_unref (self); return; }
 
   if (error)
     g_warning ("Failed to save notification level: %s", error->message);
 
   on_save_complete (self);
+  g_object_unref (self);
 }
 
 static void
@@ -242,12 +250,14 @@ on_call_notifications_saved (GnalkHttpClient *client G_GNUC_UNUSED,
                              GError           *error,
                              gpointer          user_data)
 {
-  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+  GnalkConversationInfoDialog *self = user_data;  /* owns a ref */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) { g_object_unref (self); return; }
 
   if (error)
     g_warning ("Failed to save call notifications: %s", error->message);
 
   on_save_complete (self);
+  g_object_unref (self);
 }
 
 static void
@@ -282,7 +292,7 @@ on_save_button_clicked (GtkButton                    *button G_GNUC_UNUSED,
         {
           self->pending_saves++;
           gnalk_http_client_set_room_name (self->http_client, token, new_name,
-                                             on_name_saved, self);
+                                             on_name_saved, g_object_ref (self));
         }
 
       /* Save description if changed */
@@ -293,7 +303,7 @@ on_save_button_clicked (GtkButton                    *button G_GNUC_UNUSED,
         {
           self->pending_saves++;
           gnalk_http_client_set_room_description (self->http_client, token, new_desc,
-                                                    on_description_saved, self);
+                                                    on_description_saved, g_object_ref (self));
         }
 
       /* Save avatar if changed */
@@ -303,7 +313,7 @@ on_save_button_clicked (GtkButton                    *button G_GNUC_UNUSED,
           gnalk_http_client_upload_room_avatar (self->http_client, token,
                                                   self->new_avatar_bytes,
                                                   self->new_avatar_content_type,
-                                                  on_avatar_saved, self);
+                                                  on_avatar_saved, g_object_ref (self));
         }
     }
 
@@ -323,7 +333,7 @@ on_save_button_clicked (GtkButton                    *button G_GNUC_UNUSED,
     {
       self->pending_saves++;
       gnalk_http_client_set_notification_level (self->http_client, token, new_level,
-                                                  on_notification_level_saved, self);
+                                                  on_notification_level_saved, g_object_ref (self));
     }
 
   /* Save call notifications */
@@ -335,7 +345,7 @@ on_save_button_clicked (GtkButton                    *button G_GNUC_UNUSED,
     {
       self->pending_saves++;
       gnalk_http_client_set_call_notifications (self->http_client, token, new_calls,
-                                                  on_call_notifications_saved, self);
+                                                  on_call_notifications_saved, g_object_ref (self));
     }
 
   /* If nothing to save, just go back */
@@ -634,8 +644,8 @@ update_settings_page (GnalkConversationInfoDialog *self)
 }
 
 typedef struct {
-  GnalkConversationInfoDialog *dialog;
-  GtkWidget *image;
+  GnalkConversationInfoDialog *dialog;  /* owns a ref */
+  GtkWidget *image;                     /* guarded by weak pointer */
 } MediaPreviewData;
 
 /* Data for media item click handling */
@@ -683,6 +693,9 @@ on_media_preview_loaded (GnalkHttpClient *client G_GNUC_UNUSED,
 
   if (error || !bytes)
     {
+      if (data->image)
+        g_object_remove_weak_pointer (G_OBJECT (data->image), (gpointer *)&data->image);
+      g_object_unref (data->dialog);
       g_free (data);
       return;
     }
@@ -691,6 +704,9 @@ on_media_preview_loaded (GnalkHttpClient *client G_GNUC_UNUSED,
   if (texture && data->image)
     gtk_image_set_from_paintable (GTK_IMAGE (data->image), GDK_PAINTABLE (texture));
 
+  if (data->image)
+    g_object_remove_weak_pointer (G_OBJECT (data->image), (gpointer *)&data->image);
+  g_object_unref (data->dialog);
   g_free (data);
 }
 
@@ -700,7 +716,15 @@ on_shared_media_response (GnalkHttpClient *client,
                           GError           *error,
                           gpointer          user_data)
 {
-  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+  GnalkConversationInfoDialog *self = user_data;  /* owns a ref */
+
+  /* Cancelled (room/account switch): the dialog may be mid-teardown,
+   * don't touch widgets */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      g_object_unref (self);
+      return;
+    }
 
   /* Clear existing items */
   GtkWidget *child;
@@ -711,12 +735,14 @@ on_shared_media_response (GnalkHttpClient *client,
     {
       g_debug ("Failed to load shared media: %s", error->message);
       gtk_widget_set_visible (self->media_empty_label, TRUE);
+      g_object_unref (self);
       return;
     }
 
   if (!response || !JSON_NODE_HOLDS_OBJECT (response))
     {
       gtk_widget_set_visible (self->media_empty_label, TRUE);
+      g_object_unref (self);
       return;
     }
 
@@ -725,6 +751,7 @@ on_shared_media_response (GnalkHttpClient *client,
   if (!ocs)
     {
       gtk_widget_set_visible (self->media_empty_label, TRUE);
+      g_object_unref (self);
       return;
     }
 
@@ -732,6 +759,7 @@ on_shared_media_response (GnalkHttpClient *client,
   if (!data)
     {
       gtk_widget_set_visible (self->media_empty_label, TRUE);
+      g_object_unref (self);
       return;
     }
 
@@ -743,6 +771,7 @@ on_shared_media_response (GnalkHttpClient *client,
   if (!media_array || json_array_get_length (media_array) == 0)
     {
       gtk_widget_set_visible (self->media_empty_label, TRUE);
+      g_object_unref (self);
       return;
     }
 
@@ -850,13 +879,16 @@ on_shared_media_response (GnalkHttpClient *client,
       if (self->http_client)
         {
           MediaPreviewData *preview_data = g_new0 (MediaPreviewData, 1);
-          preview_data->dialog = self;
+          preview_data->dialog = g_object_ref (self);
           preview_data->image = image;
+          g_object_add_weak_pointer (G_OBJECT (image), (gpointer *)&preview_data->image);
 
           gnalk_http_client_get_file_preview (client, file_id, 128, 128,
                                                 on_media_preview_loaded, preview_data);
         }
     }
+
+  g_object_unref (self);
 }
 
 static void
@@ -876,7 +908,7 @@ load_shared_media (GnalkConversationInfoDialog *self)
     }
 
   gnalk_http_client_get_shared_items (self->http_client, token, "media", 12,
-                                        on_shared_media_response, self);
+                                        on_shared_media_response, g_object_ref (self));
 }
 
 static const char *
@@ -1065,7 +1097,15 @@ on_participants_response (GnalkHttpClient *client G_GNUC_UNUSED,
                           GError           *error,
                           gpointer          user_data)
 {
-  GnalkConversationInfoDialog *self = GNALK_CONVERSATION_INFO_DIALOG (user_data);
+  GnalkConversationInfoDialog *self = user_data;  /* owns a ref */
+
+  /* Cancelled (room/account switch): the dialog may be mid-teardown,
+   * don't touch widgets */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      g_object_unref (self);
+      return;
+    }
 
   /* Stop spinner */
   gtk_spinner_stop (GTK_SPINNER (self->participants_spinner));
@@ -1079,20 +1119,30 @@ on_participants_response (GnalkHttpClient *client G_GNUC_UNUSED,
   if (error)
     {
       g_debug ("Failed to load participants: %s", error->message);
+      g_object_unref (self);
       return;
     }
 
   if (!response || !JSON_NODE_HOLDS_OBJECT (response))
-    return;
+    {
+      g_object_unref (self);
+      return;
+    }
 
   JsonObject *root = json_node_get_object (response);
   JsonObject *ocs = json_object_get_object_member (root, "ocs");
   if (!ocs)
-    return;
+    {
+      g_object_unref (self);
+      return;
+    }
 
   JsonArray *data = json_object_get_array_member (ocs, "data");
   if (!data)
-    return;
+    {
+      g_object_unref (self);
+      return;
+    }
 
   guint n_participants = json_array_get_length (data);
   for (guint i = 0; i < n_participants; i++)
@@ -1255,6 +1305,8 @@ on_participants_response (GnalkHttpClient *client G_GNUC_UNUSED,
                                                   on_participant_avatar_loaded, avatar_image);
         }
     }
+
+  g_object_unref (self);
 }
 
 static void
@@ -1272,7 +1324,7 @@ load_participants (GnalkConversationInfoDialog *self)
   gtk_spinner_start (GTK_SPINNER (self->participants_spinner));
 
   gnalk_http_client_get_participants (self->http_client, token,
-                                        on_participants_response, self);
+                                        on_participants_response, g_object_ref (self));
 }
 
 static void

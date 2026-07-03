@@ -2,6 +2,8 @@
 #include "gnalk-account.h"
 #include <sqlite3.h>
 #include <json-glib/json-glib.h>
+#include <glib/gstdio.h>
+#include <time.h>
 
 struct _GnalkDatabase
 {
@@ -180,7 +182,15 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
       return FALSE;
     }
 
-  /* Enable foreign keys */
+  /* Concurrency + durability pragmas:
+   *  - WAL lets readers proceed while a writer is active (needed now that the
+   *    20 s sync tick batches writes);
+   *  - synchronous=NORMAL is the safe pairing with WAL (durable across app
+   *    crashes, only a power loss can lose the last commit);
+   *  - busy_timeout avoids SQLITE_BUSY errors under contention. */
+  sqlite3_exec (self->db, "PRAGMA journal_mode = WAL;", NULL, NULL, NULL);
+  sqlite3_exec (self->db, "PRAGMA synchronous = NORMAL;", NULL, NULL, NULL);
+  sqlite3_busy_timeout (self->db, 5000);
   sqlite3_exec (self->db, "PRAGMA foreign_keys = ON;", NULL, NULL, NULL);
 
   /* Create schema */
@@ -188,12 +198,46 @@ gnalk_database_open (GnalkDatabase *self, GError **error)
   rc = sqlite3_exec (self->db, SCHEMA_SQL, NULL, NULL, &err_msg);
   if (rc != SQLITE_OK)
     {
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "Failed to create schema: %s", err_msg);
-      sqlite3_free (err_msg);
-      sqlite3_close (self->db);
-      self->db = NULL;
-      return FALSE;
+      /* A corrupt / non-database file cannot be repaired here — quarantine it
+       * and start fresh so the app remains usable (data was only a cache). */
+      if (rc == SQLITE_CORRUPT || rc == SQLITE_NOTADB)
+        {
+          g_critical ("Database file corrupt (%s) — quarantining and recreating",
+                      err_msg ? err_msg : sqlite3_errstr (rc));
+          sqlite3_free (err_msg);
+          sqlite3_close (self->db);
+          self->db = NULL;
+
+          g_autofree char *quarantine = g_strdup_printf ("%s.corrupt-%ld",
+                                                         self->db_path, (long) time (NULL));
+          g_rename (self->db_path, quarantine);
+
+          if (sqlite3_open (self->db_path, &self->db) != SQLITE_OK)
+            {
+              g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                           "Failed to recreate database: %s", sqlite3_errmsg (self->db));
+              sqlite3_close (self->db);
+              self->db = NULL;
+              return FALSE;
+            }
+          sqlite3_exec (self->db, "PRAGMA journal_mode = WAL;", NULL, NULL, NULL);
+          sqlite3_exec (self->db, "PRAGMA synchronous = NORMAL;", NULL, NULL, NULL);
+          sqlite3_busy_timeout (self->db, 5000);
+          sqlite3_exec (self->db, "PRAGMA foreign_keys = ON;", NULL, NULL, NULL);
+
+          err_msg = NULL;
+          rc = sqlite3_exec (self->db, SCHEMA_SQL, NULL, NULL, &err_msg);
+        }
+
+      if (rc != SQLITE_OK)
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                       "Failed to create schema: %s", err_msg);
+          sqlite3_free (err_msg);
+          sqlite3_close (self->db);
+          self->db = NULL;
+          return FALSE;
+        }
     }
 
   /* Migration: Add new account columns if they don't exist */
@@ -455,6 +499,39 @@ gnalk_database_close (GnalkDatabase *self)
     }
 }
 
+/* Transaction helpers. BEGIN IMMEDIATE takes the write lock up front so a bulk
+ * write does one fsync at COMMIT instead of one per row, and cannot fail
+ * halfway to SQLITE_BUSY after partially writing. Safe to nest-guard: callers
+ * wrap a loop of existing save_* calls. */
+void
+gnalk_database_begin_transaction (GnalkDatabase *self)
+{
+  g_return_if_fail (GNALK_IS_DATABASE (self));
+  if (!self->db)
+    return;
+  char *err = NULL;
+  if (sqlite3_exec (self->db, "BEGIN IMMEDIATE;", NULL, NULL, &err) != SQLITE_OK)
+    {
+      g_warning ("db: BEGIN failed: %s", err ? err : "?");
+      sqlite3_free (err);
+    }
+}
+
+void
+gnalk_database_commit_transaction (GnalkDatabase *self)
+{
+  g_return_if_fail (GNALK_IS_DATABASE (self));
+  if (!self->db)
+    return;
+  char *err = NULL;
+  if (sqlite3_exec (self->db, "COMMIT;", NULL, NULL, &err) != SQLITE_OK)
+    {
+      g_warning ("db: COMMIT failed: %s", err ? err : "?");
+      sqlite3_free (err);
+      sqlite3_exec (self->db, "ROLLBACK;", NULL, NULL, NULL);
+    }
+}
+
 gint64
 gnalk_database_get_or_create_account (GnalkDatabase *self,
                                         const char     *server_url,
@@ -676,9 +753,9 @@ gnalk_database_update_conversation_last_message (GnalkDatabase *self,
   g_return_if_fail (self->db != NULL);
   g_return_if_fail (token != NULL);
 
-  g_message ("DB: update_conversation_last_message account=%ld token=%s msg_id=%ld text='%.30s'",
-             (long)account_id, token, (long)last_message_id,
-             last_message_text ? last_message_text : "(null)");
+  /* Debug only: last_message_text is private conversation content. */
+  g_debug ("DB: update_conversation_last_message account=%ld token=%s msg_id=%ld",
+           (long)account_id, token, (long)last_message_id);
 
   sqlite3_stmt *stmt;
   const char *sql = "UPDATE conversations SET last_activity = ?, "
@@ -1012,67 +1089,10 @@ gnalk_database_save_message (GnalkDatabase    *self,
     }
 }
 
-void
-gnalk_database_update_message (GnalkDatabase *self,
-                                 gint64          message_id,
-                                 const char     *message_text,
-                                 gint64          last_edit_timestamp)
-{
-  g_return_if_fail (GNALK_IS_DATABASE (self));
-  g_return_if_fail (self->db != NULL);
-
-  sqlite3_stmt *stmt;
-  const char *sql = "UPDATE messages SET message = ?, last_edit_timestamp = ? WHERE id = ?";
-
-  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
-    {
-      sqlite3_bind_text (stmt, 1, message_text, -1, SQLITE_STATIC);
-      sqlite3_bind_int64 (stmt, 2, last_edit_timestamp);
-      sqlite3_bind_int64 (stmt, 3, message_id);
-      sqlite3_step (stmt);
-      sqlite3_finalize (stmt);
-    }
-}
-
-void
-gnalk_database_update_message_reactions (GnalkDatabase *self,
-                                           gint64          message_id,
-                                           const char     *reactions_json)
-{
-  g_return_if_fail (GNALK_IS_DATABASE (self));
-  g_return_if_fail (self->db != NULL);
-
-  sqlite3_stmt *stmt;
-  const char *sql = "UPDATE messages SET reactions_json = ? WHERE id = ?";
-
-  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
-    {
-      sqlite3_bind_text (stmt, 1, reactions_json, -1, SQLITE_STATIC);
-      sqlite3_bind_int64 (stmt, 2, message_id);
-      sqlite3_step (stmt);
-      sqlite3_finalize (stmt);
-    }
-}
-
-void
-gnalk_database_update_message_status (GnalkDatabase        *self,
-                                        gint64                 message_id,
-                                        GnalkMessageDataStatus status)
-{
-  g_return_if_fail (GNALK_IS_DATABASE (self));
-  g_return_if_fail (self->db != NULL);
-
-  sqlite3_stmt *stmt;
-  const char *sql = "UPDATE messages SET status = ? WHERE id = ?";
-
-  if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
-    {
-      sqlite3_bind_int (stmt, 1, (int) status);
-      sqlite3_bind_int64 (stmt, 2, message_id);
-      sqlite3_step (stmt);
-      sqlite3_finalize (stmt);
-    }
-}
+/* gnalk_database_update_message{,_reactions,_status} were removed: they were
+ * dead code whose "WHERE id = ?" predicate omitted the account_id half of the
+ * composite primary key, so any future use would have corrupted rows across
+ * accounts. Re-add with an account_id parameter + predicate if needed. */
 
 GListStore *
 gnalk_database_load_messages (GnalkDatabase *self,
@@ -1396,11 +1416,17 @@ gnalk_database_queue_pending_message (GnalkDatabase *self,
   g_return_if_fail (conversation_token != NULL);
   g_return_if_fail (reference_id != NULL);
 
+  /* UPSERT rather than INSERT OR REPLACE: re-queuing an existing reference_id
+   * (e.g. a retry) must keep the original created_at and retry_count, which a
+   * REPLACE (delete + insert) would reset to their defaults. */
   sqlite3_stmt *stmt;
   const char *sql =
-    "INSERT OR REPLACE INTO pending_messages "
+    "INSERT INTO pending_messages "
     "(account_id, conversation_token, message, reply_to, reference_id, thread_id) "
-    "VALUES (?, ?, ?, ?, ?, ?)";
+    "VALUES (?, ?, ?, ?, ?, ?) "
+    "ON CONFLICT(reference_id) DO UPDATE SET "
+    "account_id=excluded.account_id, conversation_token=excluded.conversation_token, "
+    "message=excluded.message, reply_to=excluded.reply_to, thread_id=excluded.thread_id";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -1410,7 +1436,8 @@ gnalk_database_queue_pending_message (GnalkDatabase *self,
       sqlite3_bind_int64 (stmt, 4, reply_to);
       sqlite3_bind_text (stmt, 5, reference_id, -1, SQLITE_STATIC);
       sqlite3_bind_int64 (stmt, 6, thread_id);
-      sqlite3_step (stmt);
+      if (sqlite3_step (stmt) != SQLITE_DONE)
+        g_warning ("db: queue_pending_message failed: %s", sqlite3_errmsg (self->db));
       sqlite3_finalize (stmt);
     }
 }
@@ -1433,10 +1460,15 @@ gnalk_database_queue_pending_file (GnalkDatabase *self,
 
   sqlite3_stmt *stmt;
   const char *sql =
-    "INSERT OR REPLACE INTO pending_messages "
+    "INSERT INTO pending_messages "
     "(account_id, conversation_token, message, reply_to, reference_id, "
     "file_path, file_name, content_type) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+    "ON CONFLICT(reference_id) DO UPDATE SET "
+    "account_id=excluded.account_id, conversation_token=excluded.conversation_token, "
+    "message=excluded.message, reply_to=excluded.reply_to, "
+    "file_path=excluded.file_path, file_name=excluded.file_name, "
+    "content_type=excluded.content_type";
 
   if (sqlite3_prepare_v2 (self->db, sql, -1, &stmt, NULL) == SQLITE_OK)
     {
@@ -1448,7 +1480,8 @@ gnalk_database_queue_pending_file (GnalkDatabase *self,
       sqlite3_bind_text (stmt, 6, file_path, -1, SQLITE_STATIC);
       sqlite3_bind_text (stmt, 7, file_name, -1, SQLITE_STATIC);
       sqlite3_bind_text (stmt, 8, content_type, -1, SQLITE_STATIC);
-      sqlite3_step (stmt);
+      if (sqlite3_step (stmt) != SQLITE_DONE)
+        g_warning ("db: queue_pending_file failed: %s", sqlite3_errmsg (self->db));
       sqlite3_finalize (stmt);
     }
 }
@@ -1746,6 +1779,10 @@ gnalk_database_save_participants (GnalkDatabase *self,
 
   sqlite3_stmt *stmt;
 
+  /* Delete + re-insert as one transaction so a concurrent reader never sees an
+   * empty participant list mid-refresh, and we fsync once. */
+  gnalk_database_begin_transaction (self);
+
   /* Delete existing participants for this conversation */
   const char *delete_sql = "DELETE FROM participants WHERE account_id = ? AND conversation_token = ?";
   if (sqlite3_prepare_v2 (self->db, delete_sql, -1, &stmt, NULL) == SQLITE_OK)
@@ -1756,28 +1793,28 @@ gnalk_database_save_participants (GnalkDatabase *self,
       sqlite3_finalize (stmt);
     }
 
-  /* Insert new participants */
+  /* Insert new participants — prepare the statement once, reset per row. */
   const char *insert_sql =
     "INSERT INTO participants (account_id, conversation_token, actor_id, display_name, status, in_call, actor_type) "
     "VALUES (?, ?, ?, ?, ?, ?, ?)";
 
-  guint n_participants = json_array_get_length (participants);
-  for (guint i = 0; i < n_participants; i++)
+  if (sqlite3_prepare_v2 (self->db, insert_sql, -1, &stmt, NULL) == SQLITE_OK)
     {
-      JsonObject *participant = json_array_get_object_element (participants, i);
-      const char *actor_id = json_object_get_string_member_with_default (participant, "actorId", "");
-
-      /* Skip guests (empty actorId) */
-      if (!actor_id || !*actor_id)
-        continue;
-
-      const char *display_name = json_object_get_string_member_with_default (participant, "displayName", "");
-      const char *status = json_object_get_string_member_with_default (participant, "status", "");
-      gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
-      const char *actor_type = json_object_get_string_member_with_default (participant, "actorType", "users");
-
-      if (sqlite3_prepare_v2 (self->db, insert_sql, -1, &stmt, NULL) == SQLITE_OK)
+      guint n_participants = json_array_get_length (participants);
+      for (guint i = 0; i < n_participants; i++)
         {
+          JsonObject *participant = json_array_get_object_element (participants, i);
+          const char *actor_id = json_object_get_string_member_with_default (participant, "actorId", "");
+
+          /* Skip guests (empty actorId) */
+          if (!actor_id || !*actor_id)
+            continue;
+
+          const char *display_name = json_object_get_string_member_with_default (participant, "displayName", "");
+          const char *status = json_object_get_string_member_with_default (participant, "status", "");
+          gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
+          const char *actor_type = json_object_get_string_member_with_default (participant, "actorType", "users");
+
           sqlite3_bind_int64 (stmt, 1, account_id);
           sqlite3_bind_text (stmt, 2, conversation_token, -1, SQLITE_STATIC);
           sqlite3_bind_text (stmt, 3, actor_id, -1, SQLITE_STATIC);
@@ -1785,10 +1822,14 @@ gnalk_database_save_participants (GnalkDatabase *self,
           sqlite3_bind_text (stmt, 5, status, -1, SQLITE_STATIC);
           sqlite3_bind_int64 (stmt, 6, in_call);
           sqlite3_bind_text (stmt, 7, actor_type, -1, SQLITE_STATIC);
-          sqlite3_step (stmt);
-          sqlite3_finalize (stmt);
+          if (sqlite3_step (stmt) != SQLITE_DONE)
+            g_warning ("db: save_participant failed: %s", sqlite3_errmsg (self->db));
+          sqlite3_reset (stmt);
         }
+      sqlite3_finalize (stmt);
     }
+
+  gnalk_database_commit_transaction (self);
 }
 
 JsonArray *

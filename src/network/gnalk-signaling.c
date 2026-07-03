@@ -833,7 +833,18 @@ send_hello (GnalkSignaling *self)
   json_generator_set_root (gen, root);
   g_autofree char *json_str = json_generator_to_data (gen, NULL);
 
-  gnalk_log_ws_send (self->user_id, json_str);
+  /* The hello frame carries the signaling ticket (normal auth) or a federation
+   * JWT (params.token) — both are bearer credentials. Scrub their literal
+   * values before logging; the "token" key is reused for harmless room tokens
+   * elsewhere, so we can't redact by key name centrally. */
+  {
+    g_autoptr(GString) safe = g_string_new (json_str);
+    if (self->ticket && *self->ticket)
+      g_string_replace (safe, self->ticket, "[redacted]", 0);
+    if (self->fed_auth_token && *self->fed_auth_token)
+      g_string_replace (safe, self->fed_auth_token, "[redacted]", 0);
+    gnalk_log_ws_send (self->user_id, safe->str);
+  }
 
   soup_websocket_connection_send_text (self->ws_connection, json_str);
 }

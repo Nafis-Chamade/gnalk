@@ -132,25 +132,30 @@ gnalk_media_pipeline_new (void)
 
 #ifdef HAVE_GSTREAMER
 
-/* Idle callback data for local video frame signal emission */
+/* Idle callback data for local video frame signal emission.
+ * The appsink "new-sample" callback runs on a GStreamer streaming thread, so
+ * the reference to the (main-thread-owned) pipeline is held via a GWeakRef,
+ * which is thread-safe. g_object_add_weak_pointer is NOT thread-safe and must
+ * not be called from the streaming thread. */
 typedef struct {
-  GnalkMediaPipeline *pipeline;
-  GdkTexture          *texture;
+  GWeakRef    pipeline_ref;
+  GdkTexture *texture;
 } LocalVideoUpdate;
 
 static gboolean
 emit_local_video_in_main_thread (gpointer user_data)
 {
   LocalVideoUpdate *update = user_data;
+  GnalkMediaPipeline *pipeline = g_weak_ref_get (&update->pipeline_ref);
 
-  if (update->pipeline)
+  if (pipeline)
     {
-      g_object_remove_weak_pointer (G_OBJECT (update->pipeline),
-                                    (gpointer *)&update->pipeline);
-      g_signal_emit (update->pipeline, signals[SIGNAL_LOCAL_VIDEO_FRAME], 0,
+      g_signal_emit (pipeline, signals[SIGNAL_LOCAL_VIDEO_FRAME], 0,
                      update->texture);
+      g_object_unref (pipeline);
     }
 
+  g_weak_ref_clear (&update->pipeline_ref);
   g_clear_object (&update->texture);
   g_free (update);
   return G_SOURCE_REMOVE;
@@ -179,10 +184,10 @@ on_local_video_sample (GstAppSink *appsink,
     {
       GstVideoInfo tmp_info;
       if (gst_video_info_from_caps (&tmp_info, caps))
-        g_message ("MediaPipeline: local preview frame %d, size=%dx%d",
+        g_debug ("MediaPipeline: local preview frame %d, size=%dx%d",
                    local_frame_count, tmp_info.width, tmp_info.height);
       else
-        g_message ("MediaPipeline: local preview frame %d", local_frame_count);
+        g_debug ("MediaPipeline: local preview frame %d", local_frame_count);
     }
 
   if (!gst_video_info_from_caps (&video_info, caps))
@@ -209,10 +214,8 @@ on_local_video_sample (GstAppSink *appsink,
               if (texture)
                 {
                   LocalVideoUpdate *update = g_new (LocalVideoUpdate, 1);
-                  update->pipeline = self;
+                  g_weak_ref_init (&update->pipeline_ref, self);
                   update->texture = texture;
-                  g_object_add_weak_pointer (G_OBJECT (self),
-                                             (gpointer *)&update->pipeline);
                   g_idle_add (emit_local_video_in_main_thread, update);
                 }
             }
@@ -867,7 +870,7 @@ on_screen_pipewiresrc_log_probe (GstPad          *pad,
   static int frame_count = 0;
   frame_count++;
   if (frame_count <= 5 || frame_count % 30 == 0)
-    g_message ("MediaPipeline: Screen pipewiresrc output frame %d", frame_count);
+    g_debug ("MediaPipeline: Screen pipewiresrc output frame %d", frame_count);
   (void)pad; (void)info; (void)user_data;
   return GST_PAD_PROBE_OK;
 }

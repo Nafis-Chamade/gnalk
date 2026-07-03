@@ -113,9 +113,13 @@ on_member_avatar_loaded (GnalkAvatarCache *cache,
 {
   MemberAvatarData *data = user_data;
 
-  if (data->avatar_image && texture)
+  if (data->avatar_image)
     {
-      gtk_image_set_from_paintable (GTK_IMAGE (data->avatar_image), GDK_PAINTABLE (texture));
+      if (texture)
+        gtk_image_set_from_paintable (GTK_IMAGE (data->avatar_image), GDK_PAINTABLE (texture));
+      /* Remove the weak pointer on EVERY path where the widget is still alive —
+       * doing it only when texture!=NULL left a dangling weak pointer into the
+       * freed `data` on the no-texture path (heap corruption). */
       g_object_remove_weak_pointer (G_OBJECT (data->avatar_image), (gpointer *)&data->avatar_image);
     }
 
@@ -496,7 +500,8 @@ on_add_participant_response (GnalkHttpClient *client,
                              GError           *error,
                              gpointer          user_data)
 {
-  GnalkNewConversationDialog *self = GNALK_NEW_CONVERSATION_DIALOG (user_data);
+  GnalkNewConversationDialog *self = user_data;  /* owns a ref */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) { g_object_unref (self); return; }
 
   if (error)
     g_warning ("Failed to add participant: %s", error->message);
@@ -505,6 +510,8 @@ on_add_participant_response (GnalkHttpClient *client,
 
   if (self->pending_participants == 0)
     finish_creation (self);
+
+  g_object_unref (self);
 }
 
 static void
@@ -540,7 +547,7 @@ start_adding_participants (GnalkNewConversationDialog *self)
                                                    user_id,
                                                    parsed_source,
                                                    on_add_participant_response,
-                                                   self);
+                                                   g_object_ref (self));
               g_object_unref (member);
               continue;
             }
@@ -551,7 +558,7 @@ start_adding_participants (GnalkNewConversationDialog *self)
                                            user_id,
                                            source,
                                            on_add_participant_response,
-                                           self);
+                                           g_object_ref (self));
       g_object_unref (member);
     }
 }
@@ -619,17 +626,20 @@ on_create_room_response (GnalkHttpClient *client,
                          GError           *error,
                          gpointer          user_data)
 {
-  GnalkNewConversationDialog *self = GNALK_NEW_CONVERSATION_DIALOG (user_data);
+  GnalkNewConversationDialog *self = user_data;  /* owns a ref */
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) { g_object_unref (self); return; }
 
   if (error)
     {
       show_error (self, error->message);
+      g_object_unref (self);
       return;
     }
 
   if (!response || !JSON_NODE_HOLDS_OBJECT (response))
     {
       show_error (self, "Invalid response from server");
+      g_object_unref (self);
       return;
     }
 
@@ -638,6 +648,7 @@ on_create_room_response (GnalkHttpClient *client,
   if (!ocs)
     {
       show_error (self, "Invalid response format");
+      g_object_unref (self);
       return;
     }
 
@@ -645,6 +656,7 @@ on_create_room_response (GnalkHttpClient *client,
   if (!data)
     {
       show_error (self, "No room data in response");
+      g_object_unref (self);
       return;
     }
 
@@ -652,6 +664,7 @@ on_create_room_response (GnalkHttpClient *client,
   if (!token)
     {
       show_error (self, "No room token in response");
+      g_object_unref (self);
       return;
     }
 
@@ -673,6 +686,8 @@ on_create_room_response (GnalkHttpClient *client,
       /* Skip to uploading avatar (or adding participants if no avatar) */
       start_uploading_avatar (self);
     }
+
+  g_object_unref (self);
 }
 
 static void
@@ -701,7 +716,7 @@ on_create_clicked (GtkButton                   *button,
                                            "",   /* no initial invite */
                                            name,
                                            on_create_room_response,
-                                           self);
+                                           g_object_ref (self));
 }
 
 static void

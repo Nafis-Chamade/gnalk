@@ -542,18 +542,12 @@ on_ice_connection_state_notify (GstElement *webrtc,
   g_message ("ICE gathering state: %s", gather_name);
 }
 
+/* Runs on the main thread (via connection_state_in_main_thread). */
 static void
-on_connection_state_notify (GstElement *webrtc,
-                             GParamSpec *pspec,
-                             gpointer    user_data)
+run_connection_state_handler (GnalkWebrtc                  *self,
+                              GstWebRTCPeerConnectionState  state)
 {
-  GnalkWebrtc *self = GNALK_WEBRTC (user_data);
-  GstWebRTCPeerConnectionState state;
   gboolean connected = FALSE;
-
-  (void)pspec;
-
-  g_object_get (webrtc, "connection-state", &state, NULL);
 
   const char *state_name = "unknown";
   gboolean notify_callback = FALSE;  /* Only notify for meaningful transitions */
@@ -630,6 +624,46 @@ on_connection_state_notify (GstElement *webrtc,
 
   if (self->connection_state_callback && notify_callback)
     self->connection_state_callback (self, connected, self->connection_state_callback_data);
+}
+
+/* Marshalling wrapper: GstWebRTC fires notify::connection-state on webrtcbin's
+ * internal thread, but run_connection_state_handler touches GTK (via the
+ * consumer's callback), main-loop timers, and libsoup — all main-thread-only. */
+typedef struct {
+  GWeakRef                     webrtc_ref;
+  GstWebRTCPeerConnectionState state;
+} ConnStateData;
+
+static gboolean
+connection_state_in_main_thread (gpointer user_data)
+{
+  ConnStateData *d = user_data;
+  GnalkWebrtc *self = g_weak_ref_get (&d->webrtc_ref);
+  if (self)
+    {
+      run_connection_state_handler (self, d->state);
+      g_object_unref (self);
+    }
+  g_weak_ref_clear (&d->webrtc_ref);
+  g_free (d);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_connection_state_notify (GstElement *webrtc,
+                             GParamSpec *pspec,
+                             gpointer    user_data)
+{
+  (void) pspec;
+  GnalkWebrtc *self = GNALK_WEBRTC (user_data);
+  GstWebRTCPeerConnectionState state;
+
+  g_object_get (webrtc, "connection-state", &state, NULL);
+
+  ConnStateData *d = g_new0 (ConnStateData, 1);
+  g_weak_ref_init (&d->webrtc_ref, self);
+  d->state = state;
+  g_idle_add (connection_state_in_main_thread, d);
 }
 
 /* Callback when new transceiver is created - enable NACK for retransmission */
@@ -1203,7 +1237,7 @@ on_screen_share_encoder_probe (GstPad          *pad,
               gst_object_unref (src_pad);
             }
 
-          g_message ("Screen encoder[%p] INPUT: frame %u, state=%s pending=%s, src_caps=%s",
+          g_debug ("Screen encoder[%p] INPUT: frame %u, state=%s pending=%s, src_caps=%s",
                      (void *)self, self->screen_encoder_frame_count,
                      gst_element_state_get_name (state),
                      gst_element_state_get_name (pending),
@@ -1212,7 +1246,7 @@ on_screen_share_encoder_probe (GstPad          *pad,
         }
       else
         {
-          g_message ("Screen encoder[%p] INPUT: frame %u (no encoder ref)",
+          g_debug ("Screen encoder[%p] INPUT: frame %u (no encoder ref)",
                      (void *)self, self->screen_encoder_frame_count);
         }
     }
@@ -1249,7 +1283,7 @@ on_screen_encoder_output_probe (GstPad          *pad,
     {
       GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER (info);
       gsize size = buf ? gst_buffer_get_size (buf) : 0;
-      g_message ("Screen share encoder[%p] OUTPUT: frame %u (size=%zu bytes)",
+      g_debug ("Screen share encoder[%p] OUTPUT: frame %u (size=%zu bytes)",
                  (void *)self, self->screen_encoder_output_count, size);
     }
   (void)pad;
@@ -1270,7 +1304,7 @@ on_screen_rtppay_probe (GstPad          *pad,
     {
       GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER (info);
       gsize size = buf ? gst_buffer_get_size (buf) : 0;
-      g_message ("Screen share RTP[%p]: packet %u to webrtcbin (size=%zu bytes)",
+      g_debug ("Screen share RTP[%p]: packet %u to webrtcbin (size=%zu bytes)",
                  (void *)self, self->screen_rtp_packet_count, size);
     }
   (void)pad;
@@ -1340,7 +1374,7 @@ on_pipewiresrc_log_probe (GstPad          *pad,
     {
       GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER (info);
       gsize size = buf ? gst_buffer_get_size (buf) : 0;
-      g_message ("pipewiresrc[%p] output: frame %u (size=%zu)",
+      g_debug ("pipewiresrc[%p] output: frame %u (size=%zu)",
                  (void *)self, self->pipewiresrc_frame_count, size);
     }
   return GST_PAD_PROBE_OK;
@@ -1358,7 +1392,7 @@ on_screen_queue_src_probe (GstPad          *pad,
     {
       GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER (info);
       gsize size = buf ? gst_buffer_get_size (buf) : 0;
-      g_message ("screen[%p] queue->videoconvert: frame %u (size=%zu)",
+      g_debug ("screen[%p] queue->videoconvert: frame %u (size=%zu)",
                  (void *)self, self->screen_queue_frame_count, size);
     }
   (void)pad;
@@ -1377,7 +1411,7 @@ on_screen_capsfilter_src_probe (GstPad          *pad,
     {
       GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER (info);
       gsize size = buf ? gst_buffer_get_size (buf) : 0;
-      g_message ("screen[%p] capsfilter->encoder: frame %u (size=%zu)",
+      g_debug ("screen[%p] capsfilter->encoder: frame %u (size=%zu)",
                  (void *)self, self->screen_capsfilter_frame_count, size);
     }
   (void)pad;

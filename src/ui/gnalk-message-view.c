@@ -79,8 +79,8 @@ on_scroll_adjustment_value_changed (GtkAdjustment     *adj,
   gdouble upper = gtk_adjustment_get_upper (adj);
   gdouble page_size = gtk_adjustment_get_page_size (adj);
 
-  g_message ("SCROLL value-changed: value=%.1f upper=%.1f page_size=%.1f (bottom=%.1f)",
-             value, upper, page_size, upper - page_size);
+  GNALK_TRACE_SCROLL ("value-changed: value=%.1f upper=%.1f page_size=%.1f (bottom=%.1f)",
+                      value, upper, page_size, upper - page_size);
 
   gboolean at_bottom = is_scrolled_to_bottom (GTK_SCROLLED_WINDOW (self->scrolled_window));
   if (!self->in_context_mode)

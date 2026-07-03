@@ -584,7 +584,8 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
 
   if (error)
     {
-      g_warning ("Search failed: %s", error->message);
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        g_warning ("Search failed: %s", error->message);
       return;
     }
 
@@ -616,7 +617,7 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
     }
 
   guint len = json_array_get_length (data);
-  g_print ("Search: found %u results\n", len);
+  g_debug ("Search: found %u results", len);
 
   /* First pass: collect labels and tokens to filter duplicate "rooms" entries.
    * For "users"/"remotes" we collect labels; for "remotes" with existing conversations
@@ -773,7 +774,7 @@ gnalk_window_on_search_contacts_response (GnalkConversationController *controlle
       /* Create data object and add to store */
       GnalkConversationData *conv_data = gnalk_conversation_data_new_from_json (room_data, self->active_session);
       g_list_store_append (self->search_results_store, conv_data);
-      g_print ("Search: added %s '%s' (id: %s, %s)\n",
+      g_debug ("Search: added %s '%s' (id: %s, %s)",
                g_strcmp0 (source, "calls") == 0 ? "conversation" : "user",
                label, item_id, subtitle);
       g_object_unref (conv_data);

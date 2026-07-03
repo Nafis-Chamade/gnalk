@@ -598,18 +598,20 @@ on_older_messages_response (GnalkHttpClient *client G_GNUC_UNUSED,
 {
   GnalkAsyncOp *op = user_data;
 
-  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-    {
-      gnalk_async_op_free (op);
-      return;
-    }
-
-  /* Always clear loading_older if owner is alive, even for stale responses */
+  /* Always clear loading_older if owner is alive, even for stale or
+   * cancelled responses — otherwise pause_polling() mid-load leaves the
+   * flag stuck and history loading is dead until the next room switch. */
   GObject *owner_check = gnalk_async_op_get_owner (op);
   if (owner_check)
     {
       GNALK_MESSAGE_CONTROLLER (owner_check)->loading_older = FALSE;
       g_object_unref (owner_check);
+    }
+
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      gnalk_async_op_free (op);
+      return;
     }
 
   if (!gnalk_async_op_is_valid (op))

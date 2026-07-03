@@ -482,6 +482,9 @@ gnalk_window_on_scroll_to_bottom_clicked_for_unread (GnalkMessageView *view G_GN
                                                       GnalkWindow      *self)
 {
   /* Mark all messages as read when user clicks scroll-to-bottom */
+  if (!self->current_room)
+    return;
+
   guint n_items = g_list_model_get_n_items (G_LIST_MODEL (self->messages_store));
   if (n_items > 0)
     {
