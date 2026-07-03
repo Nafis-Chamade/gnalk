@@ -33,6 +33,10 @@ extract_fenced_code_blocks (const char *text, GPtrArray **out_blocks)
   guint block_index = 0;
   g_autoptr(GError) error = NULL;
 
+  /* Per-call random nonce so message text can't spoof the placeholder token
+   * (restore matches on the stored block->placeholder, so this is transparent). */
+  guint32 nonce = g_random_int ();
+
   *out_blocks = g_ptr_array_new_with_free_func ((GDestroyNotify) code_block_free);
 
   /* Match ```language\ncontent``` - language is optional, content can be empty.
@@ -62,7 +66,7 @@ extract_fenced_code_blocks (const char *text, GPtrArray **out_blocks)
           CodeBlock *block = g_new0 (CodeBlock, 1);
           block->language = g_strdup (language ? language : "");
           block->content = g_strdup (content ? content : "");
-          block->placeholder = g_strdup_printf ("<<<GNALKFENCED%u>>>", block_index);
+          block->placeholder = g_strdup_printf ("<<<GNALKFENCED%08x_%u>>>", nonce, block_index);
 
           g_ptr_array_add (*out_blocks, block);
 

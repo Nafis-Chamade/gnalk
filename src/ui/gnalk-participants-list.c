@@ -120,6 +120,26 @@ on_avatar_loaded (GnalkAvatarCache *cache,
   avatar_callback_data_free (cb_data);
 }
 
+/* Kick off an async avatar fetch for the given avatar image widget */
+static void
+load_participant_avatar (GtkWidget        *avatar,
+                         GnalkAvatarCache *cache,
+                         const char       *user_id,
+                         const char       *room_token,
+                         gboolean          is_federated)
+{
+  if (!(cache && user_id && *user_id))
+    return;
+
+  AvatarCallbackData *cb_data = g_new0 (AvatarCallbackData, 1);
+  g_weak_ref_init (&cb_data->avatar_ref, avatar);
+  if (is_federated && room_token)
+    gnalk_avatar_cache_get_federated_user_avatar (cache, room_token, user_id, 64,
+                                                     on_avatar_loaded, cb_data);
+  else
+    gnalk_avatar_cache_get_user_avatar (cache, user_id, 64, on_avatar_loaded, cb_data);
+}
+
 static GtkWidget *
 create_participant_item (GnalkParticipantsList *self,
                          const char             *user_id,
@@ -150,6 +170,9 @@ create_participant_item (GnalkParticipantsList *self,
   gtk_image_set_pixel_size (GTK_IMAGE (avatar), 32);
   gtk_frame_set_child (GTK_FRAME (avatar_frame), avatar);
   gtk_overlay_set_child (GTK_OVERLAY (overlay), avatar_frame);
+
+  /* Store avatar image so it can be re-fetched in place when identity changes */
+  g_object_set_data (G_OBJECT (box), "avatar-image", avatar);
 
   /* Status indicator (bottom-right) */
   GtkWidget *status_icon = gtk_image_new ();
@@ -189,20 +212,16 @@ create_participant_item (GnalkParticipantsList *self,
   g_object_set_data (G_OBJECT (box), "status-icon", status_icon);
   g_object_set_data (G_OBJECT (box), "name-label", label);
 
+  /* Cache diff-relevant identity/state so subsequent polls can update in place */
+  g_object_set_data (G_OBJECT (box), "is-federated", GINT_TO_POINTER (is_federated));
+  g_object_set_data_full (G_OBJECT (box), "status-value",
+                          status ? g_strdup (status) : NULL, g_free);
+
   /* Set initial status now that status-icon is stored on the widget */
   update_participant_status_icon (box, status);
 
   /* Load avatar asynchronously with weak reference to handle widget destruction */
-  if (cache && user_id && *user_id)
-    {
-      AvatarCallbackData *cb_data = g_new0 (AvatarCallbackData, 1);
-      g_weak_ref_init (&cb_data->avatar_ref, avatar);
-      if (is_federated && room_token)
-        gnalk_avatar_cache_get_federated_user_avatar (cache, room_token, user_id, 64,
-                                                         on_avatar_loaded, cb_data);
-      else
-        gnalk_avatar_cache_get_user_avatar (cache, user_id, 64, on_avatar_loaded, cb_data);
-    }
+  load_participant_avatar (avatar, cache, user_id, room_token, is_federated);
 
   return box;
 }
@@ -597,6 +616,71 @@ gnalk_participants_list_new (void)
   return g_object_new (GNALK_TYPE_PARTICIPANTS_LIST, NULL);
 }
 
+/* Update an existing participant item in place, touching only changed fields.
+ * The avatar is NOT re-fetched unless the avatar-relevant identity (actorId or
+ * federation flag) changed. */
+static void
+update_participant_item (GtkWidget        *item,
+                         const char       *actor_id,
+                         const char       *effective_name,
+                         const char       *status,
+                         gint              participant_type,
+                         gint64            in_call,
+                         GnalkAvatarCache *cache,
+                         const char       *room_token,
+                         gboolean          is_federated,
+                         JsonObject       *participant)
+{
+  /* Name label */
+  GtkWidget *label = g_object_get_data (G_OBJECT (item), "name-label");
+  if (label &&
+      g_strcmp0 (gtk_label_get_text (GTK_LABEL (label)), effective_name ? effective_name : "") != 0)
+    gtk_label_set_text (GTK_LABEL (label), effective_name ? effective_name : "");
+
+  /* Avatar-relevant identity: re-fetch only when actorId or federation changed */
+  const char *old_actor_id = g_object_get_data (G_OBJECT (item), "user-id");
+  gboolean old_federated = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (item), "is-federated"));
+  if (g_strcmp0 (old_actor_id, actor_id) != 0 || old_federated != is_federated)
+    {
+      if (actor_id && *actor_id)
+        g_object_set_data_full (G_OBJECT (item), "user-id", g_strdup (actor_id), g_free);
+      else
+        g_object_set_data (G_OBJECT (item), "user-id", NULL);
+      g_object_set_data (G_OBJECT (item), "is-federated", GINT_TO_POINTER (is_federated));
+
+      GtkWidget *avatar = g_object_get_data (G_OBJECT (item), "avatar-image");
+      if (avatar)
+        {
+          gtk_image_set_from_icon_name (GTK_IMAGE (avatar), "avatar-default-symbolic");
+          load_participant_avatar (avatar, cache, actor_id, room_token, is_federated);
+        }
+    }
+
+  /* Status indicator */
+  const char *old_status = g_object_get_data (G_OBJECT (item), "status-value");
+  if (g_strcmp0 (old_status, status) != 0)
+    {
+      update_participant_status_icon (item, status);
+      g_object_set_data_full (G_OBJECT (item), "status-value",
+                              status ? g_strdup (status) : NULL, g_free);
+    }
+
+  /* Call state icon */
+  gint64 old_in_call = (gint64) GPOINTER_TO_SIZE (g_object_get_data (G_OBJECT (item), "in-call"));
+  if (old_in_call != in_call)
+    {
+      update_participant_call_icon (item, in_call);
+      g_object_set_data (G_OBJECT (item), "in-call", GSIZE_TO_POINTER ((gsize) in_call));
+    }
+
+  /* Context-menu metadata */
+  g_object_set_data (G_OBJECT (item), "participant-type", GINT_TO_POINTER (participant_type));
+
+  /* Refresh the JSON payload (status/type may have changed) */
+  g_object_set_data_full (G_OBJECT (item), "participant-json",
+                          json_object_ref (participant), (GDestroyNotify) json_object_unref);
+}
+
 void
 gnalk_participants_list_set_participants (GnalkParticipantsList *self,
                                             JsonArray              *participants,
@@ -617,8 +701,6 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
   self->my_participant_type = my_participant_type;
   self->room_type = room_type;
 
-  clear_participants_box (self);
-
   guint n_participants = json_array_get_length (participants);
 
   /* Collect participants for sorting (skip guests) */
@@ -638,7 +720,22 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
   /* Sort: online first, then alphabetically by name */
   g_ptr_array_sort (participant_list, (GCompareFunc) compare_participants_by_status_and_name);
 
-  /* Create participant items in sorted order */
+  /* Index the currently-displayed rows by full-width attendee id so we can
+   * diff in place instead of rebuilding + re-fetching every avatar. */
+  GHashTable *existing = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, NULL);
+  for (GtkWidget *child = gtk_widget_get_first_child (self->participants_box);
+       child != NULL;
+       child = gtk_widget_get_next_sibling (child))
+    {
+      gint64 aid = (gint64) GPOINTER_TO_SIZE (g_object_get_data (G_OBJECT (child), "attendee-id"));
+      gint64 *key = g_new (gint64, 1);
+      *key = aid;
+      g_hash_table_insert (existing, key, child);
+    }
+
+  /* Walk the sorted participants, updating existing rows or creating new ones,
+   * and keep the DOM order in sync with the sort order. */
+  GtkWidget *prev = NULL;
   for (guint i = 0; i < participant_list->len; i++)
     {
       JsonObject *participant = g_ptr_array_index (participant_list, i);
@@ -650,6 +747,7 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
       gint participant_type = (gint) json_object_get_int_member_with_default (participant, "participantType", 3);
       gint64 in_call = json_object_get_int_member_with_default (participant, "inCall", 0);
       gboolean is_federated = (g_strcmp0 (actor_type, "federated_users") == 0);
+      const char *status_display = is_federated ? NULL : status;
 
       /* For federated users, append @server to the display name */
       g_autofree char *effective_name = NULL;
@@ -659,44 +757,71 @@ gnalk_participants_list_set_participants (GnalkParticipantsList *self,
           if (at)
             effective_name = g_strdup_printf ("%s @%s", display_name, at + 1);
         }
+      const char *name = effective_name ? effective_name : display_name;
 
-      GtkWidget *item = create_participant_item (self, actor_id,
-                                                  effective_name ? effective_name : display_name,
-                                                  is_federated ? NULL : status, cache,
-                                                  room_token, is_federated);
+      GtkWidget *item = g_hash_table_lookup (existing, &attendee_id);
+      if (item)
+        {
+          /* Reuse existing row - update in place (no avatar re-fetch) */
+          update_participant_item (item, actor_id, name, status_display,
+                                   participant_type, in_call, cache, room_token,
+                                   is_federated, participant);
+          /* Mark as consumed so it is not removed below */
+          g_hash_table_remove (existing, &attendee_id);
+        }
+      else
+        {
+          /* No existing row - create a new one */
+          item = create_participant_item (self, actor_id, name, status_display,
+                                          cache, room_token, is_federated);
 
-      /* Set call icon from JSON data directly */
-      update_participant_call_icon (item, in_call);
+          /* Set call icon from JSON data directly */
+          update_participant_call_icon (item, in_call);
+          g_object_set_data (G_OBJECT (item), "in-call", GSIZE_TO_POINTER ((gsize) in_call));
 
-      /* Store additional data for context menu and profile */
-      g_object_set_data (G_OBJECT (item), "attendee-id", GSIZE_TO_POINTER ((gsize) attendee_id));
-      g_object_set_data (G_OBJECT (item), "participant-type", GINT_TO_POINTER (participant_type));
-      g_object_set_data (G_OBJECT (item), "participants-list", self);
-      g_object_set_data_full (G_OBJECT (item), "participant-json",
-                              json_object_ref (participant), (GDestroyNotify) json_object_unref);
+          /* Store additional data for context menu and profile */
+          g_object_set_data (G_OBJECT (item), "attendee-id", GSIZE_TO_POINTER ((gsize) attendee_id));
+          g_object_set_data (G_OBJECT (item), "participant-type", GINT_TO_POINTER (participant_type));
+          g_object_set_data (G_OBJECT (item), "participants-list", self);
+          g_object_set_data_full (G_OBJECT (item), "participant-json",
+                                  json_object_ref (participant), (GDestroyNotify) json_object_unref);
 
-      /* Add left-click gesture (opens profile) */
-      GtkGesture *left_click = gtk_gesture_click_new ();
-      gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (left_click), GDK_BUTTON_PRIMARY);
-      g_signal_connect (left_click, "released", G_CALLBACK (on_participant_left_click), item);
-      gtk_widget_add_controller (item, GTK_EVENT_CONTROLLER (left_click));
+          /* Add left-click gesture (opens profile) */
+          GtkGesture *left_click = gtk_gesture_click_new ();
+          gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (left_click), GDK_BUTTON_PRIMARY);
+          g_signal_connect (left_click, "released", G_CALLBACK (on_participant_left_click), item);
+          gtk_widget_add_controller (item, GTK_EVENT_CONTROLLER (left_click));
 
-      /* Add right-click gesture */
-      GtkGesture *right_click = gtk_gesture_click_new ();
-      gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (right_click), GDK_BUTTON_SECONDARY);
-      gtk_event_controller_set_propagation_phase (GTK_EVENT_CONTROLLER (right_click), GTK_PHASE_CAPTURE);
-      g_signal_connect (right_click, "pressed", G_CALLBACK (on_participant_right_click), item);
-      gtk_widget_add_controller (item, GTK_EVENT_CONTROLLER (right_click));
+          /* Add right-click gesture */
+          GtkGesture *right_click = gtk_gesture_click_new ();
+          gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (right_click), GDK_BUTTON_SECONDARY);
+          gtk_event_controller_set_propagation_phase (GTK_EVENT_CONTROLLER (right_click), GTK_PHASE_CAPTURE);
+          g_signal_connect (right_click, "pressed", G_CALLBACK (on_participant_right_click), item);
+          gtk_widget_add_controller (item, GTK_EVENT_CONTROLLER (right_click));
 
-      /* Add long press gesture for touch devices */
-      GtkGesture *long_press = gtk_gesture_long_press_new ();
-      gtk_gesture_single_set_touch_only (GTK_GESTURE_SINGLE (long_press), TRUE);
-      g_signal_connect (long_press, "pressed", G_CALLBACK (on_participant_long_press), item);
-      gtk_widget_add_controller (item, GTK_EVENT_CONTROLLER (long_press));
+          /* Add long press gesture for touch devices */
+          GtkGesture *long_press = gtk_gesture_long_press_new ();
+          gtk_gesture_single_set_touch_only (GTK_GESTURE_SINGLE (long_press), TRUE);
+          g_signal_connect (long_press, "pressed", G_CALLBACK (on_participant_long_press), item);
+          gtk_widget_add_controller (item, GTK_EVENT_CONTROLLER (long_press));
 
-      gtk_box_append (GTK_BOX (self->participants_box), item);
+          gtk_box_append (GTK_BOX (self->participants_box), item);
+        }
+
+      /* Keep DOM order aligned with sort order without tearing rows down */
+      if (gtk_widget_get_prev_sibling (item) != prev)
+        gtk_box_reorder_child_after (GTK_BOX (self->participants_box), item, prev);
+      prev = item;
     }
 
+  /* Any rows left in the map are participants that are no longer present */
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init (&iter, existing);
+  while (g_hash_table_iter_next (&iter, NULL, &value))
+    gtk_box_remove (GTK_BOX (self->participants_box), GTK_WIDGET (value));
+
+  g_hash_table_destroy (existing);
   g_ptr_array_free (participant_list, TRUE);
 }
 

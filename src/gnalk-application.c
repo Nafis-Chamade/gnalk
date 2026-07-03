@@ -872,16 +872,21 @@ gnalk_application_set_active_room (GnalkApplication *self,
 {
   g_return_if_fail (GNALK_IS_APPLICATION (self));
 
-  /* Update active room on all session sync coordinators */
+  /* The active room belongs to the active session only. Setting the same token
+   * on every account's coordinator caused cross-account notification
+   * suppression when two accounts (different servers) share a token value — so
+   * set it on the active session's coordinator and clear it on the others. */
   if (self->session_manager)
     {
+      GnalkSession *active = gnalk_session_manager_get_active_session (self->session_manager);
       GList *sessions = gnalk_session_manager_get_all_sessions (self->session_manager);
       for (GList *l = sessions; l != NULL; l = l->next)
         {
           GnalkSession *session = GNALK_SESSION (l->data);
           GnalkSyncCoordinator *coordinator = gnalk_session_get_sync_coordinator (session);
           if (coordinator)
-            gnalk_sync_coordinator_set_active_room (coordinator, room_token);
+            gnalk_sync_coordinator_set_active_room (coordinator,
+                                                    session == active ? room_token : NULL);
         }
       g_list_free (sessions);
     }

@@ -196,14 +196,16 @@ on_send_clicked (GtkButton          *button G_GNUC_UNUSED,
 }
 
 static gboolean
-on_key_pressed (GtkEventControllerKey *controller G_GNUC_UNUSED,
+on_key_pressed (GtkEventControllerKey *controller,
                 guint                  keyval,
                 guint                  keycode G_GNUC_UNUSED,
                 GdkModifierType        state,
                 gpointer               user_data)
 {
-  /* Ctrl+V: intercept paste when clipboard has files or textures */
-  if (keyval == GDK_KEY_v && (state & GDK_CONTROL_MASK))
+  /* Ctrl+V: intercept paste when clipboard has files or textures.
+   * Match both lowercase 'v' and uppercase 'V' (Shift held or Caps Lock)
+   * so Ctrl+Shift+V / Caps-locked Ctrl+V still paste attachments. */
+  if ((keyval == GDK_KEY_v || keyval == GDK_KEY_V) && (state & GDK_CONTROL_MASK))
     {
       GnalkMessageInput *self = GNALK_MESSAGE_INPUT (user_data);
       GdkClipboard *clipboard = gtk_widget_get_clipboard (GTK_WIDGET (self));
@@ -222,7 +224,21 @@ on_key_pressed (GtkEventControllerKey *controller G_GNUC_UNUSED,
     {
       if (state & GDK_SHIFT_MASK)
         return FALSE;  /* Shift+Enter → let GTK insert the newline */
-      on_send_clicked (NULL, GNALK_MESSAGE_INPUT (user_data));
+
+      /* Let the input method consume the Enter first. When an IME preedit
+       * (composition) is active, this key confirms the composition and the
+       * IM context consumes it (returns TRUE) — in that case we must NOT
+       * send. When no preedit is active, filter_keypress returns FALSE and
+       * we proceed with the normal Enter-to-send behavior. */
+      GnalkMessageInput *self = GNALK_MESSAGE_INPUT (user_data);
+      GdkEvent *event =
+        gtk_event_controller_get_current_event (GTK_EVENT_CONTROLLER (controller));
+      if (event &&
+          gtk_text_view_im_context_filter_keypress (GTK_TEXT_VIEW (self->message_entry),
+                                                     event))
+        return TRUE;   /* IM consumed the key (confirmed composition) */
+
+      on_send_clicked (NULL, self);
       return TRUE;     /* Enter → send, consume the event */
     }
   return FALSE;

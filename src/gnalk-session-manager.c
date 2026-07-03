@@ -293,6 +293,79 @@ gnalk_session_manager_stop_session (GnalkSessionManager *self,
   update_global_unread (self);
 }
 
+/* Context for an outstanding async keyring lookup during autologin.
+ * Holds a weak ref to the manager (which may be destroyed mid-lookup) and
+ * an owned ref to the account being connected. */
+typedef struct
+{
+  GWeakRef      manager_ref;
+  GnalkAccount *account;    /* owned */
+  gboolean      is_guest;
+} AutologinLookup;
+
+static void
+autologin_lookup_free (AutologinLookup *ctx)
+{
+  g_weak_ref_clear (&ctx->manager_ref);
+  g_clear_object (&ctx->account);
+  g_free (ctx);
+}
+
+static void
+on_autologin_password_looked_up (GObject      *source G_GNUC_UNUSED,
+                                 GAsyncResult *result,
+                                 gpointer      user_data)
+{
+  AutologinLookup *ctx = user_data;
+  GError *error = NULL;
+
+  /* NOTE: never log the returned password. */
+  char *password = gnalk_keyring_lookup_password_finish (result, &error);
+
+  GnalkSessionManager *self = g_weak_ref_get (&ctx->manager_ref);
+  if (self)
+    {
+      gint64 account_id = gnalk_account_get_id (ctx->account);
+
+      /* Re-check: the account may have been connected by another path (e.g.
+       * an interactive login) while this lookup was in flight. */
+      if (!gnalk_session_manager_get_session (self, account_id))
+        {
+          if (ctx->is_guest)
+            {
+              /* Guest account: room password may legitimately be NULL. */
+              g_debug ("SessionManager: Auto-connecting guest account %s@%s",
+                       gnalk_account_get_user_id (ctx->account),
+                       gnalk_account_get_server_url (ctx->account));
+
+              gnalk_session_manager_start_guest_session (self, ctx->account, password);
+            }
+          else if (password)
+            {
+              g_debug ("SessionManager: Auto-connecting account %s@%s",
+                       gnalk_account_get_user_id (ctx->account),
+                       gnalk_account_get_server_url (ctx->account));
+
+              gnalk_session_manager_start_session (self, ctx->account, password);
+            }
+          else
+            {
+              g_debug ("SessionManager: No password for account %s@%s, skipping autologin",
+                       gnalk_account_get_user_id (ctx->account),
+                       gnalk_account_get_server_url (ctx->account));
+            }
+        }
+
+      g_object_unref (self);
+    }
+
+  if (error)
+    g_clear_error (&error);
+
+  g_free (password);
+  autologin_lookup_free (ctx);
+}
+
 void
 gnalk_session_manager_connect_all (GnalkSessionManager *self)
 {
@@ -312,47 +385,20 @@ gnalk_session_manager_connect_all (GnalkSessionManager *self)
           continue;
         }
 
-      if (gnalk_account_get_is_guest (account))
-        {
-          /* Guest account: load room password from keyring using "guest:TOKEN" user_id */
-          char *room_password = gnalk_keyring_lookup_password_sync (
-            gnalk_account_get_server_url (account),
-            gnalk_account_get_user_id (account),
-            NULL);
+      /* Load the password asynchronously so a slow Secret Service does not
+       * block the main thread / stall the UI at startup. Each account
+       * autologins as its password arrives; strict ordering is not required.
+       * The account ref is transferred into the lookup context. */
+      AutologinLookup *ctx = g_new0 (AutologinLookup, 1);
+      g_weak_ref_init (&ctx->manager_ref, self);
+      ctx->account = account;  /* transfer ownership */
+      ctx->is_guest = gnalk_account_get_is_guest (account);
 
-          g_debug ("SessionManager: Auto-connecting guest account %s@%s",
-                   gnalk_account_get_user_id (account),
-                   gnalk_account_get_server_url (account));
-
-          gnalk_session_manager_start_guest_session (self, account, room_password);
-          g_free (room_password);
-        }
-      else
-        {
-          /* Normal account: load password from keyring */
-          char *password = gnalk_keyring_lookup_password_sync (
-            gnalk_account_get_server_url (account),
-            gnalk_account_get_user_id (account),
-            NULL);
-
-          if (password)
-            {
-              g_debug ("SessionManager: Auto-connecting account %s@%s",
-                       gnalk_account_get_user_id (account),
-                       gnalk_account_get_server_url (account));
-
-              gnalk_session_manager_start_session (self, account, password);
-              g_free (password);
-            }
-          else
-            {
-              g_debug ("SessionManager: No password for account %s@%s, skipping autologin",
-                       gnalk_account_get_user_id (account),
-                       gnalk_account_get_server_url (account));
-            }
-        }
-
-      g_object_unref (account);
+      gnalk_keyring_lookup_password (
+        gnalk_account_get_server_url (account),
+        gnalk_account_get_user_id (account),
+        on_autologin_password_looked_up,
+        ctx);
     }
 
   g_list_free (accounts);

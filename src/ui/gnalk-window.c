@@ -1640,12 +1640,14 @@ gnalk_window_on_session_room_disinvited (GnalkSession *session G_GNUC_UNUSED,
 {
   g_message ("Window: received disinvite from room %s", room_token);
 
-  /* If we were disinvited from the current room, clear our room state
-   * to prevent trying to rejoin after reconnection */
+  /* If we were disinvited from the current room, run the normal room-close path
+   * (stops polling, leaves signaling/HTTP, backgrounds the tab, clears state)
+   * instead of just nulling current_room — the latter left the controllers
+   * polling a room we're no longer in. */
   if (self->current_room && g_strcmp0 (self->current_room->room_token, room_token) == 0)
     {
-      g_message ("Window: clearing current room state due to disinvite");
-      self->current_room = NULL;
+      g_message ("Window: closing current room due to disinvite");
+      gnalk_window_on_content_page_hiding (NULL, self);
     }
 }
 
@@ -2078,6 +2080,32 @@ gnalk_window_dispose (GObject *object)
 {
   GnalkWindow *self = GNALK_WINDOW (object);
 
+  /* Cancel timers here in dispose (not finalize): GTK can still deliver events
+   * in the window between dispose and finalize, and a firing timer would touch
+   * a half-torn-down window. All guards are idempotent (dispose may run >1×). */
+  if (self->typing_send_timer_id > 0)
+    {
+      g_source_remove (self->typing_send_timer_id);
+      self->typing_send_timer_id = 0;
+    }
+  g_clear_handle_id (&self->autologin_retry_timer_id, g_source_remove);
+  if (self->conv_reload_debounce_id > 0)
+    {
+      g_source_remove (self->conv_reload_debounce_id);
+      self->conv_reload_debounce_id = 0;
+    }
+  if (self->mark_read_debounce_id > 0)
+    {
+      g_source_remove (self->mark_read_debounce_id);
+      self->mark_read_debounce_id = 0;
+    }
+  if (self->mark_read_timer_id > 0)
+    {
+      g_source_remove (self->mark_read_timer_id);
+      self->mark_read_timer_id = 0;
+    }
+  g_clear_handle_id (&self->highlight_clear_timer_id, g_source_remove);
+
   /* Leave the current room when window is closed.
    * This ensures push notifications work instead of signaling messages. */
   if (self->current_room)
@@ -2144,36 +2172,10 @@ gnalk_window_finalize (GObject *object)
   self->conversation_controller = NULL;
   self->participant_controller = NULL;
 
-  if (self->typing_send_timer_id > 0)
-    {
-      g_source_remove (self->typing_send_timer_id);
-      self->typing_send_timer_id = 0;
-    }
-
-  g_clear_handle_id (&self->autologin_retry_timer_id, g_source_remove);
+  /* Timers are cancelled in dispose (see gnalk_window_dispose). */
 
   g_clear_object (&self->room_controller);
   g_clear_object (&self->message_processor);
-
-  if (self->conv_reload_debounce_id > 0)
-    {
-      g_source_remove (self->conv_reload_debounce_id);
-      self->conv_reload_debounce_id = 0;
-    }
-
-  if (self->mark_read_debounce_id > 0)
-    {
-      g_source_remove (self->mark_read_debounce_id);
-      self->mark_read_debounce_id = 0;
-    }
-
-  if (self->mark_read_timer_id > 0)
-    {
-      g_source_remove (self->mark_read_timer_id);
-      self->mark_read_timer_id = 0;
-    }
-
-  g_clear_handle_id (&self->highlight_clear_timer_id, g_source_remove);
 
   /* Clean up read status tracking (removes weak refs and cancels timers) */
   gnalk_window_clear_read_status_tracking (self);
